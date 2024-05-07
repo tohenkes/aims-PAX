@@ -1,0 +1,83 @@
+GENERAL:
+  name_exp: test
+  log_dir: ./logs
+  checkpoints_dir: ./checkpoints
+  results_dir: ./results
+  model_dir: ./model
+  save_cpu: False
+  default_dtype: float32
+  compute_forces: True
+  compute_stress: False
+  seed: 100
+
+ARCHITECTURE:
+  model: ScaleShiftMACE
+  r_max: 5.
+  num_channels: 16
+  max_L: 1
+  max_ell: 3
+  radial_type: bessel
+  num_radial_basis: 8
+  num_cutoff_basis: 5
+  interaction: RealAgnosticResidualInteractionBlock
+  num_interactions: 2
+  correlation: 3
+  radial_MLP: 
+  - 16
+  - 16
+  - 16
+  gate: silu
+  MLP_irreps: 16x0e
+  interaction_first: RealAgnosticResidualInteractionBlock
+  E0s: average
+  compute_avg_num_neighbors: True
+
+TRAINING:
+
+  train_path: /home/tobias/Uni/Promotion/Research/aims_MLFF/data/naphtalene/nve_80K_extxyz/out-1/baseline/train_set_20p.xyz
+  valid_path: /home/tobias/Uni/Promotion/Research/aims_MLFF/data/naphtalene/nve_80K_extxyz/out-1/baseline/validation_set_10p.xyz
+  test_path: /home/tobias/Uni/Promotion/Research/aims_MLFF/data/naphtalene/nve_80K_extxyz/out-1/baseline/test_set_1972p.xyz
+  #train_path: /home/thenkes/Documents/Uni/Promotion/Research/aims_MLFF/data/naphtalene/nve_80K_extxyz/out-1/baseline/train_set_20p.xyz
+  #valid_path: /home/thenkes/Documents/Uni/Promotion/Research/aims_MLFF/data/naphtalene/nve_80K_extxyz/out-1/baseline/validation_set_10p.xyz
+  #test_path: /home/thenkes/Documents/Uni/Promotion/Research/aims_MLFF/data/naphtalene/nve_80K_extxyz/out-1/baseline/test_set_1972p.xyz
+  valid_fraction: 0.1
+  batch_size: 5
+  valid_batch_size: 5
+  weight_decay: 5.e-07
+  scaling: rms_forces_scaling # TODO: put this to architecture
+  lr: 0.01
+  amsgrad: True
+  optimizer: adam
+  scheduler: ReduceLROnPlateau
+  lr_scheduler_gamma: 0.9993
+  lr_factor: 0.8
+  scheduler_patience: 5
+  swa: False
+  ema: True
+  ema_decay: 0.99
+  max_num_epochs: 300
+  swa_energy_weight: 1000.
+  swa_forces_weight: 10.
+  swa_virials_weight: 10.
+  swa_stress_weight: 10.
+  swa_dipole_weight: 1.
+  swa_lr: 0.001
+  loss: weighted
+  energy_weight: 1.
+  forces_weight: 1000.
+  virials_weight: 1.
+  stress_weight: 1.
+  dipole_weight: 1.
+  config_type_weights: {Default: 1.0}
+  patience: 15
+  clip_grad: 10.
+  eval_interval: 5
+
+MISC:
+  device: cpu
+  keep_checkpoints: False
+  restart_latest: False
+  wandb: False
+  eval_interval: 5
+  error_table: PerAtomMAE
+  log_level: INFO

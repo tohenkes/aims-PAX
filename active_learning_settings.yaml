@@ -1,0 +1,25 @@
+ACTIVE_LEARNING:
+  desired_acc: 0.15
+  lambda: 2.
+  n_samples: 10
+  initial_valid_ratio: 0.2
+  valid_ratio: 3
+  max_initial_epochs: 300
+  max_epochs_worker: 20
+  max_final_epochs: 300
+  intermediate_epochs: 10
+  patience: 20
+  max_MD_steps: 25
+  max_set_size: 30
+  valid_skip: 5
+  sanity_skip: 5
+  ensemble_size: 5
+  c_x: 0.2
+  dataset_dir: "./data"
+  skip_step: 2 # step to skip in sampling MLFF MD
+  threshold: 0.15 # uncertainty threshold for AL; temporary
+  num_trajectories: 4 # number of trajectories to from sample in parallel
+
+  # only for simulation of procedure
+  path_to_trajectories: /home/tobias/Uni/Promotion/Research/aims_MLFF/data/naphtalene/nve_80K_extxyz/trajectories_for_sampling
+  #path_to_trajectories: /home/thenkes/Documents/Uni/Promotion/Research/aims_MLFF/data/naphtalene/nve_80K_extxyz/trajectories_for_sampling

@@ -1,0 +1,15 @@
+*.pyc
+*.log
+*.pickle
+*.xyz
+*.pt
+*.model
+*.txt
+*.npz
+*.in
+*.out
+*.db
+*.ipynb
+/legacy
+/sockets
+
