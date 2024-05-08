@@ -27,21 +27,19 @@ intermediate_epochs = np.array([5,10])
 converge_or_not = np.array([False,True])
 scheduler_or_not_initial = np.array([False,True])
 max_epochs_worker = np.array([1,2]) # times the intermediate epochs
-scheduler_or_not_al = np.array([False,True])
-uncert_cx = np.array([0.1,0.3])
+uncert_cx = np.array([-0.1, 0.1,0.3])
 
 # grid of all possible values
-A,B,C,D,E,F,G = np.meshgrid(
+A,B,C,D,E,F = np.meshgrid(
     lamb,
     intermediate_epochs,
     converge_or_not,
     scheduler_or_not_initial,
     max_epochs_worker,
-    scheduler_or_not_al,
     uncert_cx
     )
 # one array with all the combinations
-parameter_set = np.stack([A.ravel(),B.ravel(),C.ravel(),D.ravel(),E.ravel(),F.ravel(),G.ravel()],axis=1)
+parameter_set = np.stack([A.ravel(),B.ravel(),C.ravel(),D.ravel(),E.ravel(),F.ravel()],axis=1)
 parameter_set = parameter_set[start:end]
 
 
