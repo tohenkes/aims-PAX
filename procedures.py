@@ -762,7 +762,7 @@ class ALProcedure(PrepareALProcedure):
                 self.uncertainties.append(uncertainty)
                 # limit the history to 400 TODO: make this a parameter
                 if len(self.uncertainties) > 400:
-                    uncertainties = uncertainties[-400:]
+                    self.uncertainties = self.uncertainties[-400:]
                 if len(self.uncertainties) > 10:
                     mov_avg_uncert = np.mean(self.uncertainties)
                     self.threshold = mov_avg_uncert * (1.0 + self.c_x)
