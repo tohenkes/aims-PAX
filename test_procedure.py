@@ -11,7 +11,7 @@ import argparse
 parser = argparse.ArgumentParser()
 parser.add_argument("--start", type=int, help="Start index")
 parser.add_argument("--end", type=int, help="End index")
-parser.add_argument("--test_data", type=int, help="Path to test data")
+parser.add_argument("--test_data", type=str, help="Path to test data")
 parser.add_argument("--initial_trajectory", type=str, help="Path to initial trajectory")
 parser.add_argument("--sampling_trajectories", type=str, help="Path to trajectories for sampling")
 args = parser.parse_args()
