@@ -6,6 +6,21 @@ from yaml import safe_load
 import numpy as np
 from ase.io import read
 import random
+import argparse
+
+parser = argparse.ArgumentParser()
+parser.add_argument("--start", type=int, help="Start index")
+parser.add_argument("--end", type=int, help="End index")
+parser.add_argument("--test_data", type=int, help="Path to test data")
+parser.add_argument("--initial_trajectory", type=str, help="Path to initial trajectory")
+parser.add_argument("--sampling_trajectories", type=str, help="Path to trajectories for sampling")
+args = parser.parse_args()
+
+start = args.start
+end = args.end
+test_data = args.test_data
+initial_trajectory = args.initial_trajectory
+sampling_trajectories = args.sampling_trajectories
 
 lamb = np.array([2.,3.])
 intermediate_epochs = np.array([5,10])
@@ -27,7 +42,7 @@ A,B,C,D,E,F,G = np.meshgrid(
     )
 # one array with all the combinations
 parameter_set = np.stack([A.ravel(),B.ravel(),C.ravel(),D.ravel(),E.ravel(),F.ravel(),G.ravel()],axis=1)
-
+parameter_set = parameter_set[start:end]
 
 
 
@@ -41,13 +56,12 @@ random.seed(42)
 np.random.seed(42)
 ensemble_seeds = np.random.randint(0, 1000, al_settings["ensemble_size"])
 
-#test_data = read('/home/thenkes/Documents/Uni/Promotion/Research/aims_MLFF/data/naphtalene/nve_295K_extxyz/out1.xyz', index=':')
-test_data = read("/home/tobias/Uni/Promotion/Research/aims_MLFF/data/naphtalene/nve_295K_extxyz/out-1/out1.xyz", index=':')
+test_data = read(test_data, index=':')
 random.shuffle(test_data)
 test_data = test_data[:1000]
 
 
-for parameters in parameter_set[:2]:
+for parameters in parameter_set:
     print(f"########################## Next parameter set: {parameters} ##########################")
     mace_settings["GENERAL"]["model_dir"] = model_dir
     results = {}
@@ -71,8 +85,7 @@ for parameters in parameter_set[:2]:
     initial_ds = InitalDatasetProcedure(
         mace_settings=mace_settings,
         al_settings=al_settings,
-        #path_to_trajectory="/home/thenkes/Documents/Uni/Promotion/Research/aims_MLFF/data/naphtalene/nve_80K_extxyz/out-1/naph_80K_1.xyz",
-        path_to_trajectory="/home/tobias/Uni/Promotion/Research/aims_MLFF/data/naphtalene/nve_80K_extxyz/out-1/naph_80K_1.xyz",
+        path_to_trajectory=initial_trajectory,
         ensemble_seeds=ensemble_seeds
     )
 
@@ -83,8 +96,7 @@ for parameters in parameter_set[:2]:
     al = ALProcedure(
         mace_settings=mace_settings,
         al_settings=al_settings,
-        path_to_trajectories= '/home/tobias/Uni/Promotion/Research/aims_MLFF/data/naphtalene/nve_80K_extxyz/trajectories_for_sampling',
-        #path_to_trajectories='/home/thenkes/Documents/Uni/Promotion/Research/aims_MLFF/data/naphtalene/nve_80K_extxyz/trajectories_for_sampling'
+        path_to_trajectories= sampling_trajectories,
     )
     if test_scheduler_or_not_al:
         al.use_scheduler = True

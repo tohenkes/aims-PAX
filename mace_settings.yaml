@@ -14,7 +14,7 @@ ARCHITECTURE:
   model: ScaleShiftMACE
   r_max: 5.
   num_channels: 16
-  max_L: 1
+  max_L: 0
   max_ell: 3
   radial_type: bessel
   num_radial_basis: 8
