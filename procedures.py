@@ -393,7 +393,7 @@ class InitalDatasetProcedure(PrepareInitialDatasetProcedure):
                     log_errors=self.mace_settings["MISC"]["error_table"],
                     epoch=epoch,
                 )
-                if best_valid_loss > valid_loss:
+                if best_valid_loss > valid_loss and (best_valid_loss - valid_loss) > 0.01:
                     best_valid_loss = valid_loss
                     no_improvement = 0
                     for tag, model in self.ensemble.items():
@@ -970,7 +970,7 @@ class ALProcedure(PrepareALProcedure):
                     log_errors=self.mace_settings["MISC"]["error_table"],
                     epoch=epoch,
                 )
-                if best_valid_loss > valid_loss:
+                if best_valid_loss > valid_loss and (best_valid_loss - valid_loss) > 0.01:
                     best_valid_loss = valid_loss
                     best_epoch = epoch
                     no_improvement = 0
