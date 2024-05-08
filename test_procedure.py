@@ -69,8 +69,7 @@ for parameters in parameter_set:
     test_converge_or_not = parameters[2]
     test_scheduler_or_not_initial = parameters[3]
     test_max_epochs_worker = parameters[4]
-    test_scheduler_or_not_al = parameters[5]
-    test_uncert_cx = parameters[6]
+    test_uncert_cx = parameters[5]
 
     al_settings['lambda'] = test_lamb
     al_settings['intermediate_epochs'] = int(test_intermediate_epochs)
@@ -96,8 +95,6 @@ for parameters in parameter_set:
         al_settings=al_settings,
         path_to_trajectories= sampling_trajectories,
     )
-    if test_scheduler_or_not_al:
-        al.use_scheduler = True
 
     al.run()
     al.converge()
