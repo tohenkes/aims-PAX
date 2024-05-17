@@ -41,7 +41,6 @@ class PrepareInitialDatasetProcedure:
         self.handle_al_settings(al_settings)
         self.create_folders()
         self.get_atomic_energies()
-        
 
         if ensemble_seeds is not None:
             self.ensemble_size = len(ensemble_seeds)
@@ -136,6 +135,7 @@ class InitalDatasetProcedure(PrepareInitialDatasetProcedure):
         current_valid = np.inf
         step = 0
         epoch = 0
+        self.points_added = 0
         while (
             self.desired_acc <= (current_valid * self.lamb**-1)
             and epoch < self.max_initial_epochs
@@ -150,6 +150,7 @@ class InitalDatasetProcedure(PrepareInitialDatasetProcedure):
                 * (step + 1)
             ]
             random.shuffle(sampled_points)
+            self.points_added += len(sampled_points)
 
             for number, (tag, model) in enumerate(self.ensemble.items()):
 

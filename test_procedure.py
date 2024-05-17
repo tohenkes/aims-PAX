@@ -116,7 +116,7 @@ for parameters in parameter_set:
 
     results['al_metrics'] = al_metrics
     results['scratch_metrics'] = scratch_metrics
-    results['total_aims_calls'] = al.point_added
+    results['total_aims_calls'] = al.point_added + initial_ds.point_added
     results['parameter_tag'] = parameter_tag
     results['t_intervals'] = al.t_intervals
     results['sanity_checks'] = al.sanity_checks
