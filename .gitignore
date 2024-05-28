@@ -2,6 +2,7 @@
 *.log
 *.pickle
 *.xyz
+*.extxyz
 *.pt
 *.model
 *.txt

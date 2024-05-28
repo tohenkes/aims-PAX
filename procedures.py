@@ -137,10 +137,9 @@ class InitalDatasetProcedure(PrepareInitialDatasetProcedure):
         epoch = 0
         self.point_added = 0
         while (
-            self.desired_acc <= (current_valid * self.lamb**-1)
+            self.desired_acc * self.lamb <= current_valid
             and epoch < self.max_initial_epochs
         ):
-
             logging.info(f"Sampling new points at step {step}.")
             sampled_points = self.trajectory[:: self.skip_step][
                 self.n_samples
@@ -260,7 +259,7 @@ class InitalDatasetProcedure(PrepareInitialDatasetProcedure):
                     )
                     current_valid = metrics["mae_f"]
 
-                    if self.desired_acc >= (current_valid * self.lamb**-1):
+                    if self.desired_acc * self.lamb >= current_valid:
                         logging.info(
                             f"Accuracy criterion reached at step {step}."
                         )
@@ -852,7 +851,7 @@ class ALProcedure(PrepareALProcedure):
                     )  # Sampling random points from existing trajectories.")
                 if self.num_workers_waiting == self.num_trajectories:
                     logging.info("All workers are waiting for jobs to finish.")
-
+            
             if self.num_MD_limits_reached == self.num_trajectories:
                 logging.info(
                     "All trajectories reached maximum MD steps. Training until convergence."

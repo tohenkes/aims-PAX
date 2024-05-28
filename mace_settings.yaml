@@ -55,7 +55,7 @@ TRAINING:
   swa: False
   ema: True
   ema_decay: 0.99
-  max_num_epochs: 300
+  max_num_epochs: 30
   swa_energy_weight: 1000.
   swa_forces_weight: 10.
   swa_virials_weight: 10.

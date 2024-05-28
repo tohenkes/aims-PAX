@@ -17,8 +17,12 @@ initial_ds = InitalDatasetProcedure(
     #path_to_trajectory="/home/tobias/Uni/Promotion/Research/aims_MLFF/data/naphtalene/nve_80K_extxyz/out-1/naph_80K_1.xyz"
 )
 
+if not al_settings["scheduler_initial"]:
+    mace_settings["lr_scheduler"] = None
+
 initial_ds.run()
-initial_ds.converge()
+if al_settings["converge_initial"]:
+    initial_ds.converge()   
 
 al = ALProcedure(
     mace_settings=mace_settings,

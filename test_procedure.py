@@ -22,12 +22,12 @@ test_data = args.test_data
 initial_trajectory = args.initial_trajectory
 sampling_trajectories = args.sampling_trajectories
 
-lamb = np.array([2.,3.])
+lamb = np.array([2,3.])
 intermediate_epochs = np.array([5,10])
 converge_or_not = np.array([False,True])
 scheduler_or_not_initial = np.array([False,True])
 max_epochs_worker = np.array([1,2]) # times the intermediate epochs
-uncert_cx = np.array([-0.1, 0.1,0.3])
+uncert_cx = np.array([-0.1,0.1,0.3])
 
 # grid of all possible values
 A,B,C,D,E,F = np.meshgrid(
@@ -52,7 +52,10 @@ with open("./active_learning_settings.yaml", "r") as file:
 
 random.seed(42)
 np.random.seed(42)
-ensemble_seeds = np.random.randint(0, 1000, al_settings["ensemble_size"])
+#ensemble_seeds = np.random.randint(0, 1000, al_settings["ensemble_size"])
+ensemble_seeds = np.array([102,106,270,435,860], dtype=int)
+
+
 
 test_data = read(test_data, index=':')
 random.shuffle(test_data)
