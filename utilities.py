@@ -18,6 +18,19 @@ import ase.io
 import dataclasses
 from mace.tools import AtomicNumberTable
 
+from mpi4py import MPI
+from asi4py.asecalc import ASI_ASE_calculator
+from ase.md.velocitydistribution import MaxwellBoltzmannDistribution
+from ase.md.langevin import Langevin
+from ase import units
+
+
+############ AIMS CONSTANTS ############
+BOHR    = 0.529177210
+BOHR_INV = 1.0 / BOHR
+HARTREE = 27.21138450
+HARTREE_INV = 1.0 / HARTREE
+
 Vector = np.ndarray  # [3,]
 Positions = np.ndarray  # [..., 3]
 Forces = np.ndarray  # [..., 3]
@@ -53,6 +66,7 @@ def get_dataset_from_atoms(
     charges_key: str = "charges",
 ) -> Tuple[SubsetCollection, Optional[Dict[int, float]]]:
     """Load training and test dataset from xyz file"""
+
     atomic_energies_dict, all_train_configs = load_from_atoms(
         atoms_list=train_list,
         config_type_weights=config_type_weights,
@@ -124,6 +138,7 @@ def get_single_dataset_from_atoms(
     charges_key: str = "charges",
 ) -> Tuple[SubsetCollection, Optional[Dict[int, float]]]:
     """Load training and test dataset from xyz file"""
+    
     atomic_energies_dict, all_configs = load_from_atoms(
         atoms_list=atoms_list,
         config_type_weights=config_type_weights,
@@ -151,6 +166,7 @@ class Configuration:
     charges: Optional[Charges] = None  # atomic unit
     cell: Optional[Cell] = None
     pbc: Optional[Pbc] = None
+    atomic_weights: Optional[np.ndarray] = None
 
     weight: float = 1.0  # weight of config in loss
     energy_weight: float = 1.0  # weight of config energy in loss
@@ -194,7 +210,6 @@ def config_from_atoms_list(
     """Convert list of ase.Atoms into Configurations"""
     if config_type_weights is None:
         config_type_weights = DEFAULT_CONFIG_TYPE_WEIGHTS
-
     all_configs = []
     for atoms in atoms_list:
         all_configs.append(
@@ -223,6 +238,7 @@ def config_from_atoms(
     config_type_weights: Dict[str, float] = None,
 ) -> Configuration:
     """Convert ase.Atoms to Configuration"""
+
     if config_type_weights is None:
         config_type_weights = DEFAULT_CONFIG_TYPE_WEIGHTS
 
@@ -248,6 +264,7 @@ def config_from_atoms(
     forces_weight = atoms.info.get("config_forces_weight", 1.0)
     stress_weight = atoms.info.get("config_stress_weight", 1.0)
     virials_weight = atoms.info.get("config_virials_weight", 1.0)
+    atomic_weights = atoms.info.get("atomic_weights", None)
 
     # fill in missing quantities but set their weight to 0.0
     if energy is None:
@@ -280,6 +297,7 @@ def config_from_atoms(
         config_type=config_type,
         pbc=pbc,
         cell=cell,
+        atomic_weights=atomic_weights,
     )
 
 
@@ -364,7 +382,7 @@ def load_from_atoms(
 ) -> Tuple[Dict[int, float], Configurations]:
     if not isinstance(atoms_list, list):
         atoms_list = [atoms_list]
-
+    
     atomic_energies_dict = {}
     if extract_atomic_energies:
         atoms_without_iso_atoms = []
@@ -387,7 +405,7 @@ def load_from_atoms(
             logging.info("Using isolated atom energies from training file")
 
         atoms_list = atoms_without_iso_atoms
-
+    
     configs = config_from_atoms_list(
         atoms_list,
         config_type_weights=config_type_weights,
@@ -514,12 +532,15 @@ def create_mace_dataset(
     z_table: AtomicNumberTable,
     r_max: float,
 )-> tuple:
+    
+    
     collections, _ = get_dataset_from_atoms(
     train_list=data,
     valid_list=None,
     seed=seed,
     config_type_weights=None,
     )
+    
 
     data_set=[
         mace_data.AtomicData.from_config(
@@ -753,12 +774,14 @@ def update_mace_set(
     seed: int,
     r_max: float,
 ):
+
     new_train_set = create_mace_dataset(
         data=new_train_data,
         z_table=z_table,
         seed=seed,
         r_max=r_max
     )
+    
     new_valid_set = create_mace_dataset(
         data=new_valid_data,
         z_table=z_table,
@@ -780,6 +803,7 @@ def update_datasets(
     seed: int,
     r_max: float,
 ):
+    
     new_train_data, new_valid_data = split_data(new_points, valid_split)
     ase_set['train'] += new_train_data
     ase_set['valid'] += new_valid_data
@@ -870,11 +894,11 @@ def save_datasets(
     ):
     for tag in ensemble.keys():
         if initial:
-            write(path/"training"/f"initial_train_set_{tag}.extxyz", ensemble_ase_sets[tag]['train'])
-            write(path/"validation"/f"initial_valid_set_{tag}.extxyz", ensemble_ase_sets[tag]['valid'])
+            write(path/"training"/f"initial_train_set_{tag}.xyz", ensemble_ase_sets[tag]['train'])
+            write(path/"validation"/f"initial_valid_set_{tag}.xyz", ensemble_ase_sets[tag]['valid'])
         else:
-            write(path/"training"/f"train_set_{tag}.extxyz", ensemble_ase_sets[tag]['train'])
-            write(path/"validation"/f"valid_set_{tag}.extxyz", ensemble_ase_sets[tag]['valid'])
+            write(path/"training"/f"train_set_{tag}.xyz", ensemble_ase_sets[tag]['train'])
+            write(path/"validation"/f"valid_set_{tag}.xyz", ensemble_ase_sets[tag]['valid'])
 
 def load_ensemble_sets_from_folder(
     ensemble: dict,
@@ -896,3 +920,13 @@ def load_ensemble_sets_from_folder(
                 )
     return ensemble_ase_sets
 
+def Z_from_geometry_in(path_to_geometry: str = "geometry.in"):
+    with open(path_to_geometry, "r") as file:
+        lines = file.readlines()
+    Z = []
+    for line in lines:
+        if "atom" in line:
+            species = line.split()[4]
+            atomic_number = ase.data.atomic_numbers[species]
+            Z.append(atomic_number)
+    return Z

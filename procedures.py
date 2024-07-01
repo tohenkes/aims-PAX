@@ -1,10 +1,12 @@
 import sys
 import os
 from pathlib import Path
+import ase.build
 import torch
 sys.path.append(os.path.dirname(os.path.dirname(os.path.realpath(__file__))))
 import numpy as np
-from mace import tools
+from mace import tools, data
+from mace.calculators import MACECalculator
 from FHI_AL.utilities import (
     create_dataloader,
     ensemble_training_setups,
@@ -20,28 +22,66 @@ from FHI_AL.utilities import (
     create_mace_dataset,
     ensemble_prediction,
     setup_mace_training,
-    max_sd_2
+    max_sd_2,
+    Z_from_geometry_in,
+    BOHR,
+    BOHR_INV,
+    HARTREE,
+    HARTREE_INV,
+    get_single_dataset_from_atoms
 )
 from FHI_AL.train_epoch_mace import train_epoch, validate_epoch_ensemble
+import ase
 from ase.io import read
 import logging
 import random
+from mpi4py import MPI
+from asi4py.asecalc import ASI_ASE_calculator
+from ase.md.velocitydistribution import MaxwellBoltzmannDistribution
+from ase.md.langevin import Langevin
+from ase import units
 
+WORLD_COMM = MPI.COMM_WORLD
+WORLD_SIZE = WORLD_COMM.Get_size()
+RANK = WORLD_COMM.Get_rank()
 
 class PrepareInitialDatasetProcedure:
     def __init__(
         self,
         mace_settings,
         al_settings,
-        path_to_trajectory: str = None,
+        path_to_aims_lib: str,
+        species_dir: str = None,
+        path_to_control: str = "./control.in",
+        path_to_geometry: str = "./geometry.in",
         ensemble_seeds: np.array = None
     ):
-
+        logging.basicConfig(
+            filename="initial_dataset.log",
+            encoding="utf-8",
+            level=logging.DEBUG,
+            force=True,
+        )
+        tools.setup_logger(
+            level=mace_settings["MISC"]["log_level"],
+            #    tag=tag,
+            directory=mace_settings["GENERAL"]["log_dir"],
+        )
+        if RANK == 0:
+            logging.info('Initializing initial dataset procedure.')
+        self.ASI_path = path_to_aims_lib
         self.handle_mace_settings(mace_settings)
         self.handle_al_settings(al_settings)
+        self.handle_aims_settings(path_to_control, species_dir)
         self.create_folders()
+        self.z = Z_from_geometry_in()
         self.get_atomic_energies()
-
+        self.atoms = read(path_to_geometry)
+        self.n_atoms = len(self.z)
+        self.handle_MD_settings(al_settings)
+        self.epoch = 0
+        
+        np.random.seed(self.mace_settings["GENERAL"]["seed"])
         if ensemble_seeds is not None:
             self.ensemble_size = len(ensemble_seeds)
             self.ensemble_seeds = ensemble_seeds
@@ -64,20 +104,7 @@ class PrepareInitialDatasetProcedure:
             {tag: {"train": [], "valid": []} for tag in self.ensemble.keys()},
         )
 
-        if path_to_trajectory:
-            self.simulate_trajectory(path_to_trajectory)
 
-        logging.basicConfig(
-            filename="initial_dataset.log",
-            encoding="utf-8",
-            level=logging.DEBUG,
-            force=True,
-        )
-        tools.setup_logger(
-            level=self.mace_settings["MISC"]["log_level"],
-            #    tag=tag,
-            directory=self.mace_settings["GENERAL"]["log_dir"],
-        )
 
     def handle_mace_settings(self, mace_settings: dict):
         self.mace_settings = mace_settings
@@ -91,7 +118,7 @@ class PrepareInitialDatasetProcedure:
 
     def handle_al_settings(self, al_settings):
 
-        self.al_settings = al_settings
+        self.al_settings = al_settings["ACTIVE_LEARNING"]
         self.ensemble_size = self.al_settings["ensemble_size"]
         self.desired_acc = self.al_settings["desired_acc"]
         self.lamb = self.al_settings["lambda"]
@@ -114,8 +141,19 @@ class PrepareInitialDatasetProcedure:
         os.makedirs("model", exist_ok=True)
 
     def get_atomic_energies(self):
-        #TODO: remove hardocde!!!
-        self.atomic_energies_dict = {1: -12.482766945, 6: -1027.170068545}
+
+        if RANK == 0:
+            logging.info('Calculating isolated atomic energies.')
+        self.atomic_energies_dict = {}        
+        unique_atoms = np.unique(self.z)
+        for element in unique_atoms:
+            if RANK == 0:
+                logging.info(f'Calculating energy for element {element}.')
+            atom = ase.Atoms([int(element)],positions=[[0,0,0]])
+            self.setup_calculator(atom)
+            self.atomic_energies_dict[element] = atom.get_potential_energy() 
+            atom.calc.close()
+ 
         self.atomic_energies = np.array(
             [
                 self.atomic_energies_dict[z]
@@ -125,345 +163,461 @@ class PrepareInitialDatasetProcedure:
         self.z_table = tools.get_atomic_number_table_from_zs(
             z for z in self.atomic_energies_dict.keys()
         )
-
-    def simulate_trajectory(self, path_to_trajectory: str):
-        self.trajectory = read(path_to_trajectory, index=":")
+        
+    def setup_calculator(self, atoms):
+        def init_via_ase(asi):
+            
+            from ase.calculators.aims import Aims
+            #TODO: make this more flexible
+            if self.aims_settings.get("many_body_dispersion") is not None:
+                calc = Aims(xc=self.aims_settings["xc"],
+                    relativistic=self.aims_settings["relativistic"],
+                    species_dir=self.aims_settings["species_dir"],
+                    compute_forces=True,
+                    many_body_dispersion='',)
+            else:
+                calc = Aims(xc=self.aims_settings["xc"],
+                    relativistic=self.aims_settings["relativistic"],
+                    species_dir=self.aims_settings["species_dir"],
+                    compute_forces=True,
+                    )
+            
+            calc.write_input(asi.atoms)
+        atoms.calc = ASI_ASE_calculator(
+            self.ASI_path,
+            init_via_ase,
+            MPI.COMM_WORLD,
+            atoms
+            )
+        return atoms
+    
+    def handle_aims_settings(
+        self,
+        path_to_control: str,
+        species_dir: str
+        ) -> None:
+        #TODO: make this more flexible
+        self.aims_settings = {}
+        with open(path_to_control, "r") as f: 
+            for line in f:
+                if "xc" in line and '#' not in line:
+                    self.aims_settings['xc'] = line.split()[1]
+                if "relativistic" in line and '#' not in line:
+                    self.aims_settings['relativistic'] = line.split()[1] + " " + line.split()[2]
+                if "charge" in line and '#' not in line:
+                    self.aims_settings['charge'] = line.split()[1]
+                if "many_body_dispersion" in line and '#' not in line:
+                    self.aims_settings['many_body_dispersion'] = ''
+        self.aims_settings['species_dir'] = species_dir
+        return None
+    
+    def handle_MD_settings(self, al_settings):
+        #TODO: make this more flexible
+        self.md_settings = al_settings["MD"]
+        self.stat_ensemble = self.md_settings["stat_ensemble"].lower()
+        if self.stat_ensemble == 'nvt':
+            self.thermostat = self.md_settings['thermostat'].lower()
+            if self.thermostat == 'langevin':
+                self.friction = self.md_settings['friction']
+                self.md_seed = self.md_settings['seed']
+                
+        self.timestep = self.md_settings['timestep']
+        self.temperature = self.md_settings['temperature']
+        
+    
+    def setup_md(
+        self,
+        atoms
+        ):
+        #TODO: make this more flexible
+        if self.stat_ensemble == 'nvt':
+            if self.thermostat == 'langevin':
+                dyn = Langevin(
+                    atoms,
+                    timestep=self.timestep * units.fs,
+                    friction=self.friction,
+                    temperature_K=self.temperature,
+                    rng=np.random.RandomState(self.md_seed)
+                )
+    
+        # make this optional and have the possibility for different initial temperature
+        MaxwellBoltzmannDistribution(atoms, temperature_K=self.temperature)
+    
+        return dyn
 
 class InitalDatasetProcedure(PrepareInitialDatasetProcedure):
-    def run(self):
 
+    def run_MD(self, atoms, dyn):
+        self.sampled_points = []
+        for _ in range(self.n_samples * self.ensemble_size):
+            dyn.step(self.skip_step)
+            if RANK == 0:
+                logging.info('step')
+                current_energy = np.array(atoms.get_potential_energy())
+                current_forces = np.array(atoms.get_forces())
+                current_point = atoms.copy()
+                current_point.info['energy'] = current_energy
+                current_point.arrays['forces'] = current_forces 
+                self.sampled_points.append(
+                    current_point
+                )
+    
+    def run(self):
+        self.dyn = self.setup_md(self.atoms)
+        self.setup_calculator(self.atoms)
         current_valid = np.inf
         step = 0
-        epoch = 0
-        self.point_added = 0
         while (
             self.desired_acc * self.lamb <= current_valid
-            and epoch < self.max_initial_epochs
+            and self.epoch < self.max_initial_epochs
         ):
-            logging.info(f"Sampling new points at step {step}.")
-            sampled_points = self.trajectory[:: self.skip_step][
-                self.n_samples
-                * self.ensemble_size
-                * step : self.n_samples
-                * self.ensemble_size
-                * (step + 1)
-            ]
-            random.shuffle(sampled_points)
-            self.point_added += len(sampled_points)
+            
+            if RANK == 0:
+                logging.info(f"Sampling new points at step {step}.")
+            self.run_MD(self.atoms, self.dyn)
+            if RANK == 0:
+                random.shuffle(self.sampled_points)
+                for number, (tag, model) in enumerate(self.ensemble.items()):
 
-            for number, (tag, model) in enumerate(self.ensemble.items()):
+                    member_points = self.sampled_points[
+                        self.n_samples * number : self.n_samples * (number + 1)
+                    ]
+                    
+                    (
+                        self.ensemble_ase_sets[tag],
+                        self.ensemble_mace_sets[tag],
+                    ) = update_datasets(
+                        new_points=member_points,
+                        mace_set=self.ensemble_mace_sets[tag],
+                        ase_set=self.ensemble_ase_sets[tag],
+                        valid_split=self.initial_valid_ratio,
+                        z_table=self.z_table,
+                        seed=self.seed,
+                        r_max=self.r_max,
+                    )
+                    
+                    batch_size = (
+                        1
+                        if len(self.ensemble_mace_sets[tag]["train"])
+                        < self.set_batch_size
+                        else self.set_batch_size
+                    )
+                    valid_batch_size = (
+                        1
+                        if len(self.ensemble_mace_sets[tag]["valid"])
+                        < self.set_valid_batch_size
+                        else self.set_valid_batch_size
+                    )
 
-                member_points = sampled_points[
-                    self.n_samples * number : self.n_samples * (number + 1)
-                ]
+                    (
+                        self.ensemble_mace_sets[tag]["train_loader"],
+                        self.ensemble_mace_sets[tag]["valid_loader"],
+                    ) = create_dataloader(
+                        self.ensemble_mace_sets[tag]["train"],
+                        self.ensemble_mace_sets[tag]["valid"],
+                        batch_size,
+                        valid_batch_size,
+                    )
+
+                    update_avg_neighs_shifts_scale(
+                        model=model,
+                        train_loader=self.ensemble_mace_sets[tag]["train_loader"],
+                        atomic_energies=self.atomic_energies,
+                        scaling=self.scaling,
+                    )
+                    logging.info(
+                        f"Training set size for '{tag}': {len(self.ensemble_mace_sets[tag]['train'])}; Validation set size: {len(self.ensemble_mace_sets[tag]['valid'])}."
+                    )
+
+                    step += 1
+                logging.info("Training.")
+                ensemble_valid_losses = {
+                        tag: np.inf for tag in self.ensemble.keys()
+                    }
+                for i in range(self.intermediate_epochs):
+                    for tag, model in self.ensemble.items():
+
+                        logger = tools.MetricsLogger(
+                            directory=self.mace_settings["GENERAL"]["results_dir"],
+                            tag=tag + "_train",
+                        )
+                        train_epoch(
+                            model=model,
+                            train_loader=self.ensemble_mace_sets[tag][
+                                "train_loader"
+                            ],
+                            loss_fn=self.training_setups[tag]["loss_fn"],
+                            optimizer=self.training_setups[tag]["optimizer"],
+                            lr_scheduler=self.training_setups[tag]["lr_scheduler"],
+                            epoch=self.epoch,
+                            start_epoch=0,
+                            valid_loss=ensemble_valid_losses[tag],
+                            logger=logger,
+                            device=self.training_setups[tag]["device"],
+                            max_grad_norm=self.training_setups[tag][
+                                "max_grad_norm"
+                            ],
+                            output_args=self.training_setups[tag]["output_args"],
+                            ema=self.training_setups[tag]["ema"],
+                        )
+
+                    if (
+                        self.epoch % self.valid_skip == 0
+                        or (self.epoch + 1) % self.valid_skip == 0
+                    ):
+                        (
+                            ensemble_valid_losses,
+                            _,
+                            metrics,
+                        ) = validate_epoch_ensemble(
+                            ensemble=self.ensemble,
+                            ema=self.training_setups[tag]["ema"],
+                            loss_fn=self.training_setups[tag]["loss_fn"],
+                            valid_loader=self.ensemble_mace_sets[tag][
+                                "valid_loader"
+                            ],
+                            output_args=self.training_setups[tag]["output_args"],
+                            device=self.training_setups[tag]["device"],
+                            logger=logger,
+                            log_errors=self.mace_settings["MISC"]["error_table"],
+                            epoch=self.epoch,
+                        )
+                        current_valid = metrics["mae_f"]
+                        
+                        if self.desired_acc * self.lamb >= current_valid:
+                            logging.info(
+                                f"Accuracy criterion reached at step {step}."
+                            )
+                            logging.info(
+                                f"Criterion: {self.desired_acc * self.lamb}; Current accuracy: {current_valid}."
+                            )
+                            for tag, model in self.ensemble.items():
+                                torch.save(
+                                    model,
+                                    Path(
+                                        self.mace_settings["GENERAL"]["model_dir"]
+                                    )
+                                    / (tag + ".model"),
+                                )
+
+                                save_checkpoint(
+                                    checkpoint_handler=self.training_setups[tag][
+                                        "checkpoint_handler"
+                                    ],
+                                    training_setup=self.training_setups[tag],
+                                    model=model,
+                                    epoch=self.epoch,
+                                    keep_last=True,
+                                )
+                            
+                            break
+                        else:
+                            for tag, model in self.ensemble.items():
+                                save_checkpoint(
+                                    checkpoint_handler=self.training_setups[tag][
+                                        "checkpoint_handler"
+                                    ],
+                                    training_setup=self.training_setups[tag],
+                                    model=model,
+                                    epoch=self.epoch,
+                                    keep_last=False,
+                                )
+                    self.epoch += 1
+
+
+                if (
+                    self.epoch == self.max_initial_epochs
+                ):  # TODO: change to a different variable (shares with al-algo right now)
+                    logging.info(f"Maximum number of epochs reached.")
+
+                save_datasets(
+                    self.ensemble,
+                    self.ensemble_ase_sets,
+                    path=self.dataset_dir / "initial",
+                    initial=True,
+                )
+            MPI.COMM_WORLD.Barrier()
+            current_valid = MPI.COMM_WORLD.bcast(current_valid, root=0)
+            self.epoch = MPI.COMM_WORLD.bcast(self.epoch, root=0)
+            MPI.COMM_WORLD.Barrier()
+        self.atoms.calc.close()
+        return 0
+
+
+    def converge(self):
+        if RANK == 0:
+            logging.info("Converging.")
+            for _, (tag, model) in enumerate(self.ensemble.items()):
 
                 (
-                    self.ensemble_ase_sets[tag],
-                    self.ensemble_mace_sets[tag],
-                ) = update_datasets(
-                    new_points=member_points,
-                    mace_set=self.ensemble_mace_sets[tag],
-                    ase_set=self.ensemble_ase_sets[tag],
-                    valid_split=self.initial_valid_ratio,
-                    z_table=self.z_table,
-                    seed=self.seed,
-                    r_max=self.r_max,
-                )
-
-                batch_size = (
-                    1
-                    if len(self.ensemble_mace_sets[tag]["train"])
-                    < self.set_batch_size
-                    else self.set_batch_size
-                )
-                valid_batch_size = (
-                    1
-                    if len(self.ensemble_mace_sets[tag]["valid"])
-                    < self.set_valid_batch_size
-                    else self.set_valid_batch_size
-                )
-
-                (
-                    self.ensemble_mace_sets[tag]["train_loader"],
-                    self.ensemble_mace_sets[tag]["valid_loader"],
+                    self.ensemble_ase_sets[tag]["train_loader"],
+                    self.ensemble_ase_sets[tag]["valid_loader"],
                 ) = create_dataloader(
                     self.ensemble_mace_sets[tag]["train"],
                     self.ensemble_mace_sets[tag]["valid"],
-                    batch_size,
-                    valid_batch_size,
+                    self.set_batch_size,
+                    self.set_valid_batch_size,
                 )
 
                 update_avg_neighs_shifts_scale(
                     model=model,
-                    train_loader=self.ensemble_mace_sets[tag]["train_loader"],
+                    train_loader=self.ensemble_ase_sets[tag]["train_loader"],
                     atomic_energies=self.atomic_energies,
                     scaling=self.scaling,
                 )
 
-                step += 1
-                logging.info(
-                    f"Training set size for '{tag}': {len(self.ensemble_mace_sets[tag]['train'])}; Validation set size: {len(self.ensemble_mace_sets[tag]['valid'])}."
+            # TODO: reset or not?
+            self.training_setups_convergence = {}
+            for tag in self.ensemble.keys():
+                self.training_setups_convergence[tag] = setup_mace_training(
+                    settings=self.mace_settings,
+                    model=self.ensemble[tag],
+                    tag=tag,
                 )
-
-            logging.info("Training.")
-            ensemble_valid_losses = {
-                tag: np.inf for tag in self.ensemble.keys()
-            }
-            for i in range(self.intermediate_epochs):
+            best_valid_loss = np.inf
+            epoch = 0
+            patience = self.al_settings["patience"]
+            no_improvement = 0
+            ensemble_valid_losses = {tag: np.inf for tag in self.ensemble.keys()}
+            for j in range(self.max_final_epochs):
+                # ensemble_loss = 0
                 for tag, model in self.ensemble.items():
-
                     logger = tools.MetricsLogger(
                         directory=self.mace_settings["GENERAL"]["results_dir"],
                         tag=tag + "_train",
                     )
                     train_epoch(
                         model=model,
-                        train_loader=self.ensemble_mace_sets[tag][
-                            "train_loader"
+                        train_loader=self.ensemble_ase_sets[tag]["train_loader"],
+                        loss_fn=self.training_setups_convergence[tag]["loss_fn"],
+                        optimizer=self.training_setups_convergence[tag][
+                            "optimizer"
                         ],
-                        loss_fn=self.training_setups[tag]["loss_fn"],
-                        optimizer=self.training_setups[tag]["optimizer"],
-                        lr_scheduler=self.training_setups[tag]["lr_scheduler"],
+                        lr_scheduler=self.training_setups_convergence[tag][
+                            "lr_scheduler"
+                        ],
+                        valid_loss=ensemble_valid_losses[tag],
                         epoch=epoch,
                         start_epoch=0,
-                        valid_loss=ensemble_valid_losses[tag],
                         logger=logger,
-                        device=self.training_setups[tag]["device"],
-                        max_grad_norm=self.training_setups[tag][
+                        device=self.training_setups_convergence[tag]["device"],
+                        max_grad_norm=self.training_setups_convergence[tag][
                             "max_grad_norm"
                         ],
-                        output_args=self.training_setups[tag]["output_args"],
-                        ema=self.training_setups[tag]["ema"],
+                        output_args=self.training_setups_convergence[tag][
+                            "output_args"
+                        ],
+                        ema=self.training_setups_convergence[tag]["ema"],
                     )
+                    # ensemble_loss += loss
+                # ensemble_loss /= len(ensemble)
 
                 if (
                     epoch % self.valid_skip == 0
-                    or (epoch + 1) % self.valid_skip == 0
+                    or epoch == self.max_final_epochs - 1
                 ):
-                    (
-                        ensemble_valid_losses,
-                        _,
-                        metrics,
-                    ) = validate_epoch_ensemble(
+                    ensemble_valid_losses, valid_loss, _ = validate_epoch_ensemble(
                         ensemble=self.ensemble,
-                        ema=self.training_setups[tag]["ema"],
-                        loss_fn=self.training_setups[tag]["loss_fn"],
-                        valid_loader=self.ensemble_mace_sets[tag][
-                            "valid_loader"
+                        ema=self.training_setups_convergence[tag]["ema"],
+                        loss_fn=self.training_setups_convergence[tag]["loss_fn"],
+                        valid_loader=self.ensemble_ase_sets[tag]["valid_loader"],
+                        output_args=self.training_setups_convergence[tag][
+                            "output_args"
                         ],
-                        output_args=self.training_setups[tag]["output_args"],
-                        device=self.training_setups[tag]["device"],
+                        device=self.training_setups_convergence[tag]["device"],
                         logger=logger,
                         log_errors=self.mace_settings["MISC"]["error_table"],
                         epoch=epoch,
                     )
-                    current_valid = metrics["mae_f"]
-
-                    if self.desired_acc * self.lamb >= current_valid:
-                        logging.info(
-                            f"Accuracy criterion reached at step {step}."
-                        )
-                        logging.info(
-                            f"Criterion: {self.desired_acc * self.lamb}; Current accuracy: {current_valid}."
-                        )
+                    if best_valid_loss > valid_loss and (best_valid_loss - valid_loss) > 0.01:
+                        best_valid_loss = valid_loss
+                        no_improvement = 0
                         for tag, model in self.ensemble.items():
                             torch.save(
                                 model,
-                                Path(
-                                    self.mace_settings["GENERAL"]["model_dir"]
-                                )
+                                Path(self.mace_settings["GENERAL"]["model_dir"])
                                 / (tag + ".model"),
                             )
-
                             save_checkpoint(
-                                checkpoint_handler=self.training_setups[tag][
-                                    "checkpoint_handler"
+                                checkpoint_handler=self.training_setups_convergence[
+                                    tag
+                                ][
+                                    "checkpoint_handler_convergence"
                                 ],
-                                training_setup=self.training_setups[tag],
+                                training_setup=self.training_setups_convergence[
+                                    tag
+                                ],
                                 model=model,
                                 epoch=epoch,
                                 keep_last=True,
                             )
-                        break
                     else:
-                        for tag, model in self.ensemble.items():
-                            save_checkpoint(
-                                checkpoint_handler=self.training_setups[tag][
-                                    "checkpoint_handler"
-                                ],
-                                training_setup=self.training_setups[tag],
-                                model=model,
-                                epoch=epoch,
-                                keep_last=False,
-                            )
+                        no_improvement += 1
+
                 epoch += 1
-
-            if (
-                epoch == self.max_initial_epochs
-            ):  # TODO: change to a different variable (shares with al-algo right now)
-                logging.info(f"Maximum number of epochs reached.")
-        save_datasets(
-            self.ensemble,
-            self.ensemble_ase_sets,
-            path=self.dataset_dir / "initial",
-            initial=True,
-        )
-
-    def converge(self):
-
-        for _, (tag, model) in enumerate(self.ensemble.items()):
-
-            (
-                self.ensemble_ase_sets[tag]["train_loader"],
-                self.ensemble_ase_sets[tag]["valid_loader"],
-            ) = create_dataloader(
-                self.ensemble_mace_sets[tag]["train"],
-                self.ensemble_mace_sets[tag]["valid"],
-                self.set_batch_size,
-                self.set_valid_batch_size,
-            )
-
-            update_avg_neighs_shifts_scale(
-                model=model,
-                train_loader=self.ensemble_ase_sets[tag]["train_loader"],
-                atomic_energies=self.atomic_energies,
-                scaling=self.scaling,
-            )
-
-        # TODO: reset or not?
-        self.training_setups_convergence = {}
-        for tag in self.ensemble.keys():
-            self.training_setups_convergence[tag] = setup_mace_training(
-                settings=self.mace_settings,
-                model=self.ensemble[tag],
-                tag=tag,
-            )
-        best_valid_loss = np.inf
-        epoch = 0
-        patience = self.al_settings["patience"]
-        no_improvement = 0
-        ensemble_valid_losses = {tag: np.inf for tag in self.ensemble.keys()}
-        for j in range(self.max_final_epochs):
-            # ensemble_loss = 0
-            for tag, model in self.ensemble.items():
-                logger = tools.MetricsLogger(
-                    directory=self.mace_settings["GENERAL"]["results_dir"],
-                    tag=tag + "_train",
-                )
-                train_epoch(
-                    model=model,
-                    train_loader=self.ensemble_ase_sets[tag]["train_loader"],
-                    loss_fn=self.training_setups_convergence[tag]["loss_fn"],
-                    optimizer=self.training_setups_convergence[tag][
-                        "optimizer"
-                    ],
-                    lr_scheduler=self.training_setups_convergence[tag][
-                        "lr_scheduler"
-                    ],
-                    valid_loss=ensemble_valid_losses[tag],
-                    epoch=epoch,
-                    start_epoch=0,
-                    logger=logger,
-                    device=self.training_setups_convergence[tag]["device"],
-                    max_grad_norm=self.training_setups_convergence[tag][
-                        "max_grad_norm"
-                    ],
-                    output_args=self.training_setups_convergence[tag][
-                        "output_args"
-                    ],
-                    ema=self.training_setups_convergence[tag]["ema"],
-                )
-                # ensemble_loss += loss
-            # ensemble_loss /= len(ensemble)
-
-            if (
-                epoch % self.valid_skip == 0
-                or epoch == self.max_final_epochs - 1
-            ):
-                ensemble_valid_losses, valid_loss, _ = validate_epoch_ensemble(
-                    ensemble=self.ensemble,
-                    ema=self.training_setups_convergence[tag]["ema"],
-                    loss_fn=self.training_setups_convergence[tag]["loss_fn"],
-                    valid_loader=self.ensemble_ase_sets[tag]["valid_loader"],
-                    output_args=self.training_setups_convergence[tag][
-                        "output_args"
-                    ],
-                    device=self.training_setups_convergence[tag]["device"],
-                    logger=logger,
-                    log_errors=self.mace_settings["MISC"]["error_table"],
-                    epoch=epoch,
-                )
-                if best_valid_loss > valid_loss and (best_valid_loss - valid_loss) > 0.01:
-                    best_valid_loss = valid_loss
-                    no_improvement = 0
-                    for tag, model in self.ensemble.items():
-                        torch.save(
-                            model,
-                            Path(self.mace_settings["GENERAL"]["model_dir"])
-                            / (tag + ".model"),
-                        )
-                        save_checkpoint(
-                            checkpoint_handler=self.training_setups_convergence[
-                                tag
-                            ][
-                                "checkpoint_handler_convergence"
-                            ],
-                            training_setup=self.training_setups_convergence[
-                                tag
-                            ],
-                            model=model,
-                            epoch=epoch,
-                            keep_last=True,
-                        )
-                else:
-                    no_improvement += 1
-
-            epoch += 1
-            if no_improvement > patience:
-                logging.info(
-                    f"No improvements for {patience} epochs. Training converged. Best model based on validation loss saved"
-                )
-                break
-            if j == self.max_final_epochs - 1:
-                logging.info(
-                    "Maximum number of epochs reached. Best model based on validation loss saved"
-                )
+                if no_improvement > patience:
+                    logging.info(
+                        f"No improvements for {patience} epochs. Training converged. Best model based on validation loss saved"
+                    )
+                    break
+                if j == self.max_final_epochs - 1:
+                    logging.info(
+                        "Maximum number of epochs reached. Best model based on validation loss saved"
+                    )
 
 class PrepareALProcedure:
     def __init__(
         self,
         mace_settings,
         al_settings,
+        species_dir: str,
+        path_to_control: str = "./control.in",
+        path_to_geometry: str = "./geometry.in",
+        seeds_tags_dict: dict = None,
         path_to_trajectories: str = None,
         analysis: bool = False,
     ) -> None:
-        self.handle_al_settings(al_settings)
-        self.handle_mace_settings(mace_settings)
-        self.create_folders()
-        self.get_atomic_energies()
-        self.seeds = dict(
-            np.load(
-                self.dataset_dir / "seeds_tags_dict.npz", allow_pickle=True
-            )
+        
+        tools.setup_logger(
+            level=mace_settings["MISC"]["log_level"],
+            #    tag=tag,
+            directory=mace_settings["GENERAL"]["log_dir"],
         )
-        self.use_scheduler = False
         logging.basicConfig(
             filename="AL.log",
             encoding="utf-8",
             level=logging.DEBUG,
             force=True,
         )
-        tools.setup_logger(
-            level=self.mace_settings["MISC"]["log_level"],
-            #    tag=tag,
-            directory=self.mace_settings["GENERAL"]["log_dir"],
-        )
+        if RANK == 0:
+            logging.info("Initializing active learning procedure.")
+        
+        
+        self.handle_al_settings(al_settings)
+        self.handle_mace_settings(mace_settings)
+        self.handle_aims_settings(path_to_control, species_dir)
+        self.create_folders()
+        #TODO: this would change with multiple species
+        self.z = Z_from_geometry_in()
+        self.n_atoms = len(self.z)
+        self.atoms = read(path_to_geometry)
+        
+        if seeds_tags_dict is not None:
+            self.seeds = dict(
+                np.load(
+                    self.dataset_dir / "seeds_tags_dict.npz", allow_pickle=True
+                )
+            )
+        # TODO: remove hardcode
+        self.use_scheduler = False
 
-        logging.info("Initializing active learning procedure.")
+
         self.ensemble = ensemble_from_folder(
             path_to_models="./model",
             device=self.device,
         )
+        self.get_atomic_energies_from_ensemble()
+        
         self.training_setups = ensemble_training_setups(
             ensemble=self.ensemble,
             mace_settings=self.mace_settings,
@@ -493,16 +647,33 @@ class PrepareALProcedure:
         self.trajectory_epochs = {
             trajectory: 0 for trajectory in range(self.num_trajectories)
         }
-        self.uncertainties = []  # for moving average
         self.t_intervals = {
             trajectory: [] for trajectory in range(self.num_trajectories)
         }
         self.sanity_checks = {
             trajectory: [] for trajectory in range(self.num_trajectories)
         }
+        
+        self.aims_calculator = self.setup_aims_calc()
+        
+        self.uncertainties = []  # for moving average   
         self.sanity_checks_valid = {}
         self.analysis = analysis
-
+        
+        
+    def get_atomic_energies_from_ensemble(self):
+        self.atomic_energies_dict = {}
+        for _, model in self.ensemble.items():
+            self.atomic_energies = np.array(model.atomic_energies_fn.atomic_energies.cpu())
+            break
+        for i, atomic_energy in self.atomic_energies:
+            self.atomic_energies_dict[i] = atomic_energy
+            
+        self.z_table = tools.get_atomic_number_table_from_zs(
+            z for z in self.atomic_energies_dict.keys()
+        )
+        
+            
     def handle_mace_settings(self, mace_settings: dict):
         self.mace_settings = mace_settings
         self.seed = self.mace_settings["GENERAL"]["seed"]
@@ -514,6 +685,7 @@ class PrepareALProcedure:
         self.scaling = self.mace_settings["TRAINING"]["scaling"]
         self.device = self.mace_settings["MISC"]["device"]
         self.model_dir = self.mace_settings["GENERAL"]["model_dir"]
+        self.dtype = self.mace_settings["GENERAL"]["default_dtype"]
     
     def handle_al_settings(self, al_settings):
         self.al_settings = al_settings
@@ -532,7 +704,27 @@ class PrepareALProcedure:
         self.intermediate_epochs = al_settings["intermediate_epochs"]
         self.dataset_dir = Path(al_settings["dataset_dir"])
         self.patience = al_settings["patience"]
-
+    
+    def handle_aims_settings(
+        self,
+        path_to_control: str,
+        species_dir: str
+        ) -> None:
+        #TODO: make this more flexible
+        self.aims_settings = {}
+        with open(path_to_control, "r") as f: 
+            for line in f:
+                if "xc" in line and '#' not in line:
+                    self.aims_settings['xc'] = line.split()[1]
+                if "relativistic" in line and '#' not in line:
+                    self.aims_settings['relativistic'] = line.split()[1] + " " + line.split()[2]
+                if "charge" in line and '#' not in line:
+                    self.aims_settings['charge'] = line.split()[1]
+                if "many_body_dispersion" in line and '#' not in line:
+                    self.aims_settings['many_body_dispersion'] = ''
+        self.aims_settings['species_dir'] = species_dir
+        return None
+    
     def create_folders(self):
         (self.dataset_dir / "final" / "training").mkdir(
             parents=True, exist_ok=True
@@ -541,17 +733,61 @@ class PrepareALProcedure:
             parents=True, exist_ok=True
         )
 
-    def get_atomic_energies(self):
-        self.atomic_energies_dict = {1: -12.482766945, 6: -1027.170068545}
-        self.atomic_energies = np.array(
-            [
-                self.atomic_energies_dict[z]
-                for z in self.atomic_energies_dict.keys()
-            ]
-        )
-        self.z_table = tools.get_atomic_number_table_from_zs(
-            z for z in self.atomic_energies_dict.keys()
-        )
+    def setup_aims_calc(self):
+        
+        def init_via_ase(asi):
+            
+            from ase.calculators.aims import Aims
+            #TODO: make this more flexible
+            if self.aims_settings.get("many_body_dispersion") is not None:
+                calc = Aims(xc=self.aims_settings["xc"],
+                    relativistic=self.aims_settings["relativistic"],
+                    species_dir=self.aims_settings["species_dir"],
+                    compute_forces=True,
+                    many_body_dispersion='',)
+            else:
+                calc = Aims(xc=self.aims_settings["xc"],
+                    relativistic=self.aims_settings["relativistic"],
+                    species_dir=self.aims_settings["species_dir"],
+                    compute_forces=True,
+                    )
+            
+            calc.write_input(asi.atoms)
+        calculator = ASI_ASE_calculator(
+            self.ASI_path,
+            init_via_ase,
+            MPI.COMM_WORLD,
+            self.atoms
+            )
+        return calculator
+
+    def setup_mace_calc(self):
+        # 
+        # the calculator needs to be updated consistently ...
+        self.mace_calc = MACECalculator(
+            model_paths=self.model_dir,
+            device=self.device,
+            default_dtype=self.dtype)
+        
+
+    #TODO: per trajectory worker create a dynamics object with associated atoms and they share the MACE calculator
+    #       this way each worker can have different MD settings for the same species
+
+    def setup_md_al(self, atoms, md_settings):
+        #TODO: make this more flexible
+        if md_settings["stat_ensemble"].lower() == 'nvt':
+            if md_settings['thermostat'].lower() == 'langevin':
+                dyn = Langevin(
+                    atoms,
+                    timestep=md_settings['timestep'] * units.fs,
+                    friction=md_settings['friction'],
+                    temperature_K=md_settings['temperature'],
+                    rng=np.random.RandomState(md_settings['seed'])
+                )
+        # make this optional and have the possibility for different initial temperature
+        MaxwellBoltzmannDistribution(atoms, temperature_K=md_settings['temperature'])
+    
+        return dyn
 
     def simulate_trajectories(self, path_to_trajectories: str):
         self.trajectories = pre_trajectories_from_folder(
@@ -560,6 +796,18 @@ class PrepareALProcedure:
         )
 
 class ALProcedure(PrepareALProcedure):
+    def data_to_ase(self, energy, coords, forces):
+        atoms = ase.Atoms(self.z, coords)
+        atoms.calc = ase.calculators.singlepoint.SinglePointCalculator(
+            atoms=atoms,
+            energy=np.array(energy),
+            forces=np.array(forces),
+        )
+        # mace uses this way to store the data
+        atoms.info['energy'] = np.array(energy)
+        atoms.arrays['forces'] = np.array(forces)
+        return atoms
+    
     def sanity_check(self, sanity_prediction):
         sanity_uncertainty = max_sd_2(sanity_prediction)
         mean_sanity_prediction = sanity_prediction.mean(0).squeeze()
@@ -751,6 +999,7 @@ class ALProcedure(PrepareALProcedure):
                 logging.info(
                     f"Trajectory worker {idx} at step {current_MD_step}."
                 )
+                # this is redundant, we can get the results from the calculator
                 prediction = ensemble_prediction(
                     models=list(self.ensemble.values()),
                     atoms_list=[self.point],
@@ -1002,6 +1251,7 @@ class ALProcedure(PrepareALProcedure):
                 logging.info(
                     f"Maximum number of epochs reached. Best model (Epoch {best_epoch}) based on validation loss saved."
                 )
+    
     def evaluate_ensemble(
         self,
         ase_atoms_list
