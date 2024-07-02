@@ -17,7 +17,8 @@ import ase.data
 import ase.io
 import dataclasses
 from mace.tools import AtomicNumberTable
-
+from mace.tools.compile import prepare
+from mace.tools.scripts_utils import extract_load
 from mpi4py import MPI
 from asi4py.asecalc import ASI_ASE_calculator
 from ase.md.velocitydistribution import MaxwellBoltzmannDistribution
@@ -553,12 +554,17 @@ def create_mace_dataset(
 def ensemble_from_folder(
     path_to_models: str,
     device: str,
+    compile_mode: str = "default",
     ) -> list:
     ensemble = {}
     for filename in os.listdir(path_to_models):
         if os.path.isfile(os.path.join(path_to_models, filename)):
             complete_path = os.path.join(path_to_models, filename)
-            model = torch.load(complete_path, map_location=device)
+            model = torch.compile(
+                    prepare(extract_load)(f=complete_path, map_location=device),
+                    mode=compile_mode,
+                    fullgraph=True,
+                )
             filename_without_suffix = os.path.splitext(filename)[0]
             ensemble[filename_without_suffix] = model
     return ensemble

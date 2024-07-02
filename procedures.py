@@ -571,6 +571,7 @@ class PrepareALProcedure:
         mace_settings,
         al_settings,
         species_dir: str,
+        path_to_aims_lib: str,
         path_to_control: str = "./control.in",
         path_to_geometry: str = "./geometry.in",
         seeds_tags_dict: dict = None,
@@ -596,9 +597,16 @@ class PrepareALProcedure:
         self.handle_al_settings(al_settings)
         self.handle_mace_settings(mace_settings)
         self.handle_aims_settings(path_to_control, species_dir)
+        self.ASI_path = path_to_aims_lib
+        #TODO: will break when using multiple settings for different trajectories and 
+        # it should be adapted to the way the initial dataset procecure treats md settings
+        self.md_settings = al_settings["MD"]
+        
         self.create_folders()
+        
         #TODO: this would change with multiple species
         self.z = Z_from_geometry_in()
+        
         self.n_atoms = len(self.z)
         self.atoms = read(path_to_geometry)
         
@@ -617,7 +625,8 @@ class PrepareALProcedure:
             device=self.device,
         )
         self.get_atomic_energies_from_ensemble()
-        
+
+
         self.training_setups = ensemble_training_setups(
             ensemble=self.ensemble,
             mace_settings=self.mace_settings,
@@ -636,7 +645,23 @@ class PrepareALProcedure:
             r_max=self.r_max,
             seed=self.seeds,
         )
+        
+        self.aims_calculator = self.setup_aims_calc()
+        self.setup_mace_calc()
 
+        self.trajectories = {
+            trajectory: self.atoms.copy() for trajectory in range(self.num_trajectories)
+        }
+        for trajectory in self.trajectories.values():
+            trajectory.calc = self.mace_calc
+
+                #TODO: make this more flexible, to allow different drivers per trajectory
+        self.md_drivers = {
+            trajectory: self.setup_md_al(
+                atoms=self.trajectories[trajectory], md_settings=self.md_settings
+            ) for trajectory in range(self.num_trajectories)
+        }
+        
         self.trajectory_training = {
             trajectory: "running"
             for trajectory in range(self.num_trajectories)
@@ -653,9 +678,7 @@ class PrepareALProcedure:
         self.sanity_checks = {
             trajectory: [] for trajectory in range(self.num_trajectories)
         }
-        
-        self.aims_calculator = self.setup_aims_calc()
-        
+
         self.uncertainties = []  # for moving average   
         self.sanity_checks_valid = {}
         self.analysis = analysis
@@ -769,10 +792,6 @@ class PrepareALProcedure:
             device=self.device,
             default_dtype=self.dtype)
         
-
-    #TODO: per trajectory worker create a dynamics object with associated atoms and they share the MACE calculator
-    #       this way each worker can have different MD settings for the same species
-
     def setup_md_al(self, atoms, md_settings):
         #TODO: make this more flexible
         if md_settings["stat_ensemble"].lower() == 'nvt':
@@ -796,17 +815,6 @@ class PrepareALProcedure:
         )
 
 class ALProcedure(PrepareALProcedure):
-    def data_to_ase(self, energy, coords, forces):
-        atoms = ase.Atoms(self.z, coords)
-        atoms.calc = ase.calculators.singlepoint.SinglePointCalculator(
-            atoms=atoms,
-            energy=np.array(energy),
-            forces=np.array(forces),
-        )
-        # mace uses this way to store the data
-        atoms.info['energy'] = np.array(energy)
-        atoms.arrays['forces'] = np.array(forces)
-        return atoms
     
     def sanity_check(self, sanity_prediction):
         sanity_uncertainty = max_sd_2(sanity_prediction)
@@ -826,9 +834,10 @@ class ALProcedure(PrepareALProcedure):
         if self.point_added % self.valid_ratio == 0:
             self.trajectory_training[idx] = "running"
             self.num_workers_waiting -= 1
-            logging.info(
-                f"Trajectory worker {idx} is adding a point to the validation set."
-            )
+            if RANK == 0:
+                logging.info(
+                    f"Trajectory worker {idx} is adding a point to the validation set."
+                )
             # while the initial datasets are different for each ensemble member we add the new points to
             # all ensemble member datasets
             for tag in self.ensemble_ase_sets.keys():
@@ -848,9 +857,10 @@ class ALProcedure(PrepareALProcedure):
             self.trajectory_training[idx] = "training"
             self.num_workers_training += 1
             self.num_workers_waiting -= 1
-            logging.info(
-                f"Trajectory worker {idx} is adding a point to the training set."
-            )
+            if RANK == 0:
+                logging.info(
+                    f"Trajectory worker {idx} is adding a point to the training set."
+                )
             # while the initial datasets are different for each ensemble member we add the new points to
             # all ensemble member datasets
             for tag in self.ensemble_ase_sets.keys():
@@ -858,12 +868,14 @@ class ALProcedure(PrepareALProcedure):
                 self.ensemble_mace_sets[tag]["train"] += self.mace_point
             if len(self.ensemble_ase_sets[tag]["train"]) > self.max_set_size:
                 return True
-            logging.info(
-                f"Size of the training and validation set: {len(self.ensemble_ase_sets[tag]['train'])}, {len(self.ensemble_ase_sets[tag]['valid'])}."
-            )
+            if RANK == 0:
+                logging.info(
+                    f"Size of the training and validation set: {len(self.ensemble_ase_sets[tag]['train'])}, {len(self.ensemble_ase_sets[tag]['valid'])}."
+                )
         self.point_added += 1
 
     def training_task(self, idx):
+
         for _, (tag, model) in enumerate(self.ensemble.items()):
 
             (
@@ -965,29 +977,24 @@ class ALProcedure(PrepareALProcedure):
             current_MD_step > self.max_MD_steps
             and self.trajectory_training[idx] == "running"
         ):
-            logging.info(
-                f"Trajectory worker {idx} reached maximum MD steps and is killed."
-            )
+            if RANK == 0:
+                logging.info(
+                    f"Trajectory worker {idx} reached maximum MD steps and is killed."
+                )
             self.num_MD_limits_reached += 1
             self.trajectory_training[idx] = "killed"
             return "killed"
 
         else:
+            # ideally we would first check the uncertainty, then optionally 
+            # calculate the aims forces and usem the to propagate
+            # currently the mace forces are used even if the uncertainty is too high
+            # but ase is weird and i don't want to change it so whatever. when we have our own 
+            # MD engine we can adress this. Or.. it leads to scf problems and we have to fix this
+            # because it generates crazy geometries
+            self.md_drivers[idx].step(1)
 
-            # before the worker takes another MD step it checks
-            # if a job has been finished
-            # if it is finished it adds the point to the training set
-            # and sets the worker to training mode without taking another MD step
-            # if the job has not finished the worker is skipped
-
-            # this means that there should ideally exist a queue for the
-            # jobs that are sent to the FHI-aims calculation
-
-            ###########################
-            # Here would be the MD step
-            ###########################
-
-            self.point = self.trajectories[idx][current_MD_step]
+            self.point = self.trajectories[idx]
             self.mace_point = create_mace_dataset(
                 data=[self.point],
                 z_table=self.z_table,
@@ -1000,12 +1007,7 @@ class ALProcedure(PrepareALProcedure):
                     f"Trajectory worker {idx} at step {current_MD_step}."
                 )
                 # this is redundant, we can get the results from the calculator
-                prediction = ensemble_prediction(
-                    models=list(self.ensemble.values()),
-                    atoms_list=[self.point],
-                    device=self.device,
-                    dtype=self.mace_settings["GENERAL"]["default_dtype"],
-                )
+                prediction = self.point.calc.results["forces_comm"]
                 uncertainty = max_sd_2(prediction)
                 # compute moving average of uncertainty
                 self.uncertainties.append(uncertainty)
@@ -1020,15 +1022,21 @@ class ALProcedure(PrepareALProcedure):
                     logging.info(
                         f"Uncertainty of point is beyond threshold {np.round(self.threshold,3)} at worker {idx}: {round(uncertainty.item(),3)}."
                     )
-                    #################################
-                    # Here would be the FHI-aims call
-                    #################################
+                    
+                    # at the moment the process waits for the calculation to finish
+                    # ideally it should calculate in the background and the other
+                    # workers sample/train in the meantime
+                    self.aims_calculator.calculate(self.point, properties=["energies","forces"])
+
+                    self.point.info['energy'] = self.aims_calculator.results['energy']
+                    self.point.arrays['forces'] = self.aims_calculator.results['forces']
 
                     # it sends the job and does not wait for the result but
                     # continues with the next worker. only if the job is done
                     # the worker is set to training mode
                     self.trajectory_training[idx] = "waiting"
                     self.num_workers_waiting += 1
+                    self.waiting_task(idx)
 
                     # for analysis
                     self.t_intervals[idx].append(current_MD_step)
@@ -1060,7 +1068,8 @@ class ALProcedure(PrepareALProcedure):
 
 
     def run(self):
-        logging.info("Starting active learning procedure.")
+        if RANK == 0:
+            logging.info("Starting active learning procedure.")
         self.current_valid = np.inf
         self.threshold = np.inf
         self.point_added = 0  # counts how many points have been added to the training set to decide when to add a point to the validation set
