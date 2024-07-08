@@ -833,7 +833,7 @@ class PrepareALProcedure:
             self.ASI_path,
             init_via_ase,
             MPI.COMM_WORLD,
-            path_to_geometry # TODO: must be changed when we have multiple species
+            read(path_to_geometry) # TODO: must be changed when we have multiple species
             )
         return calculator
 
