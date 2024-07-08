@@ -32,6 +32,12 @@ BOHR_INV = 1.0 / BOHR
 HARTREE = 27.21138450
 HARTREE_INV = 1.0 / HARTREE
 
+
+#############################################################################
+############ This part is mostly taken from the MACE source code ############
+############ with slight modifications to fit the needs of AL    ############
+#############################################################################
+
 Vector = np.ndarray  # [3,]
 Positions = np.ndarray  # [..., 3]
 Forces = np.ndarray  # [..., 3]
@@ -453,9 +459,18 @@ def compute_average_E0s(
 
 
 def max_sd_2(
-    prediction: np.array,  # [n_ensemble_members, n_mols, n_atoms, xyz]
+    prediction: np.array, 
     return_argmax: bool = False,
 ) -> np.array:
+    """
+    Compute the maximum standard deviation of the ensemble prediction.
+
+    Args:
+        prediction (np.array): Ensemble prediction of forces: [n_ensemble_members, n_mols, n_atoms, xyz].
+
+    Returns:
+        np.array: Maximum standard deviation of atomic forces per molecule: [n_mols].
+    """
     # average prediction over ensemble of models
     pred_av = np.average(prediction, axis=0, keepdims=True)
     diff_sq = (prediction - pred_av) ** 2.
@@ -532,8 +547,19 @@ def create_mace_dataset(
     seed: int,
     z_table: AtomicNumberTable,
     r_max: float,
-)-> tuple:
-    
+)-> list:
+    """
+    Create a MACE style dataset from a list of ASE atoms objects.
+
+    Args:
+        data (list): List of ASE atoms objects.
+        seed (int): Seed for shuffling and splitting the dataset.
+        z_table (AtomicNumberTable): Table of elements.
+        r_max (float): Cut-off radius.
+
+    Returns:
+        list: MACE style dataset.
+    """
     
     collections, _ = get_dataset_from_atoms(
     train_list=data,
@@ -556,15 +582,29 @@ def ensemble_from_folder(
     device: str,
     compile_mode: str = "default",
     ) -> list:
+    """
+    Load an ensemble of models from a folder. 
+    (Can't handle other file formats than .pt at the moment.)
+
+    Args:
+        path_to_models (str): Path to the folder containing the models.
+        device (str): Device to load the models on.
+        compile_mode (str, optional): Not implemented yet. Does nothing. Defaults to "default".
+
+    Returns:
+        list: List of models.
+    """
     ensemble = {}
     for filename in os.listdir(path_to_models):
         if os.path.isfile(os.path.join(path_to_models, filename)):
             complete_path = os.path.join(path_to_models, filename)
-            model = torch.compile(
-                    prepare(extract_load)(f=complete_path, map_location=device),
-                    mode=compile_mode,
-                    fullgraph=True,
-                )
+            model = torch.load(complete_path, map_location=device)
+            # One can't train compiled models so not usefull for us.
+            #model = torch.compile(
+            #        prepare(extract_load)(f=complete_path, map_location=device),
+            #        mode=compile_mode,
+            #        fullgraph=True,
+            #    )
             filename_without_suffix = os.path.splitext(filename)[0]
             ensemble[filename_without_suffix] = model
     return ensemble
@@ -574,6 +614,16 @@ def pre_trajectories_from_folder(
         path: str,
         num_trajectories: int,
         ) -> list:
+    """
+    Load pre-existing trajectories from a folder. ASE readable formats are supported.
+
+    Args:
+        path (str): Path to the folder containing the trajectories.
+        num_trajectories (int): Number of trajectories to load.
+
+    Returns:
+        list: List of ASE atoms objects.
+    """
     trajectories = []
     for i, filename in enumerate(os.listdir(path)):
         if os.path.isfile(os.path.join(path, filename)):
@@ -593,6 +643,21 @@ def evaluate_model(
     compute_stress: bool = False,
     dtype: str = "float64",
 ) -> torch.tensor:
+    """
+    Evaluate a MACE model on a list of ASE atoms objects.
+    This only handles atoms list with a single species. 
+
+    Args:
+        atoms_list (list): List of ASE atoms objects.
+        model (str): MACE model to evaluate.
+        batch_size (int): Batch size for evaluation.
+        device (str): Device to evaluate the model on.
+        compute_stress (bool, optional): Compute stress or not. Defaults to False.
+        dtype (str, optional): Data type of model. Defaults to "float64".
+
+    Returns:
+        torch.tensor: _description_
+    """
     torch_tools.set_default_dtype(dtype)
 
     # Load data and prepare input
@@ -652,6 +717,24 @@ def ensemble_prediction(
     batch_size: int = 1,
     return_energies: bool = False,
 ) -> np.array:
+    """
+    Predict forces for a list of ASE atoms objects using an ensemble of models. 
+    !!! Does not reduce the energies or forces to a single value. !!!
+
+    Args:
+        models (list): List of models.
+        atoms_list (list): List of ASE atoms objects.
+        device (str): Device to evaluate the models on.
+        dtype (str, optional): Dtype of models. Defaults to "float64".
+        batch_size (int, optional): Batch size of evaluation. Defaults to 1.
+        return_energies (bool, optional): Whether to return energies or not. Defaults to False.
+
+    Returns:
+        np.array: Forces [n_models, n_mols, n_atoms, xyz]
+        Optionally:
+        np.array: Energies [n_models, n_mols], Forces [n_models, n_mols, n_atoms, xyz]
+
+    """
     all_forces = []
     all_energies = []
     i = 0
@@ -680,15 +763,25 @@ def ensemble_prediction(
     return all_forces
 
 
-def split_to_member_sets(
-    
-):
-    member_sets = {}
-    return member_sets
+#def split_to_member_sets(
+#    
+#):
+#    member_sets = {}
+#    return member_sets
 
 def E_uncert(
-        prediction
-):  
+        prediction: np.array,
+) -> float:
+    """
+    Computes the standard deviation of the ensemble prediction on energies.
+
+    Args:
+        prediction (np.array): Ensemble prediction of energies: [n_ensemble_members, n_mols].
+
+    Returns:
+        float: Standard deviation of the ensemble prediction.
+    """
+
     M = prediction.shape[0] # number of ensemble members
     prediction_avg = np.mean(prediction, axis=0, keepdims=True)
     uncert = 1/(M-1) * np.sum((prediction_avg - prediction)**2, axis=0)
@@ -779,8 +872,21 @@ def update_mace_set(
     z_table: tools.AtomicNumberTable,
     seed: int,
     r_max: float,
-):
+) -> dict:
+    """
+    Update the MACE dataset with new data. Currently needs valid and training data.
 
+    Args:
+        new_train_data (_type_): List of MACE style training data.
+        new_valid_data (_type_): List of MACE style validation data.
+        mace_set (dict): Dictionary containg train and valid set to be updated.
+        z_table (tools.AtomicNumberTable): Table of elements.
+        seed (int): Seed for shuffling and splitting the dataset.
+        r_max (float): Cut-off radius.
+
+    Returns:
+        dict: Updated MACE dataset.
+    """
     new_train_set = create_mace_dataset(
         data=new_train_data,
         z_table=z_table,
@@ -808,8 +914,22 @@ def update_datasets(
     z_table: tools.AtomicNumberTable,
     seed: int,
     r_max: float,
-):
-    
+) -> tuple:
+    """
+    Update the ASE and MACE datasets with new data.
+
+    Args:
+        new_points (list): List of ASE atoms objects.
+        mace_set (dict): Dictionary of MACE style training and validation data.
+        ase_set (dict): Dictionary of ASE style training and validation data.
+        valid_split (float): Fraction of data to be used for validation.
+        z_table (tools.AtomicNumberTable): Table of elements.
+        seed (int): Seed for shuffling and splitting the dataset.
+        r_max (float): Cut-off radius.
+
+    Returns:
+        tuple: _description_
+    """
     new_train_data, new_valid_data = split_data(new_points, valid_split)
     ase_set['train'] += new_train_data
     ase_set['valid'] += new_valid_data
@@ -830,7 +950,19 @@ def ase_to_mace_ensemble_sets(
     z_table,
     seed: dict,
     r_max: float,
-):
+) -> dict:    
+    """
+    Convert ASE style ensemble datasets to MACE style ensemble datasets.
+
+    Args:
+        ensemble_ase_sets (dict): Dictionary of ASE style ensemble datasets.
+        z_table (_type_): Table of elements.
+        seed (dict): Seed for shuffling and splitting the dataset.
+        r_max (float): Cut-off radius.
+
+    Returns:
+        dict: Dictionary of MACE style ensemble datasets.
+    """
     ensemble_mace_sets = {tag: {'train': [], 'valid': []} for tag in ensemble_ase_sets.keys()}
     for tag in ensemble_ase_sets.keys():
         ensemble_mace_sets[tag]['train'] = create_mace_dataset(
@@ -849,11 +981,24 @@ def ase_to_mace_ensemble_sets(
 
 
 def update_avg_neighs_shifts_scale(
-    model,
-    train_loader,
-    atomic_energies,
-    scaling
-):
+    model: modules.MACE,
+    train_loader: torch_geometric.data.DataLoader,
+    atomic_energies: dict,
+    scaling: str,
+) -> None:
+    """
+    Update the average number of neighbors, scale and shift of
+    the MACE model with the given data
+
+    Args:
+        model (modules.MACE): The MACE model to be updated.
+        train_loader (torch_geometric.data.DataLoader): DataLoader for the training data.
+        atomic_energies (dict): Dictionary of atomic energies.
+        scaling (str): Scaling method to be used.
+
+    Returns:
+         None
+    """
     average_neighbors = modules.compute_avg_num_neighbors(train_loader)
     for interaction_idx in range(len(model.interactions)):
         model.interactions[interaction_idx].avg_num_neighbors = average_neighbors
@@ -865,12 +1010,25 @@ def update_avg_neighs_shifts_scale(
 
                     
 def save_checkpoint(
-    checkpoint_handler,
-    training_setup,
-    model,
+    checkpoint_handler: tools.CheckpointHandler,
+    training_setup: dict,
+    model: modules.MACE,
     epoch: int,
     keep_last: bool = False,
 ):
+    """
+    Save a checkpoint of the training setup and model.
+
+    Args:
+        checkpoint_handler (tools.CheckpointHandler): MACE handler for saving checkpoints.
+        training_setup (dict): Training settings.
+        model (modules.MACE): MACE model to be saved.
+        epoch (int): Current epoch.
+        keep_last (bool, optional): Keep the last checkpoint. Defaults to False.
+
+    Returns:
+        None
+    """
     if training_setup["ema"] is not None:
         with training_setup["ema"].average_parameters():
             checkpoint_handler.save(
@@ -893,11 +1051,21 @@ def save_checkpoint(
     return None
 
 def save_datasets(
-    ensemble,
-    ensemble_ase_sets,
-    path,
+    ensemble: dict,
+    ensemble_ase_sets: dict,
+    path: str,
     initial: bool = False
     ):
+    """
+    TODO: Save a complete dataset of the combined initial datasets and the rest.
+    Save the ensemble datasets as xyz files in the given path.
+
+    Args:
+        ensemble (dict): Dictionary of models.
+        ensemble_ase_sets (dict): Respective ASE style datasets as a dictionary.
+        path (str): _description_
+        initial (bool, optional): _description_. Defaults to False.
+    """
     for tag in ensemble.keys():
         if initial:
             write(path/"training"/f"initial_train_set_{tag}.xyz", ensemble_ase_sets[tag]['train'])
@@ -909,7 +1077,18 @@ def save_datasets(
 def load_ensemble_sets_from_folder(
     ensemble: dict,
     path_to_folder: Path,
-):
+) -> dict:
+    """
+    Load ensemble datasets from a folder.
+
+    Args:
+        ensemble (dict): Dictionary of models.
+        path_to_folder (Path): Path to the folder containing the datasets.
+
+    Returns:
+        dict: Dictionary of ASE style ensemble datasets.
+    """
+
     training_sets = os.listdir(Path(path_to_folder+"/training"))
     validation_sets = os.listdir(Path(path_to_folder+"/validation"))
 
@@ -926,13 +1105,44 @@ def load_ensemble_sets_from_folder(
                 )
     return ensemble_ase_sets
 
-def Z_from_geometry_in(path_to_geometry: str = "geometry.in"):
+def Z_from_geometry_in(
+        path_to_geometry: str = "geometry.in"
+        ) -> list:
+    """
+    Extract atomic numbers from a aims geometry file.
+
+    Args:
+        path_to_geometry (str, optional): Path to the geometry file. Defaults to "geometry.in".
+
+    Returns:
+        list: List of atomic numbers (no unique).
+    """
     with open(path_to_geometry, "r") as file:
         lines = file.readlines()
     Z = []
     for line in lines:
-        if "atom" in line:
+        if "atom" in line and "#" not in line:
             species = line.split()[4]
             atomic_number = ase.data.atomic_numbers[species]
             Z.append(atomic_number)
     return Z
+
+def list_files_in_directory(
+        directory_path: str
+        ) -> list:
+    """
+    List all files in a directory.
+
+    Args:
+        directory_path (str): Path to the directory.
+
+    Returns:
+        list: List of file paths.
+    """
+    file_paths = []
+    
+    for root, _, files in os.walk(directory_path):
+        for file in files:
+            file_paths.append(os.path.join(root, file))
+    
+    return file_paths

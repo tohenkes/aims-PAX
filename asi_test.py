@@ -15,9 +15,74 @@ from ase import units
 import ase
 from mace.calculators import MACECalculator
 
-write('geometry.in',
-ase.build.molecule("H2O"))
 
+water = ase.build.molecule("H2O")
+
+
+trajectories = {
+   0: water.copy(),
+   1: water.copy(),
+}
+
+trajectories_dyns = {
+    0: None,
+    1: None,
+}
+
+ASI_LIB_PATH = "/home/tobias/FHI-aims/libaims.240410.mpi.so"
+
+dictionary_settings = {
+  'xc': 'pbe',
+  'relativistic': 'atomic_zora scalar',
+  'species_dir': '/home/tobias/FHI-aims/FHIaims/species_defaults/defaults_2020/light/',
+  'compute_forces': True,
+  'many_body_dispersion': '',
+}
+
+def init_via_ase(asi):
+    from ase.calculators.aims import Aims
+    calc = Aims(xc=dictionary_settings['xc'],
+        relativistic=dictionary_settings['relativistic'],
+        species_dir=dictionary_settings['species_dir'],
+        compute_forces=dictionary_settings['compute_forces'],
+        #many_body_dispersion='',
+        )
+    calc.write_input(asi.atoms)
+aims_calc = ASI_ASE_calculator(
+        ASI_LIB_PATH,
+        init_via_ase,
+        MPI.COMM_WORLD,
+        water
+        )
+for traj in trajectories.keys():
+    trajectories[traj].calc = MACECalculator(
+       model_paths='model/test-520.model',
+       device='cpu',
+       default_dtype='float32',
+    )
+    trajectories_dyns[traj] = Langevin(
+        water,
+        timestep=0.5 * units.fs,
+        friction=0.001 / units.fs,
+        temperature_K=200,
+        rng=np.random.RandomState(42),
+        logfile='md.log'
+    )
+    MaxwellBoltzmannDistribution(water, temperature_K=200)
+#water.calc = ASI_ASE_calculator(
+#    ASI_LIB_PATH,
+#    init_via_ase,
+#    MPI.COMM_WORLD,
+#    water
+#    )
+
+
+
+for traj, dyn in trajectories_dyns.itemss():
+    for i in range(5):
+        dyn.step()
+        write(f'water_{traj}.xyz', water, append=True)
+        print(f'step {i} done')
 exit()
 ASI_LIB_PATH = "/home/thenkes/FHI_aims/libaims.240410.mpi.so"
 
