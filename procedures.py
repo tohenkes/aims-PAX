@@ -1119,8 +1119,9 @@ class ALProcedure(PrepareALProcedure):
                         dtype=self.mace_settings["GENERAL"]["default_dtype"],
                     )
                     sanity_uncertainty = max_sd_2(sanity_prediction)
+                    
+                if self.aims_calculator.results.get("forces") is None:
                     self.aims_calculator.calculate(self.point, properties=["energy","forces"])
-
                 sanity_uncertainty, max_error = self.sanity_check(
                     sanity_prediction=sanity_prediction,
                     true_forces = self.aims_calculator.results['forces']
