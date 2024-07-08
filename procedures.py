@@ -208,6 +208,7 @@ class PrepareInitialDatasetProcedure:
         self.z_table = tools.get_atomic_number_table_from_zs(
             z for z in self.atomic_energies_dict.keys()
         )
+        logging.info(f'{self.atomic_energies_dict}')
         
     def setup_calculator(self, atoms: ase.Atoms) -> ase.Atoms:
         """
