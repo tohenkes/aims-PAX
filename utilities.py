@@ -982,7 +982,7 @@ def ase_to_mace_ensemble_sets(
 
 def update_avg_neighs_shifts_scale(
     model: modules.MACE,
-    train_loader: torch_geometric.data.DataLoader,
+    train_loader,
     atomic_energies: dict,
     scaling: str,
 ) -> None:
