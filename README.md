@@ -2,6 +2,8 @@
 
 **Currently this version runs only on one core (except initial dataset procedure).**
 
+* The following is not supposed to be a tutorial. I am working on that. This is just so that we can work and review the code together.*
+
 To use the code:
 1. make sure the following files are in the working directory:
     - control.in, 
