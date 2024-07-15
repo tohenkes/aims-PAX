@@ -17,13 +17,6 @@ import ase.data
 import ase.io
 import dataclasses
 from mace.tools import AtomicNumberTable
-from mace.tools.compile import prepare
-from mace.tools.scripts_utils import extract_load
-from mpi4py import MPI
-from asi4py.asecalc import ASI_ASE_calculator
-from ase.md.velocitydistribution import MaxwellBoltzmannDistribution
-from ase.md.langevin import Langevin
-from ase import units
 
 
 ############ AIMS CONSTANTS ############
