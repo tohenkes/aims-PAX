@@ -40,5 +40,7 @@ al = ALProcedure(
     species_dir=species_dir
 )
 
+al.run()
+
 MPI.COMM_WORLD.Barrier()
 MPI.Finalize()
