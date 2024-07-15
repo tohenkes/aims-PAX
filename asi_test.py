@@ -78,7 +78,7 @@ for traj in trajectories.keys():
 
 
 
-for traj, dyn in trajectories_dyns.itemss():
+for traj, dyn in trajectories_dyns.items():
     for i in range(5):
         dyn.step()
         write(f'water_{traj}.xyz', water, append=True)

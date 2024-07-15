@@ -185,7 +185,7 @@ class PrepareInitialDatasetProcedure:
         """
         Calculates the isolated atomic energies for the elements in the geometry using AIMS.
         TODO: make it possible to provide the numbers yourself or use the average atomic
-                energies (then we'd have to update them like the shift and scaling factor)
+                energies (then we'd have to update them continously like the shift and scaling factor)
         """     
         if RANK == 0:
             logging.info('Calculating isolated atomic energies.')
@@ -216,10 +216,10 @@ class PrepareInitialDatasetProcedure:
         from the control.in to set up the calculator.
 
         Args:
-            atoms (ase.Atoms): _description_
+            atoms (ase.Atoms): Atoms object to attach the calculator to.
 
         Returns:
-            ase.Atoms: _description_
+            ase.Atoms: Atoms object with the calculator attached.
         """
         def init_via_ase(asi):
             
@@ -230,7 +230,9 @@ class PrepareInitialDatasetProcedure:
                     relativistic=self.aims_settings["relativistic"],
                     species_dir=self.aims_settings["species_dir"],
                     compute_forces=True,
-                    many_body_dispersion='',)
+                    many_body_dispersion='',) # mbd in aims has only the
+                                              # keyword, so it must be
+                                              # an empty string here
             else:
                 calc = Aims(xc=self.aims_settings["xc"],
                     relativistic=self.aims_settings["relativistic"],

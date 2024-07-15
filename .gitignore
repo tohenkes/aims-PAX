@@ -12,6 +12,8 @@
 *.db
 *.ipynb
 *.ase
+*.yaml
+run_whole_procedure.*
 /legacy
 /sockets
 
