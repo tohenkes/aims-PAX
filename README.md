@@ -2,12 +2,13 @@
 
 **Currently this version runs only on one core (except initial dataset procedure).**
 
-- To use the code you just have to have the 
+To use the code:
+1. make sure the following files are in the working directory:
     - control.in, 
     - geometry.in,
     - mace_settings.yaml,
     - and active_learning_settings.yaml 
-in the working directory and 'mpirun -n $CORES python run_whole_procedure.py'.
+2. '''mpirun -n $CORES python run_whole_procedure.py'''.
 
 - Currently, the ability to read the aims settings in control.in is *very* limited (see handle_aims_settings() in procedures.py).
 - The mace and AL settings should be self-explanatory with the comments and their names otherwise let me know if something is unclear.
