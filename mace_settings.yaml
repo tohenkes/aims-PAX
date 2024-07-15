@@ -33,13 +33,6 @@ ARCHITECTURE:
   compute_avg_num_neighbors: True
 
 TRAINING:
-
-  train_path: /home/tobias/Uni/Promotion/Research/aims_MLFF/data/naphtalene/nve_80K_extxyz/out-1/baseline/train_set_20p.xyz
-  valid_path: /home/tobias/Uni/Promotion/Research/aims_MLFF/data/naphtalene/nve_80K_extxyz/out-1/baseline/validation_set_10p.xyz
-  test_path: /home/tobias/Uni/Promotion/Research/aims_MLFF/data/naphtalene/nve_80K_extxyz/out-1/baseline/test_set_1972p.xyz
-  #train_path: /home/thenkes/Documents/Uni/Promotion/Research/aims_MLFF/data/naphtalene/nve_80K_extxyz/out-1/baseline/train_set_20p.xyz
-  #valid_path: /home/thenkes/Documents/Uni/Promotion/Research/aims_MLFF/data/naphtalene/nve_80K_extxyz/out-1/baseline/validation_set_10p.xyz
-  #test_path: /home/thenkes/Documents/Uni/Promotion/Research/aims_MLFF/data/naphtalene/nve_80K_extxyz/out-1/baseline/test_set_1972p.xyz
   valid_fraction: 0.1
   batch_size: 5
   valid_batch_size: 5
