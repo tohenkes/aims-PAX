@@ -1255,12 +1255,6 @@ class ALProcedure(PrepareALProcedure):
                 )
                 
                 self.point = self.trajectories[idx].copy()
-                self.mace_point = create_mace_dataset(
-                    data=[self.trajectories[idx]],
-                    z_table=self.z_table,
-                    seed=None,
-                    r_max=self.r_max,
-                )
                 
                 prediction = self.trajectories[idx].calc.results["forces_comm"]
                 uncertainty = max_sd_2(prediction)
@@ -1285,7 +1279,12 @@ class ALProcedure(PrepareALProcedure):
 
                     self.point.info['energy'] = self.aims_calculator.results['energy']
                     self.point.arrays['forces'] = self.aims_calculator.results['forces']
-
+                    self.mace_point = create_mace_dataset(
+                        data=[self.point],
+                        z_table=self.z_table,
+                        seed=None,
+                        r_max=self.r_max,
+                    )
                     # it sends the job and does not wait for the result but
                     # continues with the next worker. only if the job is done
                     # the worker is set to training mode
