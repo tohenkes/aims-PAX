@@ -28,9 +28,7 @@ To use the code:
 
 # ToDo
 
-There is some bug in the active learning. The energy error is exploding andthe training becomes completely unstable. Either there is some problems with the units or data. For the latter it could be that the models generate crazy geometries during MD but I am not sure.
-
-- [] energy error bug fix (see above)
+- [x] energy error bug fix
 - [] parallelism for FHI aims in AL procedure
 - [] add more documentation
 
