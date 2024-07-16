@@ -1,29 +1,37 @@
 import torch
-import os
-import ast
-import logging
-from pathlib import Path
 from typing import Optional
-import json
-
-import numpy as np
 import torch.nn.functional
-from e3nn import o3
-from torch.optim.swa_utils import SWALR, AveragedModel
 from torch_ema import ExponentialMovingAverage
+from mace import modules, tools
 
-import mace
-from mace import data, modules, tools
-from mace.tools import torch_geometric
-from mace.tools.scripts_utils import create_error_table, get_dataset_from_xyz
 
+#############################################################################
+############ This part is mostly taken from the MACE source code ############
+############ with slight modifications to fit the needs of AL    ############
+#############################################################################
+
+# this function is basically from the MACE run_train script but only
+# contains the parts important for training settings.
 
 def setup_mace_training(
     settings: dict,
     model,
     tag: str,
-):
-    
+)-> dict:
+    """
+    Setup the MACE training according to the settings and return it.
+
+    Args:
+        settings (dict): MACE model settings
+        model: MACE model to train
+        tag (str): Tag for identifying the model
+
+    Raises:
+        RuntimeError: If the scheduler is unknown.
+
+    Returns:
+        dict: Dictionary containing the training setup.
+    """
 
     general_settings = settings["GENERAL"]
     training_settings = settings["TRAINING"]

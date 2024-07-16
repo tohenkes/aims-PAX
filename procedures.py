@@ -185,7 +185,8 @@ class PrepareInitialDatasetProcedure:
         """
         Calculates the isolated atomic energies for the elements in the geometry using AIMS.
         TODO: make it possible to provide the numbers yourself or use the average atomic
-                energies (then we'd have to update them continously like the shift and scaling factor)
+              energies (then we'd have to update them continously like the shift and scaling factor)
+              The function get_atomic_energies_from_ensemble(self) in the AL procedure has to be changed then.
         """     
         if RANK == 0:
             logging.info('Calculating isolated atomic energies.')
@@ -253,7 +254,14 @@ class PrepareInitialDatasetProcedure:
         self,
         path_to_control: str,
         species_dir: str
-        ) -> None:
+        ):
+        """
+        Parses the AIMS control file to get the settings for the AIMS calculator.
+
+        Args:
+            path_to_control (str): Path to the AIMS control file.
+            species_dir (str): Path to the species directory of AIMS.
+        """
         #TODO: make this more flexible
         self.aims_settings = {}
         with open(path_to_control, "r") as f: 
@@ -265,11 +273,19 @@ class PrepareInitialDatasetProcedure:
                 if "charge" in line and '#' not in line:
                     self.aims_settings['charge'] = line.split()[1]
                 if "many_body_dispersion" in line and '#' not in line:
-                    self.aims_settings['many_body_dispersion'] = ''
+                    self.aims_settings['many_body_dispersion'] = '' # TODO: i think this is not working
         self.aims_settings['species_dir'] = species_dir
-        return None
-    
-    def handle_MD_settings(self, al_settings):
+        
+    def handle_MD_settings(
+            self,
+            al_settings: dict
+            ):
+        """
+        Parses the MD settings from the active learning settings.
+
+        Args:
+            al_settings (dict): Dictionary containing the active learning settings.
+        """
         #TODO: make this more flexible
         self.md_settings = al_settings["MD"]
         self.stat_ensemble = self.md_settings["stat_ensemble"].lower()
@@ -284,8 +300,17 @@ class PrepareInitialDatasetProcedure:
             
     def setup_md(
         self,
-        atoms
+        atoms: ase.Atoms
         ):
+        """
+        Sets up the ASE molecular dynamics object for the atoms object.
+
+        Args:
+            atoms (ase.Atoms): Atoms to be propagated.
+
+        Returns:
+            ase.md.MolecularDynamics: ASE MD engine.
+        """
         #TODO: make this more flexible
         if self.stat_ensemble == 'nvt':
             if self.thermostat == 'langevin':
@@ -303,8 +328,25 @@ class PrepareInitialDatasetProcedure:
         return dyn
 
 class InitalDatasetProcedure(PrepareInitialDatasetProcedure):
+    """
+    Class to generate the initial dataset for the active learning procedure. Handles the
+    molecular dynamics simulations, the sampling of points, the training of the ensemble
+    members and the saving of the datasets.
 
-    def run_MD(self, atoms, dyn):
+    """
+    def run_MD(
+            self,
+            atoms: ase.Atoms,
+            dyn
+            ):
+        """
+        Runs the molecular dynamics simulation for the atoms object. Saves
+        energy and forces in a MACE readable format.
+
+        Args:
+            atoms (ase.Atoms): Atoms object to be propagated.
+            dyn (ase.md.MolecularDynamics): ASE MD engine.
+        """
         self.sampled_points = []
         for i in range(self.n_samples * self.ensemble_size * self.skip_step):
             dyn.step()
@@ -313,6 +355,7 @@ class InitalDatasetProcedure(PrepareInitialDatasetProcedure):
                     current_energy = np.array(atoms.get_potential_energy())
                     current_forces = np.array(atoms.get_forces())
                     current_point = atoms.copy()
+                    # MACE reads energies and forces from the info & arrays dictionary
                     current_point.info['energy'] = current_energy
                     current_point.arrays['forces'] = current_forces 
                     self.sampled_points.append(
@@ -320,20 +363,35 @@ class InitalDatasetProcedure(PrepareInitialDatasetProcedure):
                     )
     
     def run(self):
+        """
+        Main function to run the initial dataset generation procedure.
+        It samples points and trains the ensemble members until the desired accuracy
+        is reached or the maximum number of epochs is reached.
+
+        """
+        # initializing the md and FHI aims
         self.dyn = self.setup_md(self.atoms)
         self.setup_calculator(self.atoms)
+        
         current_valid = np.inf
         step = 0
+        # criterion for initial dataset is multiple of the desired accuracy
         while (
-            self.desired_acc * self.lamb <= current_valid
+            self.desired_acc * self.lamb <= current_valid 
             and self.epoch < self.max_initial_epochs
         ):
             
             if RANK == 0:
                 logging.info(f"Sampling new points at step {step}.")
             self.run_MD(self.atoms, self.dyn)
+            
+            # Currently there is only one process doing the training.
+            # This does not really matter when using GPUs but with
+            # CPUs we are not using the full potential
+            # TODO: look into pyTorch distributed
             if RANK == 0:
                 random.shuffle(self.sampled_points)
+                # each ensemble member collects their respective points
                 for number, (tag, model) in enumerate(self.ensemble.items()):
 
                     member_points = self.sampled_points[
@@ -375,7 +433,9 @@ class InitalDatasetProcedure(PrepareInitialDatasetProcedure):
                         batch_size,
                         valid_batch_size,
                     )
-
+                    # because we are continously training the model we
+                    # have to update the average number of neighbors, shifts
+                    # and the scaling factor also continously
                     update_avg_neighs_shifts_scale(
                         model=model,
                         train_loader=self.ensemble_mace_sets[tag]["train_loader"],
@@ -391,7 +451,8 @@ class InitalDatasetProcedure(PrepareInitialDatasetProcedure):
                 ensemble_valid_losses = {
                         tag: np.inf for tag in self.ensemble.keys()
                     }
-                for i in range(self.intermediate_epochs):
+                for _ in range(self.intermediate_epochs):
+                    # each member gets trained individually
                     for tag, model in self.ensemble.items():
 
                         logger = tools.MetricsLogger(
@@ -417,7 +478,7 @@ class InitalDatasetProcedure(PrepareInitialDatasetProcedure):
                             output_args=self.training_setups[tag]["output_args"],
                             ema=self.training_setups[tag]["ema"],
                         )
-
+                    # the validation errors are averages over the ensemble members
                     if (
                         self.epoch % self.valid_skip == 0
                         or (self.epoch + 1) % self.valid_skip == 0
@@ -440,7 +501,8 @@ class InitalDatasetProcedure(PrepareInitialDatasetProcedure):
                             epoch=self.epoch,
                         )
                         current_valid = metrics["mae_f"]
-                        
+
+                        # if the desired accuracy is reached we save the models
                         if self.desired_acc * self.lamb >= current_valid:
                             logging.info(
                                 f"Accuracy criterion reached at step {step}."
@@ -468,6 +530,7 @@ class InitalDatasetProcedure(PrepareInitialDatasetProcedure):
                                 )
                             
                             break
+                        # if the desired accuracy is not reached we save a checkpoint
                         else:
                             for tag, model in self.ensemble.items():
                                 save_checkpoint(
@@ -493,6 +556,9 @@ class InitalDatasetProcedure(PrepareInitialDatasetProcedure):
                     path=self.dataset_dir / "initial",
                     initial=True,
                 )
+            # only one worker is doing the training right now,
+            # so we have to broadcast the criterion so they
+            # don't get stuck in the while loop
             MPI.COMM_WORLD.Barrier()
             current_valid = MPI.COMM_WORLD.bcast(current_valid, root=0)
             self.epoch = MPI.COMM_WORLD.bcast(self.epoch, root=0)
@@ -502,6 +568,9 @@ class InitalDatasetProcedure(PrepareInitialDatasetProcedure):
 
 
     def converge(self):
+        """
+        Function to converge the ensemble on the acquired initial dataset.
+        """
         if RANK == 0:
             logging.info("Converging.")
             for _, (tag, model) in enumerate(self.ensemble.items()):
@@ -623,6 +692,10 @@ class InitalDatasetProcedure(PrepareInitialDatasetProcedure):
                     )
 
 class PrepareALProcedure:
+    """
+    Class to prepare the active learning procedure. It handles all the input files,
+    prepares the calculators, models, directories etc.
+    """
     def __init__(
         self,
         mace_settings,
@@ -690,6 +763,8 @@ class PrepareALProcedure:
         if path_to_trajectories is not None:
             self.simulate_trajectories(path_to_trajectories)
 
+        # TODO: make option to directly load the dataset from the
+        # initial dataset object instead of reading from disk
         logging.info("Loading initial datasets.")
         self.ensemble_ase_sets = load_ensemble_sets_from_folder(
             ensemble=self.ensemble,
@@ -701,7 +776,7 @@ class PrepareALProcedure:
             r_max=self.r_max,
             seed=self.seeds,
         )
-        
+        # this initializes the FHI aims process
         self.aims_calculator = self.setup_aims_calc()
         self.setup_mace_calc()
 
@@ -711,13 +786,13 @@ class PrepareALProcedure:
         for trajectory in self.trajectories.values():
             trajectory.calc = self.mace_calc
 
-                #TODO: make this more flexible, to allow different drivers per trajectory
+        #TODO: make this more flexible, to allow different drivers per trajectory
         self.md_drivers = {
             trajectory: self.setup_md_al(
                 atoms=self.trajectories[trajectory], md_settings=self.md_settings
             ) for trajectory in range(self.num_trajectories)
         }
-        
+        # this saves the state of the trajectories
         self.trajectory_training = {
             trajectory: "running"
             for trajectory in range(self.num_trajectories)
@@ -728,23 +803,30 @@ class PrepareALProcedure:
         self.trajectory_epochs = {
             trajectory: 0 for trajectory in range(self.num_trajectories)
         }
+        # this saves the intervals between points that cross the uncertainty threshold
         self.t_intervals = {
             trajectory: [] for trajectory in range(self.num_trajectories)
         }
+        # this saves uncertainty and true errors for each trajectory
         self.sanity_checks = {
             trajectory: [] for trajectory in range(self.num_trajectories)
         }
 
         self.uncertainties = []  # for moving average   
         self.sanity_checks_valid = {}
-        self.analysis = analysis
+        self.analysis = analysis # whether to do save sanity checks, intervals etc.
         
         
     def get_atomic_energies_from_ensemble(self):
+        """
+        Loads the atomic energies from existing ensemble members.
+        """
         self.atomic_energies_dict = {}
         for _, model in self.ensemble.items():
             self.atomic_energies = np.array(model.atomic_energies_fn.atomic_energies.cpu())
-            break
+            break # TODO: this only applies when the atomic energies are the free atomic energies
+                    # calculated using DFT. Otherwise they could be different for each model.
+                    # This has to change when that option is implemented
         for i, atomic_energy in enumerate(self.atomic_energies):
             self.atomic_energies_dict[np.sort(np.unique(self.z))[i]] = atomic_energy
             
@@ -788,7 +870,16 @@ class PrepareALProcedure:
         self,
         path_to_control: str,
         species_dir: str
-        ) -> None:
+        ):
+        """
+        Loads and parses the AIMS control file to get the settings for the AIMS calculator.
+
+        Args:
+            path_to_control (str): Path to the AIMS control file.
+            species_dir (str): Path to the species directory of AIMS.
+
+        """
+        
         #TODO: make this more flexible
         self.aims_settings = {}
         with open(path_to_control, "r") as f: 
@@ -802,9 +893,11 @@ class PrepareALProcedure:
                 if "many_body_dispersion" in line and '#' not in line:
                     self.aims_settings['many_body_dispersion'] = ''
         self.aims_settings['species_dir'] = species_dir
-        return None
     
     def create_folders(self):
+        """
+        Create the folders for the final datasets.
+        """
         (self.dataset_dir / "final" / "training").mkdir(
             parents=True, exist_ok=True
         )
@@ -812,7 +905,16 @@ class PrepareALProcedure:
             parents=True, exist_ok=True
         )
 
-    def setup_aims_calc(self, path_to_geometry: str = "./geometry.in"):
+    def setup_aims_calc(
+            self,
+            path_to_geometry: str = "./geometry.in"
+            ):
+        """
+        Creates and returns the AIMS calculator for a given atoms object.
+
+        Args:
+            path_to_geometry (str, optional): Path to geometry file. Defaults to "./geometry.in".
+        """
         
         def init_via_ase(asi):
             
@@ -836,19 +938,40 @@ class PrepareALProcedure:
             self.ASI_path,
             init_via_ase,
             MPI.COMM_WORLD,
-            read(path_to_geometry) # TODO: must be changed when we have multiple species
+            read(path_to_geometry) # TODO: must be changed when we have multiple species and then we need multiaims
             )
         return calculator
 
     def setup_mace_calc(self):
+        """
+        Loads the models of the existing ensemble and creates the MACE calculator.
+        """
         model_paths = list_files_in_directory(self.model_dir)
-        # the calculator needs to be updated consistently ...
+        # the calculator needs to be updated consistently see below
         self.mace_calc = MACECalculator(
             model_paths=model_paths,
             device=self.device,
             default_dtype=self.dtype)
         
-    def setup_md_al(self, atoms, md_settings):
+    # TODO: make this consitent with the initial dataset procedure. when we have different
+    # MD settings for the multiple trajectories this is better because it directly uses the
+    # settings
+    def setup_md_al(
+            self,
+            atoms: ase.Atoms,
+            md_settings: dict
+            ):
+        """
+        Sets up the ASE molecular dynamics object for the atoms object using
+        the MD settings.
+
+        Args:
+            atoms (ase.Atoms): Atoms object to be propagated.
+            md_settings (dict): Dictionary containing the MD settings.
+
+        Returns:
+            ase.md.MolecularDynamics: ASE MD engine.
+        """
         #TODO: make this more flexible
         if md_settings["stat_ensemble"].lower() == 'nvt':
             if md_settings['thermostat'].lower() == 'langevin':
@@ -864,15 +987,45 @@ class PrepareALProcedure:
     
         return dyn
 
-    def simulate_trajectories(self, path_to_trajectories: str):
+    def simulate_trajectories(
+            self,
+            path_to_trajectories: str
+            ):
+        """
+        Loads existing trajectories from a folder. 
+
+        Args:
+            path_to_trajectories (str): Path to the folder containing the 
+                                        trajectories in ASE readable format.
+        """
         self.trajectories = pre_trajectories_from_folder(
             path=path_to_trajectories,
             num_trajectories=self.num_trajectories,
         )
 
 class ALProcedure(PrepareALProcedure):
+    """
+    Class for the active learning procedure. It handles the training of the ensemble
+    members, the molecular dynamics simulations, the sampling of points and the saving
+    of the datasets.
+    """
     
-    def sanity_check(self, sanity_prediction, true_forces):
+    def sanity_check(
+            self,
+            sanity_prediction: np.ndarray,
+            true_forces: np.ndarray
+            ) -> tuple[np.ndarray, np.ndarray]:
+        """
+        Calculates the force uncertainty and the maximum 
+        force error for a given prediction and true forces.
+
+        Args:
+            sanity_prediction (np.ndarray): Ensemble prediction. [n_members, n_points, n_atoms, 3]
+            true_forces (np.ndarray): True forces. [n_points, n_atoms, 3]
+
+        Returns:
+            tuple[np.ndarray, np.ndarray]: force uncertainty, true force error
+        """
         sanity_uncertainty = max_sd_2(sanity_prediction)
         mean_sanity_prediction = sanity_prediction.mean(0).squeeze()
         difference = true_forces - mean_sanity_prediction
@@ -881,12 +1034,24 @@ class ALProcedure(PrepareALProcedure):
         max_error = np.max(np.sqrt(diff_sq_mean), axis=-1)
         return sanity_uncertainty, max_error
 
-    def waiting_task(self, idx):
-        # if calculation is finished:
+    def waiting_task(
+            self,
+            idx: int
+            ):
+        """
+        Currently only adds the current point to the training or validation set.
+
+        Args:
+            idx (int): Index of the trajectory worker.
+
+        """
+
         # there is no waiting time here and if we do it sequentially there is not waiting either
         # thus the models directly continue training with the new point which could make quite the difference
         # same with adding a training point to each of the ensemble members which slows down things considerably
         # as we have to wait for enough training points to be acquired
+        # if calculation is finished:
+
         if self.point_added % self.valid_ratio == 0:
             self.trajectory_training[idx] = "running"
             self.num_workers_waiting -= 1
@@ -930,7 +1095,18 @@ class ALProcedure(PrepareALProcedure):
                 )
         self.point_added += 1
 
-    def training_task(self, idx):
+    def training_task(
+            self,
+            idx: int
+            ):
+        """
+        Creates the dataloader of the updated dataset, updates
+        the average number of neighbors, shifts and scaling factor
+        and trains the ensemble members. Saves the models and checkpoints.
+
+        Args:
+            idx (int): Index of the trajectory worker.
+        """
 
         for _, (tag, model) in enumerate(self.ensemble.items()):
 
@@ -1032,10 +1208,24 @@ class ALProcedure(PrepareALProcedure):
             logging.info(f"Trajectory worker {idx} finished training.")
             # calculate true error and uncertainty on validation set
 
-        return None
 
-    def running_task(self, idx):
+    def running_task(
+            self,
+            idx: int
+            ):
+        """
+        Runs the molecular dynamics simulation using the MLFF and
+        checks the uncertainty. If the uncertainty is above the threshold
+        the point is calculated using FHI aims and sent to the waiting task.
+
+        Args:
+            idx (int): Index of the trajectory worker.
+
+        """
+
         current_MD_step = self.trajectory_MD_steps[idx]
+        
+        # kill the worker if the maximum number of MD steps is reached
         if (
             current_MD_step > self.max_MD_steps
             and self.trajectory_training[idx] == "running"
@@ -1049,12 +1239,14 @@ class ALProcedure(PrepareALProcedure):
             return "killed"
 
         else:
+            # TODO:
             # ideally we would first check the uncertainty, then optionally 
-            # calculate the aims forces and usem the to propagate
+            # calculate the aims forces and use them to propagate
             # currently the mace forces are used even if the uncertainty is too high
             # but ase is weird and i don't want to change it so whatever. when we have our own 
             # MD engine we can adress this. Or.. it leads to scf problems and we have to fix this
             # because it generates crazy geometries
+
             self.md_drivers[idx].step()
             self.trajectory_MD_steps[idx] += 1
             if current_MD_step % self.skip_step == 0:
@@ -1109,7 +1301,13 @@ class ALProcedure(PrepareALProcedure):
 
             if (
                 current_MD_step % self.sanity_skip == 0
-            ):  # should not be static but increase with time, based on how many uninterrupted MD steps have been taken or if all workes are running
+            ):  
+                # TODO:
+                # should not be static but increase with time, based on how many uninterrupted
+                #  MD steps have been taken or if all workes are running and currently
+                # we are not doing anything with this. Maybe check correlation between real error
+                # and uncertainty?
+                
                 logging.info(f"Trajectory worker {idx} doing a sanity check.")
                 if current_MD_step % self.skip_step == 0:
                     sanity_prediction = prediction
@@ -1134,6 +1332,11 @@ class ALProcedure(PrepareALProcedure):
 
 
     def run(self):
+        """
+        Main function to run the active learning procedure. Initializes variables and
+        controls the workers tasks.
+        """
+
         if RANK == 0:
             logging.info("Starting active learning procedure.")
         self.current_valid = np.inf
@@ -1146,13 +1349,11 @@ class ALProcedure(PrepareALProcedure):
         self.check = 0
         while True:
             for trajectory_idx, _ in enumerate(self.trajectories):
-                # workers wait for the "FHI-aims" calculation to finish
-                # if the calculation is finished the worker adds the point to the training or validation set
-                # based on the point_added counter and a ratio that is set in the active_learning_settings.yaml
+
                 if self.trajectory_training[trajectory_idx] == "waiting":
 
                     set_limit = self.waiting_task(trajectory_idx)
-                    if set_limit:
+                    if set_limit: # stops the process if the maximum dataset size is reached
                         break
 
                 if (
@@ -1209,6 +1410,11 @@ class ALProcedure(PrepareALProcedure):
 
 
     def converge(self):
+        """
+        Converges the ensemble on the acquired dataset. Trains the ensemble members
+        until the validation loss does not improve anymore.
+        """
+
         logging.info("Converging ensemble on acquired dataset.")
         for _, (tag, model) in enumerate(self.ensemble.items()):
             train_set = create_mace_dataset(
@@ -1329,8 +1535,17 @@ class ALProcedure(PrepareALProcedure):
     
     def evaluate_ensemble(
         self,
-        ase_atoms_list
-    ):
+        ase_atoms_list: list
+    )-> dict:
+        """
+        Evaluates the ensemble on a given list of ASE atoms objects.
+        
+        Args:
+            ase_atoms_list (list): List of ASE atoms objects.
+
+        Returns:
+            dict: Dictionary containing the metrics of the ensemble.
+        """
         tag = list(self.ensemble.keys())[0]
         
         test_set = create_mace_dataset(
@@ -1361,9 +1576,17 @@ class ALProcedure(PrepareALProcedure):
         return metrics
 
 class StandardMACEEnsembleProcedure:
+    """
+    Just a simple Class to train ensembles from scratch using existing
+    dataset in order to compare the continuous learning procedure with
+    learning from scratch.
+    """
     def __init__(
         self, 
         mace_settings: dict,
+        path_to_aims_lib: str,
+        species_dir: str = None,
+        path_to_control: str = "./control.in",
         dataset_dir_train: str = None,
         dataset_dir_valid: str = None,
         num_members: int = None,
@@ -1382,11 +1605,13 @@ class StandardMACEEnsembleProcedure:
             #    tag=tag,
             directory=self.mace_settings["GENERAL"]["log_dir"],
         )
-
-        
+        self.handle_aims_settings(
+            path_to_control=path_to_control,
+            species_dir=species_dir
+        )
+        self.ASI_path = path_to_aims_lib
         self.create_folders()
         self.get_atomic_energies()
-        
         if seeds is None:
             self.ensemble_seeds = np.random.randint(
                         0, 1000, size=num_members
@@ -1557,9 +1782,90 @@ class StandardMACEEnsembleProcedure:
             )
             return metrics
     
+    def handle_aims_settings(
+        self,
+        path_to_control: str,
+        species_dir: str
+        ):
+        """
+        Parses the AIMS control file to get the settings for the AIMS calculator.
+
+        Args:
+            path_to_control (str): Path to the AIMS control file.
+            species_dir (str): Path to the species directory of AIMS.
+        """
+        #TODO: make this more flexible
+        self.aims_settings = {}
+        with open(path_to_control, "r") as f: 
+            for line in f:
+                if "xc" in line and '#' not in line:
+                    self.aims_settings['xc'] = line.split()[1]
+                if "relativistic" in line and '#' not in line:
+                    self.aims_settings['relativistic'] = line.split()[1] + " " + line.split()[2]
+                if "charge" in line and '#' not in line:
+                    self.aims_settings['charge'] = line.split()[1]
+                if "many_body_dispersion" in line and '#' not in line:
+                    self.aims_settings['many_body_dispersion'] = '' # TODO: i think this is not working
+        self.aims_settings['species_dir'] = species_dir
+
+    def setup_calculator(self, atoms: ase.Atoms) -> ase.Atoms:
+        """
+        Attaches the AIMS calculator to the atoms object. Uses the AIMS settings
+        from the control.in to set up the calculator.
+
+        Args:
+            atoms (ase.Atoms): Atoms object to attach the calculator to.
+
+        Returns:
+            ase.Atoms: Atoms object with the calculator attached.
+        """
+        def init_via_ase(asi):
+            
+            from ase.calculators.aims import Aims
+            #TODO: make this more flexible
+            if self.aims_settings.get("many_body_dispersion") is not None:
+                calc = Aims(xc=self.aims_settings["xc"],
+                    relativistic=self.aims_settings["relativistic"],
+                    species_dir=self.aims_settings["species_dir"],
+                    compute_forces=True,
+                    many_body_dispersion='',) # mbd in aims has only the
+                                              # keyword, so it must be
+                                              # an empty string here
+            else:
+                calc = Aims(xc=self.aims_settings["xc"],
+                    relativistic=self.aims_settings["relativistic"],
+                    species_dir=self.aims_settings["species_dir"],
+                    compute_forces=True,
+                    )
+            
+            calc.write_input(asi.atoms)
+        atoms.calc = ASI_ASE_calculator(
+            self.ASI_path,
+            init_via_ase,
+            MPI.COMM_WORLD,
+            atoms
+            )
+        return atoms
+    
     def get_atomic_energies(self):
-        #TODO: remove hardocde!!!
-        self.atomic_energies_dict = {1: -12.482766945, 6: -1027.170068545}
+        """
+        Calculates the isolated atomic energies for the elements in the geometry using AIMS.
+        TODO: make it possible to provide the numbers yourself or use the average atomic
+              energies (then we'd have to update them continously like the shift and scaling factor)
+              The function get_atomic_energies_from_ensemble(self) in the AL procedure has to be changed then.
+        """     
+        if RANK == 0:
+            logging.info('Calculating isolated atomic energies.')
+        self.atomic_energies_dict = {}        
+        unique_atoms = np.unique(self.z)
+        for element in unique_atoms:
+            if RANK == 0:
+                logging.info(f'Calculating energy for element {element}.')
+            atom = ase.Atoms([int(element)],positions=[[0,0,0]])
+            self.setup_calculator(atom)
+            self.atomic_energies_dict[element] = atom.get_potential_energy() 
+            atom.calc.close() # kills AIMS process so we can start a new one later
+ 
         self.atomic_energies = np.array(
             [
                 self.atomic_energies_dict[z]
@@ -1569,6 +1875,7 @@ class StandardMACEEnsembleProcedure:
         self.z_table = tools.get_atomic_number_table_from_zs(
             z for z in self.atomic_energies_dict.keys()
         )
+        logging.info(f'{self.atomic_energies_dict}')
 
     def handle_mace_settings(self, mace_settings: dict):
         self.mace_settings = mace_settings

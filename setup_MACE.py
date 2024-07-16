@@ -1,24 +1,42 @@
-###########################################################################################
-# Training script for MACE
-# Authors: Ilyes Batatia, Gregor Simm, David Kovacs
-# This program is distributed under the MIT License (see MIT.md)
-###########################################################################################
 from typing import Optional
 import numpy as np
 import torch.nn.functional
 from e3nn import o3
-from mace import data, modules, tools
+from mace import modules, tools
 
+
+
+#############################################################################
+############ This part is mostly taken from the MACE source code ############
+############ with slight modifications to fit the needs of AL    ############
+#############################################################################
+
+
+# this function is basically from the MACE run_train script but only
+# contains the parts important for setting up the model.
 
 def setup_mace(
         settings: dict,
         z_table: tools.AtomicNumberTable,
-        atomic_energies_dict,
+        atomic_energies_dict: dict,
         avg_num_neighbors: Optional[np.ndarray] = 1.,
         atomic_inter_scale: Optional[float] = 0.,
         atomic_inter_shift: Optional[float] = 0.,
-        ) -> None:
-    
+        ):
+    """
+    Setup the MACE model according to the settings and return it.
+
+    Args:
+        settings (dict): MACE model settings
+        z_table (tools.AtomicNumberTable): Table of atomic numbers
+        atomic_energies_dict (dict): Dictionary of atomic energies
+        avg_num_neighbors (Optional[np.ndarray], optional): Average number of neighbors. Defaults to 1..
+        atomic_inter_scale (Optional[float], optional): Scaling factor for energies and forces. Defaults to 0..
+        atomic_inter_shift (Optional[float], optional): Shift for energies and forces. Defaults to 0..
+
+    Returns:
+        MACE model
+    """
     
     general_settings = settings["GENERAL"]
     architecture_settings = settings["ARCHITECTURE"]

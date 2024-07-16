@@ -41,6 +41,7 @@ al = ALProcedure(
 )
 
 al.run()
+al.converge()
 
 MPI.COMM_WORLD.Barrier()
 MPI.Finalize()

@@ -7,6 +7,12 @@ from torch.utils.data import DataLoader
 from torch_ema import ExponentialMovingAverage
 import logging
 
+#############################################################################
+############ This part is mostly taken from the MACE source code ############
+############ with slight modifications to fit the needs of AL    ############
+#############################################################################
+
+
 def train_epoch(
     model: torch.nn.Module,
     loss_fn: torch.nn.Module,
@@ -21,7 +27,28 @@ def train_epoch(
     device: torch.device,
     ema: Optional[ExponentialMovingAverage] = None,
     max_grad_norm: Optional[float] = 10.0,
-):
+)-> float:
+    """
+    Trains a MACE model for a single epoch.
+
+    Args:
+        model (torch.nn.Module): MACE model to train.
+        loss_fn (torch.nn.Module): Loss function to use.
+        train_loader (DataLoader):  Training data loader.
+        optimizer (torch.optim.Optimizer): Optimizer to use.
+        lr_scheduler (torch.optim.lr_scheduler.ExponentialLR): Learning rate scheduler.
+        epoch (int): Current epoch.
+        start_epoch (int): First epoch.
+        valid_loss (float): Current validation loss.
+        logger (MetricsLogger): Logger for metrics.
+        output_args (Dict[str, bool]): Output arguments.
+        device (torch.device): Device to use. CPU or GPU.
+        ema (Optional[ExponentialMovingAverage], optional): Exponential moving average. Defaults to None.
+        max_grad_norm (Optional[float], optional): Gradient clipping. Defaults to 10.0.
+
+    Returns:
+        float: Total loss for the epoch.
+    """
     #if max_grad_norm is not None:
         #logging.info(f"Using gradient clipping with tolerance={max_grad_norm:.3f}")
 # Train
@@ -52,16 +79,34 @@ def train_epoch(
     return total_loss
 
 def validate_epoch_ensemble(
-    ensemble,
-    ema,
-    loss_fn,
-    valid_loader,
-    output_args,
-    device,
-    logger,
-    log_errors,
-    epoch
-):
+    ensemble: dict,
+    ema: Optional[ExponentialMovingAverage],
+    loss_fn: torch.nn.Module,
+    valid_loader: DataLoader,
+    output_args: Dict[str, bool],
+    device: torch.device,
+    logger: MetricsLogger,
+    log_errors: str,
+    epoch: int,
+)-> tuple[dict, float, dict]:
+    """
+    Evaluates an ensemble of models on the validation set and returns
+    average loss and metrics.
+
+    Args:
+        ensemble (dict): Ensemble of MACE models.
+        ema (Optional[ExponentialMovingAverage]): Exponential moving average.
+        loss_fn (torch.nn.Module): Loss function.
+        valid_loader (DataLoader): Validation data loader.
+        output_args (Dict[str, bool]): Output arguments.
+        device (torch.device): Device to use. CPU or GPU.
+        logger (MetricsLogger): Logger for metrics.
+        log_errors (str): Logging errors.
+        epoch (int): Current epoch.
+
+    Returns:
+        tuple[dict, float, dict]: Ensemble validation loss, average loss, and metrics.
+    """
     ensemble_valid_loss, ensemble_eval_metrics = {}, []
     for tag, model in ensemble.items():
         if ema is not None:
