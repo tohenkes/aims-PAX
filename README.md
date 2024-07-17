@@ -29,8 +29,8 @@ To use the code:
 # ToDo
 
 - [x] energy error bug fix
-- [] parallelism for FHI aims in AL procedure
-- [] add more documentation
+- [ ] parallelism for FHI aims in AL procedure
+- [ ] add more documentation
 
 
 # Requirements

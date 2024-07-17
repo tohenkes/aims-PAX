@@ -228,7 +228,11 @@ class PrepareInitialDatasetProcedure:
             #TODO: make this more flexible
             if self.aims_settings.get("many_body_dispersion") is not None:
                 calc = Aims(xc=self.aims_settings["xc"],
-                    relativistic=self.aims_settings["relativistic"],
+                    relativistic=self.aims_settings.get("relativistic", "none"),
+                    spin=self.aims_settings.get("spin", "none"),
+                    charge=self.aims_settings.get("charge", 0),
+                    charge_mix_param=self.aims_settings.get("charge_mix_param", None),
+                    sc_accuracy_rho=self.aims_settings.get("sc_accuracy_rho", None),
                     species_dir=self.aims_settings["species_dir"],
                     compute_forces=True,
                     many_body_dispersion='',) # mbd in aims has only the
@@ -236,7 +240,11 @@ class PrepareInitialDatasetProcedure:
                                               # an empty string here
             else:
                 calc = Aims(xc=self.aims_settings["xc"],
-                    relativistic=self.aims_settings["relativistic"],
+                    relativistic=self.aims_settings.get("relativistic", "none"),
+                    spin=self.aims_settings.get("spin", "none"),
+                    charge=self.aims_settings.get("charge", 0),
+                    charge_mix_param=self.aims_settings.get("charge_mix_param", None),
+                    sc_accuracy_rho=self.aims_settings.get("sc_accuracy_rho", None),
                     species_dir=self.aims_settings["species_dir"],
                     compute_forces=True,
                     )
@@ -253,7 +261,7 @@ class PrepareInitialDatasetProcedure:
     def handle_aims_settings(
         self,
         path_to_control: str,
-        species_dir: str
+        species_dir: str,
         ):
         """
         Parses the AIMS control file to get the settings for the AIMS calculator.
@@ -269,11 +277,22 @@ class PrepareInitialDatasetProcedure:
                 if "xc" in line and '#' not in line:
                     self.aims_settings['xc'] = line.split()[1]
                 if "relativistic" in line and '#' not in line:
-                    self.aims_settings['relativistic'] = line.split()[1] + " " + line.split()[2]
+                    if "none" in line:
+                        pass
+                    elif "atomic_zora" in line:
+                        self.aims_settings['relativistic'] = line.split()[1] + " " + line.split()[2]
                 if "charge" in line and '#' not in line:
                     self.aims_settings['charge'] = line.split()[1]
                 if "many_body_dispersion" in line and '#' not in line:
                     self.aims_settings['many_body_dispersion'] = '' # TODO: i think this is not working
+                if "k_grid" in line:
+                    self.aims_settings['k_grid'] = line.split()[1] + " " + line.split()[2] + " " + line.split()[3]
+                if "charge_mix_param" in line and '#' not in line:
+                    self.aims_settings['charge_mix_param'] = line.split()[1]
+                if "sc_accuracy_rho" in line and '#' not in line:
+                    self.aims_settings['sc_accuracy_rho'] = line.split()[1]
+                if "spin" in line and '#' not in line:
+                    self.aims_settings['spin'] = line.split()[1]
         self.aims_settings['species_dir'] = species_dir
         
     def handle_MD_settings(
@@ -727,6 +746,7 @@ class PrepareALProcedure:
         self.handle_al_settings(al_settings['ACTIVE_LEARNING'])
         self.handle_mace_settings(mace_settings)
         self.handle_aims_settings(path_to_control, species_dir)
+        np.random.seed(self.mace_settings["GENERAL"]["seed"])
         self.ASI_path = path_to_aims_lib
         #TODO: will break when using multiple settings for different trajectories and 
         # it should be adapted to the way the initial dataset procecure treats md settings
@@ -765,7 +785,8 @@ class PrepareALProcedure:
 
         # TODO: make option to directly load the dataset from the
         # initial dataset object instead of reading from disk
-        logging.info("Loading initial datasets.")
+        if RANK == 0:
+            logging.info("Loading initial datasets.")
         self.ensemble_ase_sets = load_ensemble_sets_from_folder(
             ensemble=self.ensemble,
             path_to_folder=self.al_settings["dataset_dir"] + "/initial",
@@ -821,6 +842,8 @@ class PrepareALProcedure:
         """
         Loads the atomic energies from existing ensemble members.
         """
+        if RANK == 0:
+            logging.info("Loading atomic energies from existing ensemble.")
         self.atomic_energies_dict = {}
         for _, model in self.ensemble.items():
             self.atomic_energies = np.array(model.atomic_energies_fn.atomic_energies.cpu())
