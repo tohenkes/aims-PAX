@@ -18,30 +18,29 @@ initial_ds = InitalDatasetProcedure(
     mace_settings=mace_settings,
     al_settings=al_settings,
     path_to_aims_lib=aims_lib_path,
-    species_dir=species_dir
+    species_dir=species_dir,
+    atomic_energies_dict=mace_settings['ARCHITECTURE'].get("atomic_energies", None)
 )
 
 if not al_settings['ACTIVE_LEARNING']["scheduler_initial"]:
     mace_settings["lr_scheduler"] = None
-        
 
-
+MPI.COMM_WORLD.Barrier()
 initial_ds.run()
 if al_settings['ACTIVE_LEARNING']["converge_initial"]:
     initial_ds.converge() 
 
 MPI.COMM_WORLD.Barrier()
-
-
 al = ALProcedure(
     mace_settings=mace_settings,
     al_settings=al_settings,
     path_to_aims_lib=aims_lib_path,
     species_dir=species_dir
 )
+MPI.COMM_WORLD.Barrier()
 
 al.run()
-al.converge()
+#al.converge()
 
 MPI.COMM_WORLD.Barrier()
 MPI.Finalize()

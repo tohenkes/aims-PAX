@@ -1,19 +1,19 @@
 ACTIVE_LEARNING:
-  desired_acc: 0.042
+  desired_acc: 0.0042
   lambda: 5.
   n_samples: 5
   initial_valid_ratio: 0.2
   valid_ratio: 3
   converge_initial: False
   scheduler_initial: True
-  max_initial_epochs: 400
-  max_epochs_worker: 10
-  max_final_epochs: 400
-  intermediate_epochs: 5
+  max_initial_epochs: 200
+  max_epochs_worker: 20
+  max_final_epochs: 200
+  intermediate_epochs: 10
   patience: 20
   max_MD_steps: 1000
   max_set_size: 100
-  valid_skip: 10
+  valid_skip: 5
   sanity_skip: 5
   ensemble_size: 2
   c_x: -0.1
@@ -21,8 +21,8 @@ ACTIVE_LEARNING:
   skip_step: 1 # step to skip in sampling MLFF MD
   threshold: 0.15 # uncertainty threshold for AL; temporary
   num_trajectories: 4 # number of trajectories to from sample in parallel
-  species_dir: "/home/thenkes/FHI_aims/FHIaims/species_defaults/defaults_2020/light"
-  aims_lib_path: "/home/thenkes/FHI_aims/libaims.240410.mpi.so"
+  species_dir: "/project/home/p200243/tcp_software/aims_240507_library/FHIaims/species_defaults/defaults_2020/light"
+  aims_lib_path: "/project/home/p200243/tcp_software/aims_240507_library/libaims.240627.scalapack.mpi.so"
 
 MD:
   stat_ensemble: NVT

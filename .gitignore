@@ -12,6 +12,7 @@
 *.db
 *.ipynb
 *.ase
+*.sh
 run_whole_procedure.*
 /legacy
 /sockets

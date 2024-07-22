@@ -13,7 +13,7 @@ from FHI_AL.utilities import (
     ensemble_from_folder,
     setup_ensemble_dicts,
     update_datasets,
-    update_avg_neighs_shifts_scale,
+    update_model_auxiliaries,
     save_checkpoint,
     save_datasets,
     pre_trajectories_from_folder,
@@ -28,7 +28,8 @@ from FHI_AL.utilities import (
     BOHR,
     BOHR_INV,
     HARTREE,
-    HARTREE_INV
+    HARTREE_INV,
+    AIMSControlParser,
 )
 from FHI_AL.train_epoch_mace import train_epoch, validate_epoch_ensemble
 import ase
@@ -56,6 +57,7 @@ class PrepareInitialDatasetProcedure:
         mace_settings: dict,
         al_settings: dict,
         path_to_aims_lib: str,
+        atomic_energies_dict: dict = None,
         species_dir: str = None,
         path_to_control: str = "./control.in",
         path_to_geometry: str = "./geometry.in",
@@ -66,6 +68,7 @@ class PrepareInitialDatasetProcedure:
             mace_settings (dict): Settings for the MACE model and its training.
             al_settings (dict): Settings for the active learning procedure.
             path_to_aims_lib (str): Path to the compiled AIMS library.
+            atomic_energies_dict (dict, optional): Dictionary containing the atomic energies. Defaults to None.
             species_dir (str, optional): Path to the basis set settings of AIMS. Defaults to None.
             path_to_control (str, optional): Path to the AIMS control file. Defaults to "./control.in".
             path_to_geometry (str, optional): Path to the initial geometry. Defaults to "./geometry.in".
@@ -87,20 +90,43 @@ class PrepareInitialDatasetProcedure:
 
         if RANK == 0:
             logging.info('Initializing initial dataset procedure.')
-        
+            
+        self.control_parser = AIMSControlParser()
         self.ASI_path = path_to_aims_lib
         self.handle_mace_settings(mace_settings)
         self.handle_al_settings(al_settings)
         self.handle_aims_settings(path_to_control, species_dir)
         self.create_folders()
         self.z = Z_from_geometry_in()
-        self.get_atomic_energies()
+        self.update_atomic_energies = False
+
+        if atomic_energies_dict is None:
+            self.atomic_energies_dict = {
+                z: 0 for z in np.unique(self.z)
+            }
+            self.update_atomic_energies = True
+        else:
+            self.atomic_energies_dict = atomic_energies_dict
+
+        self.atomic_energies = np.array(
+            [
+                self.atomic_energies_dict[z]
+                for z in self.atomic_energies_dict.keys()
+            ]
+        )
+        self.z_table = tools.get_atomic_number_table_from_zs(
+            z for z in self.atomic_energies_dict.keys()
+        )
+        if RANK == 0:
+            logging.info(f'{self.atomic_energies_dict}')
         self.atoms = read(path_to_geometry)
         self.n_atoms = len(self.z)
-        self.handle_MD_settings(al_settings)
+        #self.handle_MD_settings(al_settings)
         self.epoch = 0
         
         np.random.seed(self.mace_settings["GENERAL"]["seed"])
+        random.seed(self.mace_settings["GENERAL"]["seed"])
+        
         if ensemble_seeds is not None:
             self.ensemble_size = len(ensemble_seeds)
             self.ensemble_seeds = ensemble_seeds
@@ -129,6 +155,12 @@ class PrepareInitialDatasetProcedure:
             {tag: {"train": [], "valid": []} for tag in self.ensemble.keys()},
         )
 
+        # initializing the md and FHI aims
+        self.dyn = self.setup_md(self.atoms, md_settings=self.md_settings)
+        self.setup_calculator(
+            self.atoms,
+            pbc=self.atoms.pbc.any()
+            )
 
     #TODO: path to settings could maybe be better
     def handle_mace_settings(self, mace_settings: dict) -> None:
@@ -147,6 +179,7 @@ class PrepareInitialDatasetProcedure:
             "valid_batch_size"
         ]
         self.scaling = self.mace_settings["TRAINING"]["scaling"]
+        self.dtype = self.mace_settings["GENERAL"]["default_dtype"]
 
     def handle_al_settings(self, al_settings: dict) -> None:
         """
@@ -157,6 +190,7 @@ class PrepareInitialDatasetProcedure:
         """
 
         self.al_settings = al_settings["ACTIVE_LEARNING"]
+        self.md_settings = al_settings["MD"]
         self.ensemble_size = self.al_settings["ensemble_size"]
         self.desired_acc = self.al_settings["desired_acc"]
         self.lamb = self.al_settings["lambda"]
@@ -182,21 +216,27 @@ class PrepareInitialDatasetProcedure:
         os.makedirs("model", exist_ok=True)
 
     def get_atomic_energies(self):
+        #!!!!!!!!!!!!!!!!!!
+        # TH:
+        # Was a nice idea to have it calculate the isolated atomic energies for the user
+        # automatically. Turns out that if you have scalapack enabled it does not work 
+        # with very small systems (1-2 atoms). If you switch the KS_method it works but
+        # the next time FHI aims is initialized it does not use scalapack for parallelism
+        # for some reasons. This means quite the performance hit. So we'll leave it out for
+        # now and let the user provide the atomic energies or use the average atomic energies.
+        #!!!!!!!!!!!!!!!!!!
         """
         Calculates the isolated atomic energies for the elements in the geometry using AIMS.
-        TODO: make it possible to provide the numbers yourself or use the average atomic
-              energies (then we'd have to update them continously like the shift and scaling factor)
-              The function get_atomic_energies_from_ensemble(self) in the AL procedure has to be changed then.
         """     
         if RANK == 0:
-            logging.info('Calculating isolated atomic energies.')
+            logging.info('Calculating the isolated atomic energies.')
         self.atomic_energies_dict = {}        
         unique_atoms = np.unique(self.z)
         for element in unique_atoms:
-            if RANK == 0:
-                logging.info(f'Calculating energy for element {element}.')
             atom = ase.Atoms([int(element)],positions=[[0,0,0]])
-            self.setup_calculator(atom)
+            if RANK == 0:
+                logging.info(f'Calculating the atomic energy energy of {atom.symbols[0]}.')
+            self.setup_calculator(atom,pbc=False,serial=True)
             self.atomic_energies_dict[element] = atom.get_potential_energy() 
             atom.calc.close() # kills AIMS process so we can start a new one later
  
@@ -209,47 +249,47 @@ class PrepareInitialDatasetProcedure:
         self.z_table = tools.get_atomic_number_table_from_zs(
             z for z in self.atomic_energies_dict.keys()
         )
-        logging.info(f'{self.atomic_energies_dict}')
+        if RANK == 0:
+            logging.info(f'{self.atomic_energies_dict}')
         
-    def setup_calculator(self, atoms: ase.Atoms) -> ase.Atoms:
+    def setup_calculator(
+            self,
+            atoms: ase.Atoms,
+            pbc: bool = False,
+            serial: bool = False 
+            ) -> ase.Atoms:
         """
         Attaches the AIMS calculator to the atoms object. Uses the AIMS settings
         from the control.in to set up the calculator.
 
         Args:
             atoms (ase.Atoms): Atoms object to attach the calculator to.
+            pbc (bool, optional): If periodic boundry conditions are required or not.
+            Defaults to False.
 
         Returns:
             ase.Atoms: Atoms object with the calculator attached.
         """
+        # we only calculate the free atoms here so k_grid is not needed
+        if not pbc:
+            aims_settings = self.aims_settings.copy()
+            if aims_settings.get('k_grid') is not None:
+                aims_settings.pop('k_grid')
+        else:
+            aims_settings = self.aims_settings.copy()
+            
+        # 1-2 atoms are too small to use scalapack KS solver
+        # so we fall back to the serial one for calculating single atoms
+        if serial:
+            aims_settings['KS_method'] = 'serial'
+        else:
+            aims_settings['KS_method'] = 'scalapack_fast'
         def init_via_ase(asi):
             
             from ase.calculators.aims import Aims
-            #TODO: make this more flexible
-            if self.aims_settings.get("many_body_dispersion") is not None:
-                calc = Aims(xc=self.aims_settings["xc"],
-                    relativistic=self.aims_settings.get("relativistic", "none"),
-                    spin=self.aims_settings.get("spin", "none"),
-                    charge=self.aims_settings.get("charge", 0),
-                    charge_mix_param=self.aims_settings.get("charge_mix_param", None),
-                    sc_accuracy_rho=self.aims_settings.get("sc_accuracy_rho", None),
-                    species_dir=self.aims_settings["species_dir"],
-                    compute_forces=True,
-                    many_body_dispersion='',) # mbd in aims has only the
-                                              # keyword, so it must be
-                                              # an empty string here
-            else:
-                calc = Aims(xc=self.aims_settings["xc"],
-                    relativistic=self.aims_settings.get("relativistic", "none"),
-                    spin=self.aims_settings.get("spin", "none"),
-                    charge=self.aims_settings.get("charge", 0),
-                    charge_mix_param=self.aims_settings.get("charge_mix_param", None),
-                    sc_accuracy_rho=self.aims_settings.get("sc_accuracy_rho", None),
-                    species_dir=self.aims_settings["species_dir"],
-                    compute_forces=True,
-                    )
-            
+            calc = Aims(**aims_settings)
             calc.write_input(asi.atoms)
+
         atoms.calc = ASI_ASE_calculator(
             self.ASI_path,
             init_via_ase,
@@ -270,81 +310,63 @@ class PrepareInitialDatasetProcedure:
             path_to_control (str): Path to the AIMS control file.
             species_dir (str): Path to the species directory of AIMS.
         """
-        #TODO: make this more flexible
-        self.aims_settings = {}
-        with open(path_to_control, "r") as f: 
-            for line in f:
-                if "xc" in line and '#' not in line:
-                    self.aims_settings['xc'] = line.split()[1]
-                if "relativistic" in line and '#' not in line:
-                    if "none" in line:
-                        pass
-                    elif "atomic_zora" in line:
-                        self.aims_settings['relativistic'] = line.split()[1] + " " + line.split()[2]
-                if "charge" in line and '#' not in line:
-                    self.aims_settings['charge'] = line.split()[1]
-                if "many_body_dispersion" in line and '#' not in line:
-                    self.aims_settings['many_body_dispersion'] = '' # TODO: i think this is not working
-                if "k_grid" in line:
-                    self.aims_settings['k_grid'] = line.split()[1] + " " + line.split()[2] + " " + line.split()[3]
-                if "charge_mix_param" in line and '#' not in line:
-                    self.aims_settings['charge_mix_param'] = line.split()[1]
-                if "sc_accuracy_rho" in line and '#' not in line:
-                    self.aims_settings['sc_accuracy_rho'] = line.split()[1]
-                if "spin" in line and '#' not in line:
-                    self.aims_settings['spin'] = line.split()[1]
+        
+        self.aims_settings = self.control_parser(path_to_control)
+        self.aims_settings['compute_forces'] = True
         self.aims_settings['species_dir'] = species_dir
         
-    def handle_MD_settings(
-            self,
-            al_settings: dict
-            ):
-        """
-        Parses the MD settings from the active learning settings.
+    # def handle_MD_settings(
+    #         self,
+    #         al_settings: dict
+    #         ):
+    #     """
+    #     Parses the MD settings from the active learning settings.
 
-        Args:
-            al_settings (dict): Dictionary containing the active learning settings.
-        """
-        #TODO: make this more flexible
-        self.md_settings = al_settings["MD"]
-        self.stat_ensemble = self.md_settings["stat_ensemble"].lower()
-        if self.stat_ensemble == 'nvt':
-            self.thermostat = self.md_settings['thermostat'].lower()
-            if self.thermostat == 'langevin':
-                self.friction = self.md_settings['friction']
-                self.md_seed = self.md_settings['seed']
+    #     Args:
+    #         al_settings (dict): Dictionary containing the active learning settings.
+    #     """
+    #     #TODO: make this more flexible
+    #     self.md_settings = al_settings["MD"]
+    #     self.stat_ensemble = self.md_settings["stat_ensemble"].lower()
+    #     if self.stat_ensemble == 'nvt':
+    #         self.thermostat = self.md_settings['thermostat'].lower()
+    #         if self.thermostat == 'langevin':
+    #             self.friction = self.md_settings['friction']
+    #             self.md_seed = self.md_settings['seed']
                 
-        self.timestep = self.md_settings['timestep']
-        self.temperature = self.md_settings['temperature']
-            
+    #     self.timestep = self.md_settings['timestep']
+    #     self.temperature = self.md_settings['temperature']
+
     def setup_md(
         self,
-        atoms: ase.Atoms
+        atoms: ase.Atoms,
+        md_settings: dict
         ):
         """
         Sets up the ASE molecular dynamics object for the atoms object.
 
         Args:
             atoms (ase.Atoms): Atoms to be propagated.
+            md_settings (dict): Dictionary containing the MD settings.
 
         Returns:
             ase.md.MolecularDynamics: ASE MD engine.
         """
         #TODO: make this more flexible
-        if self.stat_ensemble == 'nvt':
-            if self.thermostat == 'langevin':
+        if md_settings["stat_ensemble"].lower() == 'nvt':
+            if md_settings['thermostat'].lower() == 'langevin':
                 dyn = Langevin(
                     atoms,
-                    timestep=self.timestep * units.fs,
-                    friction=self.friction / units.fs,
-                    temperature_K=self.temperature,
-                    rng=np.random.RandomState(self.md_seed)
+                    timestep=md_settings['timestep'] * units.fs,
+                    friction=md_settings['friction'] / units.fs,
+                    temperature_K=md_settings['temperature'],
+                    rng=np.random.RandomState(md_settings['seed'])
                 )
-    
         # make this optional and have the possibility for different initial temperature
-        MaxwellBoltzmannDistribution(atoms, temperature_K=self.temperature)
+        MaxwellBoltzmannDistribution(atoms, temperature_K=md_settings['temperature'])
     
         return dyn
+
 
 class InitalDatasetProcedure(PrepareInitialDatasetProcedure):
     """
@@ -388,9 +410,7 @@ class InitalDatasetProcedure(PrepareInitialDatasetProcedure):
         is reached or the maximum number of epochs is reached.
 
         """
-        # initializing the md and FHI aims
-        self.dyn = self.setup_md(self.atoms)
-        self.setup_calculator(self.atoms)
+
         
         current_valid = np.inf
         step = 0
@@ -455,14 +475,21 @@ class InitalDatasetProcedure(PrepareInitialDatasetProcedure):
                     # because we are continously training the model we
                     # have to update the average number of neighbors, shifts
                     # and the scaling factor also continously
-                    update_avg_neighs_shifts_scale(
+                    update_model_auxiliaries(
                         model=model,
-                        train_loader=self.ensemble_mace_sets[tag]["train_loader"],
+                        mace_sets=self.ensemble_mace_sets[tag],
                         atomic_energies=self.atomic_energies,
                         scaling=self.scaling,
+                        update_atomic_energies=self.update_atomic_energies,
+                        z_table=self.z_table,
+                        atomic_energies_dict=self.atomic_energies_dict,
+                        dtype=self.dtype,
                     )
                     logging.info(
                         f"Training set size for '{tag}': {len(self.ensemble_mace_sets[tag]['train'])}; Validation set size: {len(self.ensemble_mace_sets[tag]['valid'])}."
+                    )
+                    logging.info(
+                        f"Updated model auxiliaries for '{tag}'."
                     )
 
                     step += 1
@@ -604,7 +631,7 @@ class InitalDatasetProcedure(PrepareInitialDatasetProcedure):
                     self.set_valid_batch_size,
                 )
 
-                update_avg_neighs_shifts_scale(
+                update_model_auxiliaries(
                     model=model,
                     train_loader=self.ensemble_ase_sets[tag]["train_loader"],
                     atomic_energies=self.atomic_energies,
@@ -721,6 +748,7 @@ class PrepareALProcedure:
         al_settings,
         species_dir: str,
         path_to_aims_lib: str,
+        atomic_energies_dict: dict = None,
         path_to_control: str = "./control.in",
         path_to_geometry: str = "./geometry.in",
         seeds_tags_dict: dict = None,
@@ -742,7 +770,7 @@ class PrepareALProcedure:
         if RANK == 0:
             logging.info("Initializing active learning procedure.")
         
-        
+        self.control_parser = AIMSControlParser()
         self.handle_al_settings(al_settings['ACTIVE_LEARNING'])
         self.handle_mace_settings(mace_settings)
         self.handle_aims_settings(path_to_control, species_dir)
@@ -773,7 +801,31 @@ class PrepareALProcedure:
             path_to_models="./model",
             device=self.device,
         )
-        self.get_atomic_energies_from_ensemble()
+
+        
+
+        if atomic_energies_dict is not None:
+            # if they have been explicitly specified the model should not update them
+            # anymore
+            self.update_atomic_energies = False
+            self.ensemble_atomic_energies_dict = {}
+            self.ensemble_atomic_energies = {}
+            for tag in self.ensemble.keys():
+                self.ensemble_atomic_energies_dict[tag] = atomic_energies_dict
+                self.ensemble_atomic_energies[tag] = np.array(
+                    [
+                        self.ensemble_atomic_energies_dict[tag][z]
+                        for z in self.ensemble_atomic_energies_dict.keys()
+                    ]
+                )
+        else:
+            try:
+                self.get_atomic_energies_from_ensemble()
+            except:
+                if RANK == 0:
+                    logging.info('Could not load atomic energies from ensemble members.')
+            self.update_atomic_energies = True
+
 
 
         self.training_setups = ensemble_training_setups(
@@ -808,6 +860,7 @@ class PrepareALProcedure:
             trajectory.calc = self.mace_calc
 
         #TODO: make this more flexible, to allow different drivers per trajectory
+        # just make a dictionary of different md settings and pass them here
         self.md_drivers = {
             trajectory: self.setup_md_al(
                 atoms=self.trajectories[trajectory], md_settings=self.md_settings
@@ -844,17 +897,18 @@ class PrepareALProcedure:
         """
         if RANK == 0:
             logging.info("Loading atomic energies from existing ensemble.")
-        self.atomic_energies_dict = {}
-        for _, model in self.ensemble.items():
-            self.atomic_energies = np.array(model.atomic_energies_fn.atomic_energies.cpu())
-            break # TODO: this only applies when the atomic energies are the free atomic energies
-                    # calculated using DFT. Otherwise they could be different for each model.
-                    # This has to change when that option is implemented
-        for i, atomic_energy in enumerate(self.atomic_energies):
-            self.atomic_energies_dict[np.sort(np.unique(self.z))[i]] = atomic_energy
+        self.ensemble_atomic_energies_dict = {}
+        self.ensemble_atomic_energies = {}
+        for tag, model in self.ensemble.items():
+            self.ensemble_atomic_energies[tag] = np.array(model.atomic_energies_fn.atomic_energies.cpu())
+            self.ensemble_atomic_energies_dict[tag] = {}
+            for i, atomic_energy in enumerate(self.ensemble_atomic_energies[tag]):
+                # TH: i don't know if the atomic energies are really sorted by atomic number
+                # inside the models. TODO: check that
+                self.ensemble_atomic_energies_dict[tag][np.sort(np.unique(self.z))[i]] = atomic_energy
             
         self.z_table = tools.get_atomic_number_table_from_zs(
-            z for z in self.atomic_energies_dict.keys()
+            z for z in self.ensemble_atomic_energies_dict[tag].keys()
         )
         
             
@@ -903,18 +957,8 @@ class PrepareALProcedure:
 
         """
         
-        #TODO: make this more flexible
-        self.aims_settings = {}
-        with open(path_to_control, "r") as f: 
-            for line in f:
-                if "xc" in line and '#' not in line:
-                    self.aims_settings['xc'] = line.split()[1]
-                if "relativistic" in line and '#' not in line:
-                    self.aims_settings['relativistic'] = line.split()[1] + " " + line.split()[2]
-                if "charge" in line and '#' not in line:
-                    self.aims_settings['charge'] = line.split()[1]
-                if "many_body_dispersion" in line and '#' not in line:
-                    self.aims_settings['many_body_dispersion'] = ''
+        self.aims_settings = self.control_parser(path_to_control)
+        self.aims_settings['compute_forces'] = True
         self.aims_settings['species_dir'] = species_dir
     
     def create_folders(self):
@@ -942,21 +986,9 @@ class PrepareALProcedure:
         def init_via_ase(asi):
             
             from ase.calculators.aims import Aims
-            #TODO: make this more flexible
-            if self.aims_settings.get("many_body_dispersion") is not None:
-                calc = Aims(xc=self.aims_settings["xc"],
-                    relativistic=self.aims_settings["relativistic"],
-                    species_dir=self.aims_settings["species_dir"],
-                    compute_forces=True,
-                    many_body_dispersion='',)
-            else:
-                calc = Aims(xc=self.aims_settings["xc"],
-                    relativistic=self.aims_settings["relativistic"],
-                    species_dir=self.aims_settings["species_dir"],
-                    compute_forces=True,
-                    )
-            
+            calc = Aims(**self.aims_settings)
             calc.write_input(asi.atoms)
+            
         calculator = ASI_ASE_calculator(
             self.ASI_path,
             init_via_ase,
@@ -976,9 +1008,6 @@ class PrepareALProcedure:
             device=self.device,
             default_dtype=self.dtype)
         
-    # TODO: make this consitent with the initial dataset procedure. when we have different
-    # MD settings for the multiple trajectories this is better because it directly uses the
-    # settings
     def setup_md_al(
             self,
             atoms: ase.Atoms,
@@ -1089,12 +1118,17 @@ class ALProcedure(PrepareALProcedure):
                 self.ensemble_mace_sets[tag]["valid"] += self.mace_point
 
             if self.analysis:
-                sanity_prediction = ensemble_prediction(
-                    models=list(self.ensemble.values()),
-                    atoms_list=self.ensemble_ase_sets[tag]["valid"],
-                    device=self.device,
-                    dtype=self.mace_settings["GENERAL"]["default_dtype"],
-                )
+                if RANK == 0:    
+                    sanity_prediction = ensemble_prediction(
+                        models=list(self.ensemble.values()),
+                        atoms_list=self.ensemble_ase_sets[tag]["valid"],
+                        device=self.device,
+                        dtype=self.mace_settings["GENERAL"]["default_dtype"],
+                    )
+                MPI.COMM_WORLD.Barrier()
+                sanity_prediction = MPI.COMM_WORLD.bcast(sanity_prediction, root=0)
+                MPI.COMM_WORLD.Barrier()
+                
                 self.sanity_check(sanity_prediction, self.point.arrays["forces"])
 
         else:
@@ -1145,84 +1179,102 @@ class ALProcedure(PrepareALProcedure):
             # because the dataset size is dynamically changing we have to update the average number of neighbors
             # and shifts and the scaling factor for the models
             # usually they converge pretty fast
-            update_avg_neighs_shifts_scale(
+            update_model_auxiliaries(
                 model=model,
-                train_loader=self.ensemble_mace_sets[tag]["train_loader"],
-                atomic_energies=self.atomic_energies,
+                mace_sets=self.ensemble_mace_sets[tag],
+                atomic_energies=self.ensemble_atomic_energies[tag],
                 scaling=self.scaling,
+                update_atomic_energies=self.update_atomic_energies,
+                z_table=self.z_table,
+                atomic_energies_dict=self.ensemble_atomic_energies_dict[tag],
+                dtype=self.dtype,
             )
 
         logging.info(f"Trajectory worker {idx} is training.")
         # we train only for some epochs before we move to the next worker which may be running MD
         # all workers train on the same models with the respective training settings for
         # each ensemble member
-        for _ in range(self.intermediate_epochs):
-            for tag, model in self.ensemble.items():
-                # from here
-                #############
+        if RANK == 0:
+            for _ in range(self.intermediate_epochs):
+                for tag, model in self.ensemble.items():
 
-                # training_setups[tag] = setup_mace_training(
-                #                settings=mace_settings,
-                #                model=ensemble[tag],
-                #                tag=tag,
-                #                )
+                    # TH: this would reset the optimizer and co.
+                    # training_setups[tag] = setup_mace_training(
+                    #                settings=mace_settings,
+                    #                model=ensemble[tag],
+                    #                tag=tag,
+                    #                )
 
-                logger = tools.MetricsLogger(
-                    directory=self.mace_settings["GENERAL"]["results_dir"],
-                    tag=tag + "_train",
-                )
-                train_epoch(
-                    model=model,
-                    train_loader=self.ensemble_mace_sets[tag]["train_loader"],
-                    loss_fn=self.training_setups[tag]["loss_fn"],
-                    optimizer=self.training_setups[tag]["optimizer"],
-                    lr_scheduler=self.training_setups[tag]['lr_scheduler'] if self.use_scheduler else None,  # no scheduler used here
-                    epoch=self.trajectory_epochs[idx],
-                    start_epoch=None,
-                    valid_loss=None,
-                    logger=logger,
-                    device=self.training_setups[tag]["device"],
-                    max_grad_norm=self.training_setups[tag]["max_grad_norm"],
-                    output_args=self.training_setups[tag]["output_args"],
-                    ema=self.training_setups[tag]["ema"],
-                )
-            self.total_epoch += 1
-            
-            # update calculator
-            # TODO: don't load from disk every time but use loaded in ensemble but for this we have to change MACECalculator()
-            self.setup_mace_calc()
-            for trajectory in self.trajectories.values():
-                trajectory.calc = self.mace_calc
+                    logger = tools.MetricsLogger(
+                        directory=self.mace_settings["GENERAL"]["results_dir"],
+                        tag=tag + "_train",
+                    )
+                    train_epoch(
+                        model=model,
+                        train_loader=self.ensemble_mace_sets[tag]["train_loader"],
+                        loss_fn=self.training_setups[tag]["loss_fn"],
+                        optimizer=self.training_setups[tag]["optimizer"],
+                        lr_scheduler=self.training_setups[tag]['lr_scheduler'] if self.use_scheduler else None,  # no scheduler used here
+                        epoch=self.trajectory_epochs[idx],
+                        start_epoch=None,
+                        valid_loss=None,
+                        logger=logger,
+                        device=self.training_setups[tag]["device"],
+                        max_grad_norm=self.training_setups[tag]["max_grad_norm"],
+                        output_args=self.training_setups[tag]["output_args"],
+                        ema=self.training_setups[tag]["ema"],
+                    )
+                self.total_epoch += 1
                 
-            if (
-                self.trajectory_epochs[idx] % self.valid_skip == 0
-                or self.trajectory_epochs[idx] == self.max_epochs_worker - 1
-            ):
-                _, _, metrics = validate_epoch_ensemble(
-                    ensemble=self.ensemble,
-                    ema=self.training_setups[tag]["ema"],
-                    loss_fn=self.training_setups[tag]["loss_fn"],
-                    valid_loader=self.ensemble_mace_sets[tag]["valid_loader"],
-                    output_args=self.training_setups[tag]["output_args"],
-                    device=self.training_setups[tag]["device"],
-                    logger=logger,
-                    log_errors=self.mace_settings["MISC"]["error_table"],
-                    epoch=self.trajectory_epochs[idx],
-                )
-                self.current_valid = metrics["mae_f"]
 
-                save_checkpoint(
-                    checkpoint_handler=self.training_setups[tag][
-                        "checkpoint_handler"
-                    ],
-                    training_setup=self.training_setups[tag],
-                    model=model,
-                    epoch=self.trajectory_epochs[idx],
-                    keep_last=True,
+                    
+                if (
+                    self.trajectory_epochs[idx] % self.valid_skip == 0
+                    or self.trajectory_epochs[idx] == self.max_epochs_worker - 1
+                ):
+                    _, _, metrics = validate_epoch_ensemble(
+                        ensemble=self.ensemble,
+                        ema=self.training_setups[tag]["ema"],
+                        loss_fn=self.training_setups[tag]["loss_fn"],
+                        valid_loader=self.ensemble_mace_sets[tag]["valid_loader"],
+                        output_args=self.training_setups[tag]["output_args"],
+                        device=self.training_setups[tag]["device"],
+                        logger=logger,
+                        log_errors=self.mace_settings["MISC"]["error_table"],
+                        epoch=self.trajectory_epochs[idx],
+                    )
+                    self.current_valid = metrics["mae_f"]
+
+                    save_checkpoint(
+                        checkpoint_handler=self.training_setups[tag][
+                            "checkpoint_handler"
+                        ],
+                        training_setup=self.training_setups[tag],
+                        model=model,
+                        epoch=self.trajectory_epochs[idx],
+                        keep_last=True,
+                    )
+                # to here, can be made into a class
+                #############
+                self.trajectory_epochs[idx] += 1
+            #SOMETHING IS WRONG HERE
+            # update calculator
+            # TODO: don't load from disk every time but use loaded in ensemble but 
+            # for this we have to change MACECalculator()
+            for tag, model in self.ensemble.items():
+                torch.save(
+                    model,
+                    Path(self.mace_settings["GENERAL"]["model_dir"])
+                    / (tag + ".model"),
                 )
-            # to here, can be made into a class
-            #############
-            self.trajectory_epochs[idx] += 1
+            self.setup_mace_calc()
+
+        MPI.COMM_WORLD.Barrier()
+        self.total_epoch = MPI.COMM_WORLD.bcast(self.total_epoch, root=0)
+        for trajectory in self.trajectories.values():
+            trajectory.calc = MPI.COMM_WORLD.bcast(self.mace_calc, root=0)
+        self.trajectory_epochs[idx] = MPI.COMM_WORLD.bcast(self.trajectory_epochs[idx], root=0)
+        MPI.COMM_WORLD.Barrier()
 
         if self.trajectory_epochs[idx] == self.max_epochs_worker:
             self.trajectory_training[idx] = "running"
@@ -1230,7 +1282,6 @@ class ALProcedure(PrepareALProcedure):
             self.trajectory_epochs[idx] = 0
             logging.info(f"Trajectory worker {idx} finished training.")
             # calculate true error and uncertainty on validation set
-
 
     def running_task(
             self,
@@ -1267,23 +1318,37 @@ class ALProcedure(PrepareALProcedure):
             # calculate the aims forces and use them to propagate
             # currently the mace forces are used even if the uncertainty is too high
             # but ase is weird and i don't want to change it so whatever. when we have our own 
-            # MD engine we can adress this. Or.. it leads to scf problems and we have to fix this
-            # because it generates crazy geometries
+            # MD engine we can adress this.
+            if RANK == 0:
+                self.md_drivers[idx].step()
+                logging.info(f"MD step {current_MD_step} done for trajectory worker {idx}.")
 
-            self.md_drivers[idx].step()
+            MPI.COMM_WORLD.Barrier()
+            self.trajectories[idx] = MPI.COMM_WORLD.bcast(self.trajectories[idx], root=0)
+            MPI.COMM_WORLD.Barrier()
+
             self.trajectory_MD_steps[idx] += 1
             if current_MD_step % self.skip_step == 0:
-                logging.info(
-                    f"Trajectory worker {idx} at step {current_MD_step}."
-                )
-                
+                if RANK == 0:
+                    logging.info(
+                        f"Trajectory worker {idx} at MD step {current_MD_step}."
+                    )
+                    
                 self.point = self.trajectories[idx].copy()
+                prediction = None
+                if RANK == 0:
+                    logging.info(f"Results {self.trajectories[idx].calc.results}")
+                    prediction = self.trajectories[idx].calc.results["forces_comm"]
                 
-                prediction = self.trajectories[idx].calc.results["forces_comm"]
+                MPI.COMM_WORLD.Barrier()
+                prediction = MPI.COMM_WORLD.bcast(prediction, root=0)
+                MPI.COMM_WORLD.Barrier()
+
                 uncertainty = max_sd_2(prediction)
                 # compute moving average of uncertainty
                 self.uncertainties.append(uncertainty)
-                # limit the history to 400 TODO: make this a parameter
+                # TODO: Remove hardcode
+                # limit the history to 400
                 if len(self.uncertainties) > 400:
                     self.uncertainties = self.uncertainties[-400:]
                 if len(self.uncertainties) > 10:
@@ -1291,13 +1356,15 @@ class ALProcedure(PrepareALProcedure):
                     self.threshold = mov_avg_uncert * (1.0 + self.c_x)
 
                 if uncertainty > self.threshold:
-                    logging.info(
-                        f"Uncertainty of point is beyond threshold {np.round(self.threshold,3)} at worker {idx}: {round(uncertainty.item(),3)}."
-                    )
+                    if RANK == 0:
+                        logging.info(
+                            f"Uncertainty of point is beyond threshold {np.round(self.threshold,3)} at worker {idx}: {round(uncertainty.item(),3)}."
+                        )
                     
                     # at the moment the process waits for the calculation to finish
                     # ideally it should calculate in the background and the other
                     # workers sample/train in the meantime
+                    MPI.COMM_WORLD.Barrier()
                     self.aims_calculator.calculate(self.point, properties=["energy","forces"])
 
                     self.point.info['energy'] = self.aims_calculator.results['energy']
@@ -1317,9 +1384,10 @@ class ALProcedure(PrepareALProcedure):
 
                     # for analysis
                     self.t_intervals[idx].append(current_MD_step)
-                    logging.info(
-                        f"Trajectory worker {idx} is waiting for job to finish."
-                    )
+                    if RANK == 0:
+                        logging.info(
+                            f"Trajectory worker {idx} is waiting for job to finish."
+                        )
 
             if (
                 current_MD_step % self.sanity_skip == 0
@@ -1329,29 +1397,36 @@ class ALProcedure(PrepareALProcedure):
                 #  MD steps have been taken or if all workes are running and currently
                 # we are not doing anything with this. Maybe check correlation between real error
                 # and uncertainty?
+                if RANK == 0:
+                    logging.info(f"Trajectory worker {idx} doing a sanity check.")
                 
-                logging.info(f"Trajectory worker {idx} doing a sanity check.")
                 if current_MD_step % self.skip_step == 0:
                     sanity_prediction = prediction
                     sanity_uncertainty = uncertainty
                 else:
-                    sanity_prediction = ensemble_prediction(
-                        models=list(self.ensemble.values()),
-                        atoms_list=[self.point],
-                        device=self.device,
-                        dtype=self.mace_settings["GENERAL"]["default_dtype"],
-                    )
+                    if RANK == 0:
+                        sanity_prediction = ensemble_prediction(
+                            models=list(self.ensemble.values()),
+                            atoms_list=[self.point],
+                            device=self.device,
+                            dtype=self.mace_settings["GENERAL"]["default_dtype"],
+                        )
+                    MPI.COMM_WORLD.Barrier()
+                    sanity_prediction = MPI.COMM_WORLD.bcast(sanity_prediction, root=0)
+                    MPI.COMM_WORLD.Barrier()
+
                     sanity_uncertainty = max_sd_2(sanity_prediction)
                     
                 if self.aims_calculator.results.get("forces") is None:
+                    MPI.COMM_WORLD.Barrier()
                     self.aims_calculator.calculate(self.point, properties=["energy","forces"])
+
                 sanity_uncertainty, max_error = self.sanity_check(
                     sanity_prediction=sanity_prediction,
                     true_forces = self.aims_calculator.results['forces']
                 )
                 self.sanity_checks[idx].append((sanity_uncertainty, max_error))
                 self.check += 1
-
 
     def run(self):
         """
@@ -1369,6 +1444,9 @@ class ALProcedure(PrepareALProcedure):
         self.num_workers_waiting = 0
         self.total_epoch = 0
         self.check = 0
+
+        MPI.COMM_WORLD.Barrier()
+        
         while True:
             for trajectory_idx, _ in enumerate(self.trajectories):
 
@@ -1396,6 +1474,7 @@ class ALProcedure(PrepareALProcedure):
                     logging.info(
                         "All workers are in training mode."
                     )  
+                
                 if self.num_workers_waiting == self.num_trajectories:
                     logging.info("All workers are waiting for jobs to finish.")
             
@@ -1461,7 +1540,7 @@ class ALProcedure(PrepareALProcedure):
                 self.set_valid_batch_size,
             )
 
-            update_avg_neighs_shifts_scale(
+            update_model_auxiliaries(
                 model=model,
                 train_loader=self.ensemble_ase_sets[tag]["train_loader"],
                 atomic_energies=self.atomic_energies,
@@ -1686,7 +1765,7 @@ class StandardMACEEnsembleProcedure:
                 self.set_valid_batch_size,
             )
 
-            update_avg_neighs_shifts_scale(
+            update_model_auxiliaries(
                 model=model,
                 train_loader=self.ensemble_ase_sets[tag]["train_loader"],
                 atomic_energies=self.atomic_energies,

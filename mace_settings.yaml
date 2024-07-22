@@ -31,6 +31,9 @@ ARCHITECTURE:
   interaction_first: RealAgnosticResidualInteractionBlock
   E0s: average
   compute_avg_num_neighbors: True
+  #atomic_energies:
+  #  1: 0.1
+  #  8: 0.1
 
 TRAINING:
   valid_fraction: 0.1
