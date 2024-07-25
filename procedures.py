@@ -180,6 +180,7 @@ class PrepareInitialDatasetProcedure:
         ]
         self.scaling = self.mace_settings["TRAINING"]["scaling"]
         self.dtype = self.mace_settings["GENERAL"]["default_dtype"]
+        self.device = self.mace_settings["MISC"]["device"]
 
     def handle_al_settings(self, al_settings: dict) -> None:
         """
@@ -484,6 +485,7 @@ class InitalDatasetProcedure(PrepareInitialDatasetProcedure):
                         z_table=self.z_table,
                         atomic_energies_dict=self.atomic_energies_dict,
                         dtype=self.dtype,
+                        device=self.device,
                     )
                     logging.info(
                         f"Training set size for '{tag}': {len(self.ensemble_mace_sets[tag]['train'])}; Validation set size: {len(self.ensemble_mace_sets[tag]['valid'])}."
@@ -635,6 +637,7 @@ class InitalDatasetProcedure(PrepareInitialDatasetProcedure):
                     z_table=self.z_table,
                     atomic_energies_dict=self.atomic_energies_dict,
                     dtype=self.dtype,
+                    device=self.device,
                 )
 
             # TODO: reset or not?
@@ -921,6 +924,7 @@ class PrepareALProcedure:
         self.device = self.mace_settings["MISC"]["device"]
         self.model_dir = self.mace_settings["GENERAL"]["model_dir"]
         self.dtype = self.mace_settings["GENERAL"]["default_dtype"]
+        self.device = self.mace_settings["MISC"]["device"]
     
     def handle_al_settings(self, al_settings):
         self.al_settings = al_settings
@@ -1188,6 +1192,7 @@ class ALProcedure(PrepareALProcedure):
                 z_table=self.z_table,
                 atomic_energies_dict=self.ensemble_atomic_energies_dict[tag],
                 dtype=self.dtype,
+                device=self.device,
             )
         if RANK == 0:
             logging.info(f"Trajectory worker {idx} is training.")
@@ -1336,7 +1341,6 @@ class ALProcedure(PrepareALProcedure):
             # MD engine we can adress this.
             if RANK == 0:
                 self.md_drivers[idx].step()
-                logging.info(f"MD step {current_MD_step} done for trajectory worker {idx}.")
 
             MPI.COMM_WORLD.Barrier()
             self.trajectories[idx] = MPI.COMM_WORLD.bcast(self.trajectories[idx], root=0)
@@ -1575,6 +1579,7 @@ class ALProcedure(PrepareALProcedure):
                     z_table=self.z_table,
                     atomic_energies_dict=self.ensemble_atomic_energies_dict[tag],
                     dtype=self.dtype,
+                    device=self.device,
                 )
                 training_setups = {}
             # resetting optimizer and scheduler
@@ -1757,6 +1762,7 @@ class StandardMACEEnsembleProcedure:
                 train_loader=self.ensemble_ase_sets[tag]["train_loader"],
                 atomic_energies=self.atomic_energies,
                 scaling=self.scaling,
+                
             )
             
         best_valid_loss = np.inf

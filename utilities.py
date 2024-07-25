@@ -1017,6 +1017,7 @@ def update_model_auxiliaries(
     atomic_energies_dict: dict = None,
     z_table: tools.AtomicNumberTable = None,
     dtype: str = "float64",
+    device: str = "cpu",
 
 ):
     """
@@ -1052,7 +1053,7 @@ def update_model_auxiliaries(
             for z in atomic_energies_dict.keys()
         ]   
         atomic_energies = torch.tensor(atomic_energies, dtype=dtype_mapping[dtype])
-        model.atomic_energies_fn.atomic_energies = atomic_energies
+        model.atomic_energies_fn.atomic_energies = atomic_energies.to(device)
 
     average_neighbors = modules.compute_avg_num_neighbors(train_loader)
     for interaction_idx in range(len(model.interactions)):
