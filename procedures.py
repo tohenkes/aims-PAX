@@ -6,7 +6,7 @@ import torch
 sys.path.append(os.path.dirname(os.path.dirname(os.path.realpath(__file__))))
 import numpy as np
 from mace import tools
-from mace.calculators import MACECalculator
+from FHI_AL.custom_MACECalculator import MACECalculator
 from FHI_AL.utilities import (
     create_dataloader,
     ensemble_training_setups,
@@ -488,9 +488,9 @@ class InitalDatasetProcedure(PrepareInitialDatasetProcedure):
                     logging.info(
                         f"Training set size for '{tag}': {len(self.ensemble_mace_sets[tag]['train'])}; Validation set size: {len(self.ensemble_mace_sets[tag]['valid'])}."
                     )
-                    logging.info(
-                        f"Updated model auxiliaries for '{tag}'."
-                    )
+                    #logging.info(
+                    #    f"Updated model auxiliaries for '{tag}'."
+                    #)
 
                     step += 1
                 logging.info("Training.")
@@ -535,13 +535,8 @@ class InitalDatasetProcedure(PrepareInitialDatasetProcedure):
                             metrics,
                         ) = validate_epoch_ensemble(
                             ensemble=self.ensemble,
-                            ema=self.training_setups[tag]["ema"],
-                            loss_fn=self.training_setups[tag]["loss_fn"],
-                            valid_loader=self.ensemble_mace_sets[tag][
-                                "valid_loader"
-                            ],
-                            output_args=self.training_setups[tag]["output_args"],
-                            device=self.training_setups[tag]["device"],
+                            training_setups=self.training_setups,
+                            ensemble_set=self.ensemble_mace_sets,
                             logger=logger,
                             log_errors=self.mace_settings["MISC"]["error_table"],
                             epoch=self.epoch,
@@ -633,9 +628,13 @@ class InitalDatasetProcedure(PrepareInitialDatasetProcedure):
 
                 update_model_auxiliaries(
                     model=model,
-                    train_loader=self.ensemble_ase_sets[tag]["train_loader"],
+                    mace_sets=self.ensemble_mace_sets[tag],
                     atomic_energies=self.atomic_energies,
                     scaling=self.scaling,
+                    update_atomic_energies=self.update_atomic_energies,
+                    z_table=self.z_table,
+                    atomic_energies_dict=self.atomic_energies_dict,
+                    dtype=self.dtype,
                 )
 
             # TODO: reset or not?
@@ -690,13 +689,8 @@ class InitalDatasetProcedure(PrepareInitialDatasetProcedure):
                 ):
                     ensemble_valid_losses, valid_loss, _ = validate_epoch_ensemble(
                         ensemble=self.ensemble,
-                        ema=self.training_setups_convergence[tag]["ema"],
-                        loss_fn=self.training_setups_convergence[tag]["loss_fn"],
-                        valid_loader=self.ensemble_ase_sets[tag]["valid_loader"],
-                        output_args=self.training_setups_convergence[tag][
-                            "output_args"
-                        ],
-                        device=self.training_setups_convergence[tag]["device"],
+                        training_setups=self.training_setups_convergence,
+                        ensemble_set=self.ensemble_mace_sets,
                         logger=logger,
                         log_errors=self.mace_settings["MISC"]["error_table"],
                         epoch=epoch,
@@ -877,6 +871,9 @@ class PrepareALProcedure:
         self.trajectory_epochs = {
             trajectory: 0 for trajectory in range(self.num_trajectories)
         }
+        self.ensemble_reset_opt = {
+            tag: False for tag in self.ensemble.keys()
+        }
         # this saves the intervals between points that cross the uncertainty threshold
         self.t_intervals = {
             trajectory: [] for trajectory in range(self.num_trajectories)
@@ -1002,9 +999,12 @@ class PrepareALProcedure:
         Loads the models of the existing ensemble and creates the MACE calculator.
         """
         model_paths = list_files_in_directory(self.model_dir)
+        self.models = [
+            torch.load(f=model_path, map_location=self.device) for model_path in model_paths
+        ]
         # the calculator needs to be updated consistently see below
         self.mace_calc = MACECalculator(
-            model_paths=model_paths,
+            models=self.models,
             device=self.device,
             default_dtype=self.dtype)
         
@@ -1189,8 +1189,8 @@ class ALProcedure(PrepareALProcedure):
                 atomic_energies_dict=self.ensemble_atomic_energies_dict[tag],
                 dtype=self.dtype,
             )
-
-        logging.info(f"Trajectory worker {idx} is training.")
+        if RANK == 0:
+            logging.info(f"Trajectory worker {idx} is training.")
         # we train only for some epochs before we move to the next worker which may be running MD
         # all workers train on the same models with the respective training settings for
         # each ensemble member
@@ -1198,12 +1198,15 @@ class ALProcedure(PrepareALProcedure):
             for _ in range(self.intermediate_epochs):
                 for tag, model in self.ensemble.items():
 
-                    # TH: this would reset the optimizer and co.
-                    # training_setups[tag] = setup_mace_training(
-                    #                settings=mace_settings,
-                    #                model=ensemble[tag],
-                    #                tag=tag,
-                    #                )
+                    if self.ensemble_reset_opt[tag]:
+                        #TODO: reduce this to resetting the optimizer; reset EMA also????
+                        logging.info(f'Resetting training setup for model {tag}.')
+                        self.training_setups[tag] = setup_mace_training(
+                                        settings=self.mace_settings,
+                                        model=self.ensemble[tag],
+                                        tag=tag,
+                                        )
+                        self.ensemble_reset_opt[tag] = False
 
                     logger = tools.MetricsLogger(
                         directory=self.mace_settings["GENERAL"]["results_dir"],
@@ -1232,19 +1235,31 @@ class ALProcedure(PrepareALProcedure):
                     self.trajectory_epochs[idx] % self.valid_skip == 0
                     or self.trajectory_epochs[idx] == self.max_epochs_worker - 1
                 ):
-                    _, _, metrics = validate_epoch_ensemble(
+                    ensemble_valid_loss, _, metrics = validate_epoch_ensemble(
                         ensemble=self.ensemble,
-                        ema=self.training_setups[tag]["ema"],
-                        loss_fn=self.training_setups[tag]["loss_fn"],
-                        valid_loader=self.ensemble_mace_sets[tag]["valid_loader"],
-                        output_args=self.training_setups[tag]["output_args"],
-                        device=self.training_setups[tag]["device"],
+                        training_setups=self.training_setups,
+                        ensemble_set=self.ensemble_mace_sets,
                         logger=logger,
                         log_errors=self.mace_settings["MISC"]["error_table"],
                         epoch=self.trajectory_epochs[idx],
                     )
-                    self.current_valid = metrics["mae_f"]
+                    
+                    self.current_valid_error = metrics["mae_f"]
 
+                    for tag in ensemble_valid_loss.keys():
+                        if ensemble_valid_loss[tag] < self.ensemble_best_valid[tag]:
+                            self.ensemble_best_valid[tag] = ensemble_valid_loss[tag]
+                        else:
+                            self.ensemble_no_improvement[tag] += 1
+                        
+                        if self.ensemble_no_improvement[tag] > self.patience:
+                            logging.info(
+                                f"No improvements for {self.patience} epochs at ensemble member {tag}."
+                            )
+                            self.ensemble_reset_opt[tag] = True
+                            self.ensemble_no_improvement[tag] = 0
+                        
+                    
                     save_checkpoint(
                         checkpoint_handler=self.training_setups[tag][
                             "checkpoint_handler"
@@ -1257,22 +1272,21 @@ class ALProcedure(PrepareALProcedure):
                 # to here, can be made into a class
                 #############
                 self.trajectory_epochs[idx] += 1
-            #SOMETHING IS WRONG HERE
-            # update calculator
-            # TODO: don't load from disk every time but use loaded in ensemble but 
-            # for this we have to change MACECalculator()
-            for tag, model in self.ensemble.items():
-                torch.save(
-                    model,
-                    Path(self.mace_settings["GENERAL"]["model_dir"])
-                    / (tag + ".model"),
-                )
-            self.setup_mace_calc()
+        # update calculator
+        MPI.COMM_WORLD.Barrier()
+        self.current_valid_error = MPI.COMM_WORLD.bcast(self.current_valid_error, root=0)
+        self.ensemble = MPI.COMM_WORLD.bcast(self.ensemble, root=0)
+        MPI.COMM_WORLD.Barrier()
+        
+        for trajectory in self.trajectories.values():
+            trajectory.calc.models = [self.ensemble[tag] for tag in self.ensemble.keys()]
+            # TH: do we need this? could make it faster
+            #for model in trajectory.calc.models:
+                #for param in model.parameters():
+                    #param.requires_grad = False
 
         MPI.COMM_WORLD.Barrier()
         self.total_epoch = MPI.COMM_WORLD.bcast(self.total_epoch, root=0)
-        for trajectory in self.trajectories.values():
-            trajectory.calc = MPI.COMM_WORLD.bcast(self.mace_calc, root=0)
         self.trajectory_epochs[idx] = MPI.COMM_WORLD.bcast(self.trajectory_epochs[idx], root=0)
         MPI.COMM_WORLD.Barrier()
 
@@ -1280,7 +1294,8 @@ class ALProcedure(PrepareALProcedure):
             self.trajectory_training[idx] = "running"
             self.num_workers_training -= 1
             self.trajectory_epochs[idx] = 0
-            logging.info(f"Trajectory worker {idx} finished training.")
+            if RANK == 0:
+                logging.info(f"Trajectory worker {idx} finished training.")
             # calculate true error and uncertainty on validation set
 
     def running_task(
@@ -1337,7 +1352,6 @@ class ALProcedure(PrepareALProcedure):
                 self.point = self.trajectories[idx].copy()
                 prediction = None
                 if RANK == 0:
-                    logging.info(f"Results {self.trajectories[idx].calc.results}")
                     prediction = self.trajectories[idx].calc.results["forces_comm"]
                 
                 MPI.COMM_WORLD.Barrier()
@@ -1364,9 +1378,9 @@ class ALProcedure(PrepareALProcedure):
                     # at the moment the process waits for the calculation to finish
                     # ideally it should calculate in the background and the other
                     # workers sample/train in the meantime
+                    
                     MPI.COMM_WORLD.Barrier()
                     self.aims_calculator.calculate(self.point, properties=["energy","forces"])
-
                     self.point.info['energy'] = self.aims_calculator.results['energy']
                     self.point.arrays['forces'] = self.aims_calculator.results['forces']
                     self.mace_point = create_mace_dataset(
@@ -1436,7 +1450,13 @@ class ALProcedure(PrepareALProcedure):
 
         if RANK == 0:
             logging.info("Starting active learning procedure.")
-        self.current_valid = np.inf
+        self.current_valid_error = np.inf
+        self.ensemble_no_improvement = {
+            tag: 0 for tag in self.ensemble.keys()
+        }
+        self.ensemble_best_valid = {
+            tag: np.inf for tag in self.ensemble.keys()
+        }
         self.threshold = np.inf
         self.point_added = 0  # counts how many points have been added to the training set to decide when to add a point to the validation set
         self.num_MD_limits_reached = 0
@@ -1470,18 +1490,21 @@ class ALProcedure(PrepareALProcedure):
 
                 if (
                     self.num_workers_training == self.num_trajectories
-                ):  # and cpu == 'idle':
-                    logging.info(
-                        "All workers are in training mode."
-                    )  
+                ):  
+                    if RANK == 0:
+                        logging.info(
+                            "All workers are in training mode."
+                        )  
                 
                 if self.num_workers_waiting == self.num_trajectories:
-                    logging.info("All workers are waiting for jobs to finish.")
+                    if RANK == 0:
+                        logging.info("All workers are waiting for jobs to finish.")
             
             if self.num_MD_limits_reached == self.num_trajectories:
-                logging.info(
-                    "All trajectories reached maximum MD steps. Training until convergence."
-                )
+                if RANK == 0:
+                    logging.info(
+                        "All trajectories reached maximum MD steps. Training until convergence."
+                    )
                 break
             if (
                 len(
@@ -1491,14 +1514,18 @@ class ALProcedure(PrepareALProcedure):
                 )
                 >= self.max_set_size
             ):
-                logging.info(
-                    "Maximum size of training set reached. Training until convergence."
-                )
+                if RANK == 0:
+                    logging.info(
+                        "Maximum size of training set reached. Training until convergence."
+                    )
                 break
-            if self.current_valid < self.desired_accuracy:
-                logging.info(
-                    "Desired accuracy reached. Training until convergence."
-                )
+            
+            
+            if self.current_valid_error < self.desired_accuracy:
+                if RANK == 0:
+                    logging.info(
+                        "Desired accuracy reached. Training until convergence."
+                    )
                 break
 
         # turn keys which are ints into strings
@@ -1509,172 +1536,132 @@ class ALProcedure(PrepareALProcedure):
             path=self.dataset_dir / "final",
         )
 
-
     def converge(self):
         """
         Converges the ensemble on the acquired dataset. Trains the ensemble members
         until the validation loss does not improve anymore.
         """
-
-        logging.info("Converging ensemble on acquired dataset.")
-        for _, (tag, model) in enumerate(self.ensemble.items()):
-            train_set = create_mace_dataset(
-                data=self.ensemble_ase_sets[tag]["train"],
-                z_table=self.z_table,
-                seed=self.seeds[tag],
-                r_max=self.r_max,
-            )
-            valid_set = create_mace_dataset(
-                data=self.ensemble_ase_sets[tag]["valid"],
-                z_table=self.z_table,
-                seed=self.seeds[tag],
-                r_max=self.r_max,
-            )
-            (
-                self.ensemble_ase_sets[tag]["train_loader"],
-                self.ensemble_ase_sets[tag]["valid_loader"],
-            ) = create_dataloader(
-                train_set,
-                valid_set,
-                self.set_batch_size,
-                self.set_valid_batch_size,
-            )
-
-            update_model_auxiliaries(
-                model=model,
-                train_loader=self.ensemble_ase_sets[tag]["train_loader"],
-                atomic_energies=self.atomic_energies,
-                scaling=self.scaling,
-            )
-            training_setups = {}
-        # reseting optimizer and scheduler
-        for tag in self.ensemble.keys():
-            training_setups[tag] = setup_mace_training(
-                settings=self.mace_settings,
-                model=self.ensemble[tag],
-                tag=tag,
-            )
-        best_valid_loss = np.inf
-        epoch = 0
-
-        no_improvement = 0
-        ensemble_valid_losses = {tag: np.inf for tag in self.ensemble.keys()}
-        for j in range(self.max_final_epochs):
-            # ensemble_loss = 0
-            for tag, model in self.ensemble.items():
-                training_setup = training_setups[tag]
-                logger = tools.MetricsLogger(
-                    directory=self.mace_settings["GENERAL"]["results_dir"],
-                    tag=tag + "_train",
+        if RANK == 0:
+            logging.info("Converging ensemble on acquired dataset.")
+            for _, (tag, model) in enumerate(self.ensemble.items()):
+                train_set = create_mace_dataset(
+                    data=self.ensemble_ase_sets[tag]["train"],
+                    z_table=self.z_table,
+                    seed=self.seeds[tag],
+                    r_max=self.r_max,
                 )
-                train_epoch(
-                    model=model,
-                    train_loader=self.ensemble_ase_sets[tag]["train_loader"],
-                    loss_fn=training_setup["loss_fn"],
-                    optimizer=training_setup["optimizer"],
-                    lr_scheduler=training_setup["lr_scheduler"],
-                    valid_loss=ensemble_valid_losses[tag],
-                    epoch=epoch,
-                    start_epoch=0,
-                    logger=logger,
-                    device=training_setup["device"],
-                    max_grad_norm=training_setup["max_grad_norm"],
-                    output_args=training_setup["output_args"],
-                    ema=training_setup["ema"],
+                valid_set = create_mace_dataset(
+                    data=self.ensemble_ase_sets[tag]["valid"],
+                    z_table=self.z_table,
+                    seed=self.seeds[tag],
+                    r_max=self.r_max,
                 )
-                # ensemble_loss += loss
-            # ensemble_loss /= len(ensemble)
-
-            if epoch % self.valid_skip == 0 or epoch == self.max_final_epochs - 1:
                 (
-                    ensemble_valid_losses,
-                    valid_loss,
-                    _,
-                ) = validate_epoch_ensemble(
-                    ensemble=self.ensemble,
-                    ema=training_setup["ema"],
-                    loss_fn=training_setup["loss_fn"],
-                    valid_loader=self.ensemble_ase_sets[tag]["valid_loader"],
-                    output_args=training_setup["output_args"],
-                    device=training_setup["device"],
-                    logger=logger,
-                    log_errors=self.mace_settings["MISC"]["error_table"],
-                    epoch=epoch,
+                    self.ensemble_ase_sets[tag]["train_loader"],
+                    self.ensemble_ase_sets[tag]["valid_loader"],
+                ) = create_dataloader(
+                    train_set,
+                    valid_set,
+                    self.set_batch_size,
+                    self.set_valid_batch_size,
                 )
-                if best_valid_loss > valid_loss and (best_valid_loss - valid_loss) > 0.01:
-                    best_valid_loss = valid_loss
-                    best_epoch = epoch
-                    no_improvement = 0
-                    for tag, model in self.ensemble.items():
-                        torch.save(
-                            model,
-                            Path(self.mace_settings["GENERAL"]["model_dir"])
-                            / (tag + ".model"),
-                        )
-                        save_checkpoint(
-                            checkpoint_handler=training_setups[tag][
-                                "checkpoint_handler_convergence"
-                            ],
-                            training_setup=training_setups[tag],
-                            model=model,
-                            epoch=epoch,
-                            keep_last=True,
-                        )
-                else:
-                    no_improvement += 1
 
-            epoch += 1
-            if no_improvement > self.patience:
-                logging.info(
-                    f"No improvements for {self.patience} epochs. Training converged. Best model (Epoch {best_epoch}) based on validation loss saved."
+                update_model_auxiliaries(
+                    model=model,
+                    mace_sets=self.ensemble_mace_sets[tag],
+                    atomic_energies=self.ensemble_atomic_energies[tag],
+                    scaling=self.scaling,
+                    update_atomic_energies=self.update_atomic_energies,
+                    z_table=self.z_table,
+                    atomic_energies_dict=self.ensemble_atomic_energies_dict[tag],
+                    dtype=self.dtype,
                 )
-                break
-            if j == self.max_final_epochs - 1:
-                logging.info(
-                    f"Maximum number of epochs reached. Best model (Epoch {best_epoch}) based on validation loss saved."
+                training_setups = {}
+            # resetting optimizer and scheduler
+            for tag in self.ensemble.keys():
+                training_setups[tag] = setup_mace_training(
+                    settings=self.mace_settings,
+                    model=self.ensemble[tag],
+                    tag=tag,
                 )
-    
-    def evaluate_ensemble(
-        self,
-        ase_atoms_list: list
-    )-> dict:
-        """
-        Evaluates the ensemble on a given list of ASE atoms objects.
-        
-        Args:
-            ase_atoms_list (list): List of ASE atoms objects.
+            best_valid_loss = np.inf
+            epoch = 0
 
-        Returns:
-            dict: Dictionary containing the metrics of the ensemble.
-        """
-        tag = list(self.ensemble.keys())[0]
-        
-        test_set = create_mace_dataset(
-            data=ase_atoms_list,
-            z_table=self.z_table,
-            seed=self.seeds[tag],
-            r_max=self.r_max,
-        )
+            no_improvement = 0
+            ensemble_valid_losses = {tag: np.inf for tag in self.ensemble.keys()}
+            for j in range(self.max_final_epochs):
+                # ensemble_loss = 0
+                for tag, model in self.ensemble.items():
+                    training_setup = training_setups[tag]
+                    logger = tools.MetricsLogger(
+                        directory=self.mace_settings["GENERAL"]["results_dir"],
+                        tag=tag + "_train",
+                    )
+                    train_epoch(
+                        model=model,
+                        train_loader=self.ensemble_ase_sets[tag]["train_loader"],
+                        loss_fn=training_setup["loss_fn"],
+                        optimizer=training_setup["optimizer"],
+                        lr_scheduler=training_setup["lr_scheduler"],
+                        valid_loss=ensemble_valid_losses[tag],
+                        epoch=epoch,
+                        start_epoch=0,
+                        logger=logger,
+                        device=training_setup["device"],
+                        max_grad_norm=training_setup["max_grad_norm"],
+                        output_args=training_setup["output_args"],
+                        ema=training_setup["ema"],
+                    )
+                    # ensemble_loss += loss
+                # ensemble_loss /= len(ensemble)
 
-        test_dataloader = tools.torch_geometric.dataloader.DataLoader(
-            dataset=test_set,
-            batch_size=self.set_batch_size,
-            shuffle=False,
-            drop_last=False,
-        )
+                if epoch % self.valid_skip == 0 or epoch == self.max_final_epochs - 1:
+                    (
+                        ensemble_valid_losses,
+                        valid_loss,
+                        _,
+                    ) = validate_epoch_ensemble(
+                        ensemble=self.ensemble,
+                        training_setups=training_setups,
+                        ensemble_set=self.ensemble_mace_sets,
+                        logger=logger,
+                        log_errors=self.mace_settings["MISC"]["error_table"],
+                        epoch=epoch,
+                    )
+                    if best_valid_loss > valid_loss and (best_valid_loss - valid_loss) > 0.01:
+                        best_valid_loss = valid_loss
+                        best_epoch = epoch
+                        no_improvement = 0
+                        for tag, model in self.ensemble.items():
+                            torch.save(
+                                model,
+                                Path(self.mace_settings["GENERAL"]["model_dir"])
+                                / (tag + ".model"),
+                            )
+                            save_checkpoint(
+                                checkpoint_handler=training_setups[tag][
+                                    "checkpoint_handler_convergence"
+                                ],
+                                training_setup=training_setups[tag],
+                                model=model,
+                                epoch=epoch,
+                                keep_last=True,
+                            )
+                    else:
+                        no_improvement += 1
 
-        _, _, metrics = validate_epoch_ensemble(
-            ensemble=self.ensemble,
-            ema=self.training_setups[tag]["ema"],
-            loss_fn=self.training_setups[tag]["loss_fn"],
-            valid_loader=test_dataloader,
-            output_args=self.training_setups[tag]["output_args"],
-            device=self.training_setups[tag]["device"],
-            logger=None,
-            log_errors=None,
-            epoch=0,
-        )
-        return metrics
+                epoch += 1
+                if no_improvement > self.patience:
+                    logging.info(
+                        f"No improvements for {self.patience} epochs. Training converged. Best model (Epoch {best_epoch}) based on validation loss saved."
+                    )
+                    break
+                if j == self.max_final_epochs - 1:
+                    logging.info(
+                        f"Maximum number of epochs reached. Best model (Epoch {best_epoch}) based on validation loss saved."
+                    )
+        MPI.COMM_WORLD.Barrier()    
+
 
 class StandardMACEEnsembleProcedure:
     """
@@ -1809,11 +1796,8 @@ class StandardMACEEnsembleProcedure:
                     _,
                 ) = validate_epoch_ensemble(
                     ensemble=self.ensemble,
-                    ema=training_setup["ema"],
-                    loss_fn=training_setup["loss_fn"],
-                    valid_loader=self.ensemble_ase_sets[tag]["valid_loader"],
-                    output_args=training_setup["output_args"],
-                    device=training_setup["device"],
+                    training_setups=self.training_setups,
+                    ensemble_set=self.ensemble_ase_sets,
                     logger=logger,
                     log_errors=self.mace_settings["MISC"]["error_table"],
                     epoch=epoch,
@@ -1849,39 +1833,6 @@ class StandardMACEEnsembleProcedure:
                 logging.info(
                     f"Maximum number of epochs reached. Best model (Epoch {best_epoch}) based on validation loss saved."
                 )
-       
-    def evaluate_ensemble(
-        self,
-        ase_atoms_list
-        ):
-            tag = list(self.ensemble.keys())[0]
-            
-            test_set = create_mace_dataset(
-                data=ase_atoms_list,
-                z_table=self.z_table,
-                seed=self.seeds_tags_dict[tag],
-                r_max=self.r_max,
-            )
-
-            test_dataloader = tools.torch_geometric.dataloader.DataLoader(
-                dataset=test_set,
-                batch_size=self.set_batch_size,
-                shuffle=False,
-                drop_last=False,
-            )
-
-            _, _, metrics = validate_epoch_ensemble(
-                ensemble=self.ensemble,
-                ema=self.training_setups[tag]["ema"],
-                loss_fn=self.training_setups[tag]["loss_fn"],
-                valid_loader=test_dataloader,
-                output_args=self.training_setups[tag]["output_args"],
-                device=self.training_setups[tag]["device"],
-                logger=None,
-                log_errors=None,
-                epoch=0,
-            )
-            return metrics
     
     def handle_aims_settings(
         self,

@@ -1,7 +1,5 @@
 # General
 
-**Currently this version runs only on one core (except initial dataset procedure).**
-
 * The following is not supposed to be a tutorial. I am working on that. This is just so that we can work and review the code together.*
 
 To use the code:
@@ -12,7 +10,6 @@ To use the code:
     - and active_learning_settings.yaml 
 2. '''mpirun -n $CORES python run_whole_procedure.py'''.
 
-- Currently, the ability to read the aims settings in control.in is *very* limited (see handle_aims_settings() in procedures.py).
 - The mace and AL settings should be self-explanatory with the comments and their names otherwise let me know if something is unclear.
 - The script creates some folders and files these are:
     - checkpoints/: model checkpoints during training are saved here
@@ -23,13 +20,15 @@ To use the code:
     - AL.log: Log file for the actual active learning procedure. Loss and errors are ensemble averages.
 
 
-
-
-
 # ToDo
 
 - [x] energy error bug fix
-- [ ] parallelism for FHI aims in AL procedure
+- [x] parallelism for FHI aims in AL procedure
+- [ ] analysis on parameters with naphtalene
+- [ ] same with MD17/22?
+- [ ] initial dataset train and MD in parallel
+- [ ] AL train and MD in parallel
+- [ ] multiple species at once
 - [ ] add more documentation
 
 

@@ -80,11 +80,13 @@ def train_epoch(
 
 def validate_epoch_ensemble(
     ensemble: dict,
-    ema: Optional[ExponentialMovingAverage],
-    loss_fn: torch.nn.Module,
-    valid_loader: DataLoader,
-    output_args: Dict[str, bool],
-    device: torch.device,
+    training_setups: dict,
+    ensemble_set: dict,
+    #ema: Optional[ExponentialMovingAverage],
+    #loss_fn: torch.nn.Module,
+    #valid_loader: DataLoader,
+    #output_args: Dict[str, bool],
+    #device: torch.device,
     logger: MetricsLogger,
     log_errors: str,
     epoch: int,
@@ -109,6 +111,13 @@ def validate_epoch_ensemble(
     """
     ensemble_valid_loss, ensemble_eval_metrics = {}, []
     for tag, model in ensemble.items():
+        
+        ema = training_setups[tag]["ema"]
+        loss_fn = training_setups[tag]["loss_fn"]
+        valid_loader = ensemble_set[tag]["valid_loader"]
+        device = training_setups[tag]["device"]
+        output_args = training_setups[tag]["output_args"]
+        
         if ema is not None:
             with ema.average_parameters():
                 valid_loss, eval_metrics = evaluate(
