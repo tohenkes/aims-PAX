@@ -25,13 +25,14 @@ To use the code:
 - [x] energy error bug fix
 - [x] parallelism for FHI aims in AL procedure
 - [ ] energy, force weight swap in loss fn during convergence
-- [ ] make it work with gpu
+- [x] make it work with gpu
 - [ ] scf failsafe
 - [ ] analysis on parameters with naphtalene
 - [ ] same with MD17/22?
 - [ ] initial dataset train and MD in parallel
 - [ ] AL train and MD in parallel
 - [ ] multiple species at once
+- [ ] add support for stress
 - [ ] add more documentation
 
 
