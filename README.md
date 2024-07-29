@@ -6,10 +6,10 @@ The overall workflow of the procedure and some comments thereupon are written he
 
 **Creating the initial ensemble and dataset.**
 
-In the beginning a set of MACE models is trained on a initial dataset to serve as a starting point for the actual active learning. Each ensemble member gets their own initial training and validation set. For that, *ab initio* MD is run (one trajectory) using FHI AIMS and ASI/ASE. After a set number of samples  is collected the models are trained on this and validated. Afterwards, new points are sampled and this loop is repeated until a desired level of accurcay of the ensemble on the validation datasets is reached.\ 
-The model parameters are kept and updated throughout and are not reinitialized when new points are added (warm start).\
-In principle the training and sampling can be done in parallel. The major bottleneck is the AIMD but depending on the size of the model, number of epochs and system size the parellelization can provide a significant speedup.\
-Optionally, the model(s) can be converged on the dataset.\
+In the beginning a set of MACE models is trained on a initial dataset to serve as a starting point for the actual active learning. Each ensemble member gets their own initial training and validation set. For that, *ab initio* MD is run (one trajectory) using FHI AIMS and ASI/ASE. After a set number of samples  is collected the models are trained on this and validated. Afterwards, new points are sampled and this loop is repeated until a desired level of accurcay of the ensemble on the validation datasets is reached.  
+The model parameters are kept and updated throughout and are not reinitialized when new points are added (warm start).  
+In principle the training and sampling can be done in parallel. The major bottleneck is the AIMD but depending on the size of the model, number of epochs and system size the parellelization can provide a significant speedup.  
+Optionally, the model(s) can be converged on the dataset.
 
 *obviously this handdrawn scheme is only temporary*
 ![Image](readme_figs/initial_dataset.jpg)
@@ -20,7 +20,7 @@ During the active learning procedure, multiple MD trajectories are launched and 
 In the former case the MD is halted for the given trajectory and when the program loops back to it the models are trained for some epochs instead before continuing to the next trajectory. This state is kept until a maximum number of epochs is reached and the trajectory is propageted again.\
 Currently, everything waits until FHI AIMS is done. In theory, while FHI AIMS is running, the other trajectories can be propagated or models can be trained simultaneously.\
 Similarly to the creation of the initial dataset, the models are updated throughout the whole process and are not reinitialized. As we are only adding a few points at a time this can lead to models getting stuck on local minima. If this happens, the optimizer state is reinitialized which is supposed to kick the model out of the local minimum. Albeit a bit drastic and resulting in error spikes, this makes the whole procedure work in the first place.\
-For a (fixed) interval, points from the MLFF MD are taken and computed using FHI AIMS. The idea is that we want to check every so often if the uncertainty is too low while the actual error is very high. This is not really implemented yet, as in, it is not really doing anything with the information except saving it. Perhaps one could use a moving average of the actual error here to create a threshold and if it is crossed one adds this point to the training set. This can also be usefull in parallel mode, when all trajectories are in training mode or running the MDs the GPU is occupied and the CPU is idle.\
+For a (fixed) interval, points from the MLFF MD are taken and computed using FHI AIMS. The idea is that we want to check every so often if the uncertainty is too low while the actual error is very high. This is not really implemented yet, as in, it is not really doing anything with the information except saving it. Perhaps one could use a moving average of the actual error here to create a threshold and if it is crossed one adds this point to the training set. This can also be usefull in parallel mode, when all trajectories are in training mode or running the MDs the GPU is occupied and the CPU is idle.
 
 *obviously this handdrawn scheme is only temporary*
 ![Image](readme_figs/al.jpg)
