@@ -1,6 +1,6 @@
 # Tutorial
 
-## The workflow ##
+## The workflow 
 
 The overall workflow of the procedure and some comments thereupon are written here. For more details on specific parameters take a look at the settings glossary at the bottom.
 
@@ -16,16 +16,16 @@ Optionally, the model(s) can be converged on the dataset.
 
 **Active Learning**
 
-During the active learning procedure, multiple MD trajectories are launched and run with the MLFF model(s). At a specified interval the uncertainty of the forces are computed. After a warmup (currently 10 uncertainty estimations) the moving average of the uncertainties is calculated. Using this the uncertainty threshold (with c~x) is computed. If the threshold is crossed during MD the DFT energies and forces are calculated for that point. The point is then added to the training or validation set.\ 
-In the former case the MD is halted for the given trajectory and when the program loops back to it the models are trained for some epochs instead before continuing to the next trajectory. This state is kept until a maximum number of epochs is reached and the trajectory is propageted again.\
-Currently, everything waits until FHI AIMS is done. In theory, while FHI AIMS is running, the other trajectories can be propagated or models can be trained simultaneously.\
-Similarly to the creation of the initial dataset, the models are updated throughout the whole process and are not reinitialized. As we are only adding a few points at a time this can lead to models getting stuck on local minima. If this happens, the optimizer state is reinitialized which is supposed to kick the model out of the local minimum. Albeit a bit drastic and resulting in error spikes, this makes the whole procedure work in the first place.\
+During the active learning procedure, multiple MD trajectories are launched and run with the MLFF model(s). At a specified interval the uncertainty of the forces are computed. After a warmup (currently 10 uncertainty estimations) the moving average of the uncertainties is calculated. Using this the uncertainty threshold (with c~x) is computed. If the threshold is crossed during MD the DFT energies and forces are calculated for that point. The point is then added to the training or validation set.  
+In the former case the MD is halted for the given trajectory and when the program loops back to it the models are trained for some epochs instead before continuing to the next trajectory. This state is kept until a maximum number of epochs is reached and the trajectory is propageted again.  
+Currently, everything waits until FHI AIMS is done. In theory, while FHI AIMS is running, the other trajectories can be propagated or models can be trained simultaneously. 
+Similarly to the creation of the initial dataset, the models are updated throughout the whole process and are not reinitialized. As we are only adding a few points at a time this can lead to models getting stuck on local minima. If this happens, the optimizer state is reinitialized which is supposed to kick the model out of the local minimum. Albeit a bit drastic and resulting in error spikes, this makes the whole procedure work in the first place.  
 For a (fixed) interval, points from the MLFF MD are taken and computed using FHI AIMS. The idea is that we want to check every so often if the uncertainty is too low while the actual error is very high. This is not really implemented yet, as in, it is not really doing anything with the information except saving it. Perhaps one could use a moving average of the actual error here to create a threshold and if it is crossed one adds this point to the training set. This can also be usefull in parallel mode, when all trajectories are in training mode or running the MDs the GPU is occupied and the CPU is idle.
 
 *obviously this handdrawn scheme is only temporary*
 ![Image](readme_figs/al.jpg)
 
-## Running ## 
+## Running 
 
 To run the whole thing ,one has to specify the settings for AIMS, the MACE model and active learning. 
 
@@ -37,15 +37,15 @@ To run the whole thing ,one has to specify the settings for AIMS, the MACE model
 2. '''mpirun -n $CORES python run_whole_procedure.py'''.
 
 The settings are explained below and the script automatically runs the all the steps explained above. Both procedures, initial dataset acquisition and active learning, are classes that can be used independently from each other.
-## Settings ##
+## Settings 
 
-### FHI aims settings ###
+### FHI aims settings 
 
 The settings here are the same as for usual FHI aims calculations and are 
 parsed internally in the script. MD settings are not specified here.
 Currently only one chemical species can serve as an input (geometry.in).
 
-### MACE settings ###
+### MACE settings 
 
 The settings for the MACE model(s) are specified in the YAML file called
 'mace_settings.yaml'. Inside the workflow, a dictionary is created with the 
@@ -73,7 +73,7 @@ following subdictionaries and keys:
     - See official MACE documentation (names are the same):
     *(device, keep_checkpoints, restart_latest, error_table, log_level)*
 
-### Active Learning Settings ###
+### Active Learning Settings 
 - ACTIVE LEARNING
     - **desired_acc** *(float)*: Force MAE that the ensemble should reach on the validation set. 
     - **lambda** *Rename* *(float)*: lambda * desired_acc determines the Force MAE that the ensemble should reach on the validation set in the initial dataset collection phase.
@@ -106,7 +106,7 @@ For now we have only one MD setting for all trajectories and the selection for s
     - **friction** *(float)*: Friction for Langevin dynamics (in fs^-1).
     - **seed** *(int)*: RNG seed for Langevin dynamics.
 
-## Folders ## 
+## Folders 
 
 - The script creates some folders and files these are:
     - **checkpoints/**: model checkpoints during training are saved here
@@ -116,7 +116,7 @@ For now we have only one MD setting for all trajectories and the selection for s
     - **initial_dataset.log**: Log file for the creation of the initial dataset. Loss and errors are ensemble averages.
     - **AL.log**: Log file for the actual active learning procedure. Loss and errors are ensemble averages.
 
-## Folders ## 
+## Folders 
 
 - The script creates some folders and files these are:
     - checkpoints/: model checkpoints during training are saved here
@@ -142,6 +142,7 @@ For now we have only one MD setting for all trajectories and the selection for s
 - [ ] add support for stress
 - [ ] add more documentation
 - [ ] combine mace_settings and active_learning_settings into control.in (?)
+- [ ] refactor code, especially procedures.py and utilities.py and all the modified MACE parts
 
 
 # Requirements

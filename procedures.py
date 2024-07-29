@@ -753,17 +753,18 @@ class PrepareALProcedure:
         analysis: bool = False,
     ) -> None:
         
-        tools.setup_logger(
-            level=mace_settings["MISC"]["log_level"],
-            #    tag=tag,
-            directory=mace_settings["GENERAL"]["log_dir"],
-        )
         logging.basicConfig(
             filename="AL.log",
             encoding="utf-8",
             level=logging.INFO,
             force=True,
         )
+        tools.setup_logger(
+            level=mace_settings["MISC"]["log_level"],
+            #    tag=tag,
+            directory=mace_settings["GENERAL"]["log_dir"],
+        )
+
         if RANK == 0:
             logging.info("Initializing active learning procedure.")
         
