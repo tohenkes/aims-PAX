@@ -177,59 +177,51 @@ with open('control.in', 'r') as input_file:
                         
 aims_settings['species_dir'] = "/project/home/p200243/tcp_software/aims_240507_library/FHIaims/species_defaults/defaults_2020/light"
 ASI_path = "/project/home/p200243/tcp_software/aims_240507_library/libaims.240627.scalapack.mpi.so"
-
-
-if False:
-    single_atom = ase.Atoms('H', positions=[[0, 0, 0]])
-    single_atom_settings = aims_settings.copy()
-    single_atom_settings['KS_method'] = 'serial'
-    single_atom_settings.pop("k_grid")
-
-
-    def init_via_ase(asi):
-        
-        from ase.calculators.aims import Aims
-        calc = Aims(**single_atom_settings)
-        calc.write_input(asi.atoms)
-
-    single_atom.calc = ASI_ASE_calculator(
-        ASI_path,
-        init_via_ase,
-        MPI.COMM_WORLD,
-        single_atom
-        )
-
-    single_atom.get_potential_energy()
-    single_atom.calc.close()
-    MPI.COMM_WORLD.Barrier()
-
-
-
-aims_settings['KS_method'] = 'scalapack_fast'
-
-atoms = read('geometry.in')
+atoms1 = molecule('H2')
+atoms2 = molecule('O2')
 
 def init_via_ase(asi):
-    
     from ase.calculators.aims import Aims
     calc = Aims(**aims_settings)
     calc.write_input(asi.atoms)
 
-atoms.calc = ASI_ASE_calculator(
-    ASI_path,
-    init_via_ase,
-    MPI.COMM_WORLD,
-    atoms
-    )
+comm = MPI.COMM_WORLD
+rank = comm.Get_rank()
+size = comm.Get_size()
 
-dyn = Langevin(
-        atoms,
-        timestep=1 * units.fs,
-        friction= 0.001 / units.fs,
-        temperature_K=80,
-        rng=np.random.RandomState(42)
-    )
+color = 0 if rank == 0 else 1
+sub_comm = comm.Split(color, rank)
+comm.barrier()
+
+if color == 0:
+    atoms1.calc = ASI_ASE_calculator(
+                ASI_path,
+                init_via_ase,
+                sub_comm,
+                atoms1
+        )
+
+if color == 1:
+    atoms2.calc = ASI_ASE_calculator(
+            ASI_path,
+            init_via_ase,
+            sub_comm,
+            atoms2
+        )
+
+comm.barrier()
 
 
+if color == 0:
+    atoms1.calc.calculate(atoms1)
+    print(atoms1.calc.results)
+    print(atoms1.get_positions())
+    print(atoms1.get_atomic_numbers())
+if color == 1:
+    atoms2.calc.calculate(atoms2)
+    print(atoms2.calc.results)
 
-dyn.step()
+    print(atoms2.get_positions())
+    print(atoms2.get_atomic_numbers())
+#print(energy)
+#atoms2.get_potential_energy()

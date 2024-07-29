@@ -25,10 +25,6 @@ from FHI_AL.utilities import (
     max_sd_2,
     Z_from_geometry_in,
     list_files_in_directory,
-    BOHR,
-    BOHR_INV,
-    HARTREE,
-    HARTREE_INV,
     AIMSControlParser,
 )
 from FHI_AL.train_epoch_mace import train_epoch, validate_epoch_ensemble
@@ -137,23 +133,25 @@ class PrepareInitialDatasetProcedure:
         # the ensemble dictionary contains the models and their tags as values and keys
         # the seeds_tags_dict connects the seeds to the tags of each ensemble member
         # the training_setups dictionary contains the training setups for each ensemble member
-        (
-            self.seeds_tags_dict,
-            self.ensemble,
-            self.training_setups,
-        ) = setup_ensemble_dicts(
-            seeds=self.ensemble_seeds,
-            mace_settings=self.mace_settings,
-            al_settings=self.al_settings,
-            atomic_energies_dict=self.atomic_energies_dict,
-        )
+        if RANK == 0:
+            (
+                self.seeds_tags_dict,
+                self.ensemble,
+                self.training_setups,
+            ) = setup_ensemble_dicts(
+                seeds=self.ensemble_seeds,
+                mace_settings=self.mace_settings,
+                al_settings=self.al_settings,
+                atomic_energies_dict=self.atomic_energies_dict,
+            )
         # each ensemble member has their own initial dataset.
         # we create a ASE and MACE dataset because it makes the conversion and
         # saving easier
-        self.ensemble_mace_sets, self.ensemble_ase_sets = (
-            {tag: {"train": [], "valid": []} for tag in self.ensemble.keys()},
-            {tag: {"train": [], "valid": []} for tag in self.ensemble.keys()},
-        )
+        if RANK == 0:
+            self.ensemble_mace_sets, self.ensemble_ase_sets = (
+                {tag: {"train": [], "valid": []} for tag in self.ensemble.keys()},
+                {tag: {"train": [], "valid": []} for tag in self.ensemble.keys()},
+            )
 
         # initializing the md and FHI aims
         self.dyn = self.setup_md(self.atoms, md_settings=self.md_settings)
@@ -416,6 +414,7 @@ class InitalDatasetProcedure(PrepareInitialDatasetProcedure):
         current_valid = np.inf
         step = 0
         # criterion for initial dataset is multiple of the desired accuracy
+        # TODO: add maximum initial dataset len criterion
         while (
             self.desired_acc * self.lamb <= current_valid 
             and self.epoch < self.max_initial_epochs
@@ -750,6 +749,7 @@ class PrepareALProcedure:
         path_to_geometry: str = "./geometry.in",
         seeds_tags_dict: dict = None,
         path_to_trajectories: str = None,
+        save_data_interval: int = 10,
         analysis: bool = False,
     ) -> None:
         
@@ -768,6 +768,7 @@ class PrepareALProcedure:
             logging.info("Initializing active learning procedure.")
         
         self.control_parser = AIMSControlParser()
+        self.save_data_interval = save_data_interval
         self.handle_al_settings(al_settings['ACTIVE_LEARNING'])
         self.handle_mace_settings(mace_settings)
         self.handle_aims_settings(path_to_control, species_dir)
@@ -793,42 +794,40 @@ class PrepareALProcedure:
         # TODO: remove hardcode
         self.use_scheduler = False
 
+        if RANK == 0:
+            self.ensemble = ensemble_from_folder(
+                path_to_models="./model",
+                device=self.device,
+            )
 
-        self.ensemble = ensemble_from_folder(
-            path_to_models="./model",
-            device=self.device,
-        )
+            if atomic_energies_dict is not None:
+                # if they have been explicitly specified the model should not update them
+                # anymore
+                self.update_atomic_energies = False
+                self.ensemble_atomic_energies_dict = {}
+                self.ensemble_atomic_energies = {}
+                for tag in self.ensemble.keys():
+                    self.ensemble_atomic_energies_dict[tag] = atomic_energies_dict
+                    self.ensemble_atomic_energies[tag] = np.array(
+                        [
+                            self.ensemble_atomic_energies_dict[tag][z]
+                            for z in self.ensemble_atomic_energies_dict.keys()
+                        ]
+                    )
+            else:
+                try:
+                    self.get_atomic_energies_from_ensemble()
+                except:
+                    if RANK == 0:
+                        logging.info('Could not load atomic energies from ensemble members.')
+                self.update_atomic_energies = True
 
-        
-
-        if atomic_energies_dict is not None:
-            # if they have been explicitly specified the model should not update them
-            # anymore
-            self.update_atomic_energies = False
-            self.ensemble_atomic_energies_dict = {}
-            self.ensemble_atomic_energies = {}
-            for tag in self.ensemble.keys():
-                self.ensemble_atomic_energies_dict[tag] = atomic_energies_dict
-                self.ensemble_atomic_energies[tag] = np.array(
-                    [
-                        self.ensemble_atomic_energies_dict[tag][z]
-                        for z in self.ensemble_atomic_energies_dict.keys()
-                    ]
-                )
-        else:
-            try:
-                self.get_atomic_energies_from_ensemble()
-            except:
-                if RANK == 0:
-                    logging.info('Could not load atomic energies from ensemble members.')
-            self.update_atomic_energies = True
-
-
-
-        self.training_setups = ensemble_training_setups(
-            ensemble=self.ensemble,
-            mace_settings=self.mace_settings,
-        )
+            self.training_setups = ensemble_training_setups(
+                ensemble=self.ensemble,
+                mace_settings=self.mace_settings,
+            )
+            
+            
         if path_to_trajectories is not None:
             self.simulate_trajectories(path_to_trajectories)
 
@@ -836,34 +835,34 @@ class PrepareALProcedure:
         # initial dataset object instead of reading from disk
         if RANK == 0:
             logging.info("Loading initial datasets.")
-        self.ensemble_ase_sets = load_ensemble_sets_from_folder(
-            ensemble=self.ensemble,
-            path_to_folder=self.al_settings["dataset_dir"] + "/initial",
-        )
-        self.ensemble_mace_sets = ase_to_mace_ensemble_sets(
-            ensemble_ase_sets=self.ensemble_ase_sets,
-            z_table=self.z_table,
-            r_max=self.r_max,
-            seed=self.seeds,
-        )
+            self.ensemble_ase_sets = load_ensemble_sets_from_folder(
+                ensemble=self.ensemble,
+                path_to_folder=self.al_settings["dataset_dir"] + "/initial",
+            )
+            self.ensemble_mace_sets = ase_to_mace_ensemble_sets(
+                ensemble_ase_sets=self.ensemble_ase_sets,
+                z_table=self.z_table,
+                r_max=self.r_max,
+                seed=self.seeds,
+            )
+            self.train_dataset_len = len(
+                    self.ensemble_ase_sets[list(self.ensemble.keys())[0]][
+                        "train"
+                    ]
+                )
+        if RANK != 0:
+            self.train_dataset_len = None
+        
+        MPI.COMM_WORLD.Barrier()
+        self.train_dataset_len = MPI.COMM_WORLD.bcast(self.train_dataset_len, root=0)
+        MPI.COMM_WORLD.Barrier()
+        
         # this initializes the FHI aims process
         self.aims_calculator = self.setup_aims_calc()
-        self.setup_mace_calc()
-
+        
         self.trajectories = {
             trajectory: read(path_to_geometry) for trajectory in range(self.num_trajectories)
         }
-        for trajectory in self.trajectories.values():
-            trajectory.calc = self.mace_calc
-
-        #TODO: make this more flexible, to allow different drivers per trajectory
-        # just make a dictionary of different md settings and pass them here
-        self.md_drivers = {
-            trajectory: self.setup_md_al(
-                atoms=self.trajectories[trajectory], md_settings=self.md_settings
-            ) for trajectory in range(self.num_trajectories)
-        }
-        # this saves the state of the trajectories
         self.trajectory_training = {
             trajectory: "running"
             for trajectory in range(self.num_trajectories)
@@ -874,9 +873,6 @@ class PrepareALProcedure:
         self.trajectory_epochs = {
             trajectory: 0 for trajectory in range(self.num_trajectories)
         }
-        self.ensemble_reset_opt = {
-            tag: False for tag in self.ensemble.keys()
-        }
         # this saves the intervals between points that cross the uncertainty threshold
         self.t_intervals = {
             trajectory: [] for trajectory in range(self.num_trajectories)
@@ -885,6 +881,20 @@ class PrepareALProcedure:
         self.sanity_checks = {
             trajectory: [] for trajectory in range(self.num_trajectories)
         }
+        if RANK == 0:
+            self.setup_mace_calc()
+            for trajectory in self.trajectories.values():
+                trajectory.calc = self.mace_calc
+
+            #TODO: make this more flexible, to allow different drivers per trajectory
+            # just make a dictionary of different md settings and pass them here
+            self.md_drivers = {
+                trajectory: self.setup_md_al(
+                    atoms=self.trajectories[trajectory], md_settings=self.md_settings
+                ) for trajectory in range(self.num_trajectories)
+            }
+            # this saves the state of the trajectories
+
 
         self.uncertainties = []  # for moving average   
         self.sanity_checks_valid = {}
@@ -1117,9 +1127,10 @@ class ALProcedure(PrepareALProcedure):
                 )
             # while the initial datasets are different for each ensemble member we add the new points to
             # all ensemble member datasets
-            for tag in self.ensemble_ase_sets.keys():
-                self.ensemble_ase_sets[tag]["valid"] += [self.point]
-                self.ensemble_mace_sets[tag]["valid"] += self.mace_point
+            if RANK == 0:
+                for tag in self.ensemble_ase_sets.keys():
+                    self.ensemble_ase_sets[tag]["valid"] += [self.point]
+                    self.ensemble_mace_sets[tag]["valid"] += self.mace_point
 
             if self.analysis:
                 if RANK == 0:    
@@ -1143,16 +1154,22 @@ class ALProcedure(PrepareALProcedure):
                 logging.info(
                     f"Trajectory worker {idx} is adding a point to the training set."
                 )
-            # while the initial datasets are different for each ensemble member we add the new points to
-            # all ensemble member datasets
-            for tag in self.ensemble_ase_sets.keys():
-                self.ensemble_ase_sets[tag]["train"] += [self.point]
-                self.ensemble_mace_sets[tag]["train"] += self.mace_point
-            if len(self.ensemble_ase_sets[tag]["train"]) > self.max_set_size:
+                # while the initial datasets are different for each ensemble member we add the new points to
+                # all ensemble member datasets
+                for tag in self.ensemble_ase_sets.keys():
+                    self.ensemble_ase_sets[tag]["train"] += [self.point]
+                    self.ensemble_mace_sets[tag]["train"] += self.mace_point
+                self.train_dataset_len = len(self.ensemble_ase_sets[tag]["train"])
+            
+            MPI.COMM_WORLD.Barrier()
+            self.train_dataset_len = MPI.COMM_WORLD.bcast(self.train_dataset_len, root=0)
+            MPI.COMM_WORLD.Barrier()
+            
+            if self.train_dataset_len > self.max_set_size:
                 return True
             if RANK == 0:
                 logging.info(
-                    f"Size of the training and validation set: {len(self.ensemble_ase_sets[tag]['train'])}, {len(self.ensemble_ase_sets[tag]['valid'])}."
+                    f"Size of the training and validation set: {self.train_dataset_len}, {len(self.ensemble_ase_sets[tag]['valid'])}."
                 )
         self.point_added += 1
 
@@ -1168,38 +1185,38 @@ class ALProcedure(PrepareALProcedure):
         Args:
             idx (int): Index of the trajectory worker.
         """
-
-        for _, (tag, model) in enumerate(self.ensemble.items()):
-
-            (
-                self.ensemble_mace_sets[tag]["train_loader"],
-                self.ensemble_mace_sets[tag]["valid_loader"],
-            ) = create_dataloader(
-                self.ensemble_mace_sets[tag]["train"],
-                self.ensemble_mace_sets[tag]["valid"],
-                self.set_batch_size,
-                self.set_valid_batch_size,
-            )
-            # because the dataset size is dynamically changing we have to update the average number of neighbors
-            # and shifts and the scaling factor for the models
-            # usually they converge pretty fast
-            update_model_auxiliaries(
-                model=model,
-                mace_sets=self.ensemble_mace_sets[tag],
-                atomic_energies=self.ensemble_atomic_energies[tag],
-                scaling=self.scaling,
-                update_atomic_energies=self.update_atomic_energies,
-                z_table=self.z_table,
-                atomic_energies_dict=self.ensemble_atomic_energies_dict[tag],
-                dtype=self.dtype,
-                device=self.device,
-            )
         if RANK == 0:
+            for _, (tag, model) in enumerate(self.ensemble.items()):
+
+                (
+                    self.ensemble_mace_sets[tag]["train_loader"],
+                    self.ensemble_mace_sets[tag]["valid_loader"],
+                ) = create_dataloader(
+                    self.ensemble_mace_sets[tag]["train"],
+                    self.ensemble_mace_sets[tag]["valid"],
+                    self.set_batch_size,
+                    self.set_valid_batch_size,
+                )
+                # because the dataset size is dynamically changing we have to update the average number of neighbors
+                # and shifts and the scaling factor for the models
+                # usually they converge pretty fast
+                update_model_auxiliaries(
+                    model=model,
+                    mace_sets=self.ensemble_mace_sets[tag],
+                    atomic_energies=self.ensemble_atomic_energies[tag],
+                    scaling=self.scaling,
+                    update_atomic_energies=self.update_atomic_energies,
+                    z_table=self.z_table,
+                    atomic_energies_dict=self.ensemble_atomic_energies_dict[tag],
+                    dtype=self.dtype,
+                    device=self.device,
+                )
+
             logging.info(f"Trajectory worker {idx} is training.")
-        # we train only for some epochs before we move to the next worker which may be running MD
-        # all workers train on the same models with the respective training settings for
-        # each ensemble member
-        if RANK == 0:
+            # we train only for some epochs before we move to the next worker which may be running MD
+            # all workers train on the same models with the respective training settings for
+            # each ensemble member
+
             for _ in range(self.intermediate_epochs):
                 for tag, model in self.ensemble.items():
 
@@ -1280,15 +1297,14 @@ class ALProcedure(PrepareALProcedure):
         # update calculator
         MPI.COMM_WORLD.Barrier()
         self.current_valid_error = MPI.COMM_WORLD.bcast(self.current_valid_error, root=0)
-        self.ensemble = MPI.COMM_WORLD.bcast(self.ensemble, root=0)
         MPI.COMM_WORLD.Barrier()
-        
-        for trajectory in self.trajectories.values():
-            trajectory.calc.models = [self.ensemble[tag] for tag in self.ensemble.keys()]
-            # TH: do we need this? could make it faster
-            #for model in trajectory.calc.models:
-                #for param in model.parameters():
-                    #param.requires_grad = False
+        if RANK == 0:
+            for trajectory in self.trajectories.values():
+                trajectory.calc.models = [self.ensemble[tag] for tag in self.ensemble.keys()]
+                # TH: do we need this? could make it faster
+                #for model in trajectory.calc.models:
+                    #for param in model.parameters():
+                        #param.requires_grad = False
 
         MPI.COMM_WORLD.Barrier()
         self.total_epoch = MPI.COMM_WORLD.bcast(self.total_epoch, root=0)
@@ -1342,9 +1358,9 @@ class ALProcedure(PrepareALProcedure):
             if RANK == 0:
                 self.md_drivers[idx].step()
 
-            MPI.COMM_WORLD.Barrier()
-            self.trajectories[idx] = MPI.COMM_WORLD.bcast(self.trajectories[idx], root=0)
-            MPI.COMM_WORLD.Barrier()
+            #MPI.COMM_WORLD.Barrier()
+            #self.trajectories[idx] = MPI.COMM_WORLD.bcast(self.trajectories[idx], root=0)
+            #MPI.COMM_WORLD.Barrier()
 
             self.trajectory_MD_steps[idx] += 1
             if current_MD_step % self.skip_step == 0:
@@ -1353,26 +1369,34 @@ class ALProcedure(PrepareALProcedure):
                         f"Trajectory worker {idx} at MD step {current_MD_step}."
                     )
                     
-                self.point = self.trajectories[idx].copy()
-                prediction = None
-                if RANK == 0:
+                    self.point = self.trajectories[idx].copy()
+                    prediction = None
                     prediction = self.trajectories[idx].calc.results["forces_comm"]
                 
+                    uncertainty = max_sd_2(prediction)
+                    # compute moving average of uncertainty
+                    self.uncertainties.append(uncertainty)
+                    # TODO: Remove hardcode
+                    # limit the history to 400
+                    if len(self.uncertainties) > 400:
+                        self.uncertainties = self.uncertainties[-400:]
+                    if len(self.uncertainties) > 10:
+                        mov_avg_uncert = np.mean(self.uncertainties)
+                        self.threshold = mov_avg_uncert * (1.0 + self.c_x)
+            
+                if RANK != 0:
+                    uncertainty = None
+                    prediction = None
+                    self.point = None
+                    
                 MPI.COMM_WORLD.Barrier()
+                self.threshold = MPI.COMM_WORLD.bcast(self.threshold, root=0)
+                self.point = MPI.COMM_WORLD.bcast(self.point, root=0)
+                uncertainty = MPI.COMM_WORLD.bcast(uncertainty, root=0)
                 prediction = MPI.COMM_WORLD.bcast(prediction, root=0)
                 MPI.COMM_WORLD.Barrier()
-
-                uncertainty = max_sd_2(prediction)
-                # compute moving average of uncertainty
-                self.uncertainties.append(uncertainty)
-                # TODO: Remove hardcode
-                # limit the history to 400
-                if len(self.uncertainties) > 400:
-                    self.uncertainties = self.uncertainties[-400:]
-                if len(self.uncertainties) > 10:
-                    mov_avg_uncert = np.mean(self.uncertainties)
-                    self.threshold = mov_avg_uncert * (1.0 + self.c_x)
-
+        
+                
                 if uncertainty > self.threshold:
                     if RANK == 0:
                         logging.info(
@@ -1385,19 +1409,22 @@ class ALProcedure(PrepareALProcedure):
                     
                     MPI.COMM_WORLD.Barrier()
                     self.aims_calculator.calculate(self.point, properties=["energy","forces"])
-                    self.point.info['energy'] = self.aims_calculator.results['energy']
-                    self.point.arrays['forces'] = self.aims_calculator.results['forces']
-                    self.mace_point = create_mace_dataset(
-                        data=[self.point],
-                        z_table=self.z_table,
-                        seed=None,
-                        r_max=self.r_max,
-                    )
+                    if RANK == 0:
+                        self.point.info['energy'] = self.aims_calculator.results['energy']
+                        self.point.arrays['forces'] = self.aims_calculator.results['forces']
+                        self.mace_point = create_mace_dataset(
+                            data=[self.point],
+                            z_table=self.z_table,
+                            seed=None,
+                            r_max=self.r_max,
+                        )
                     # it sends the job and does not wait for the result but
                     # continues with the next worker. only if the job is done
                     # the worker is set to training mode
                     self.trajectory_training[idx] = "waiting"
                     self.num_workers_waiting += 1
+                    
+                    MPI.COMM_WORLD.Barrier()
                     self.waiting_task(idx)
 
                     # for analysis
@@ -1454,13 +1481,17 @@ class ALProcedure(PrepareALProcedure):
 
         if RANK == 0:
             logging.info("Starting active learning procedure.")
+            self.ensemble_reset_opt = {
+                tag: False for tag in self.ensemble.keys()
+            }
+            self.ensemble_no_improvement = {
+                tag: 0 for tag in self.ensemble.keys()
+            }
+            self.ensemble_best_valid = {
+                tag: np.inf for tag in self.ensemble.keys()
+            }
+            
         self.current_valid_error = np.inf
-        self.ensemble_no_improvement = {
-            tag: 0 for tag in self.ensemble.keys()
-        }
-        self.ensemble_best_valid = {
-            tag: np.inf for tag in self.ensemble.keys()
-        }
         self.threshold = np.inf
         self.point_added = 0  # counts how many points have been added to the training set to decide when to add a point to the validation set
         self.num_MD_limits_reached = 0
@@ -1471,7 +1502,7 @@ class ALProcedure(PrepareALProcedure):
 
         MPI.COMM_WORLD.Barrier()
         
-        while True:
+        while True: 
             for trajectory_idx, _ in enumerate(self.trajectories):
 
                 if self.trajectory_training[trajectory_idx] == "waiting":
@@ -1510,14 +1541,8 @@ class ALProcedure(PrepareALProcedure):
                         "All trajectories reached maximum MD steps. Training until convergence."
                     )
                 break
-            if (
-                len(
-                    self.ensemble_ase_sets[list(self.ensemble.keys())[0]][
-                        "train"
-                    ]
-                )
-                >= self.max_set_size
-            ):
+            
+            if self.train_dataset_len >= self.max_set_size:
                 if RANK == 0:
                     logging.info(
                         "Maximum size of training set reached. Training until convergence."
@@ -1531,14 +1556,23 @@ class ALProcedure(PrepareALProcedure):
                         "Desired accuracy reached. Training until convergence."
                     )
                 break
-
+            
+            if self.train_dataset_len % self.save_data_interval == 0:
+                if RANK == 0:
+                    save_datasets(
+                        ensemble=self.ensemble,
+                        ensemble_ase_sets=self.ensemble_ase_sets,
+                        path=self.dataset_dir / "final",
+                    )             
+        
         # turn keys which are ints into strings
         # save the datasets and the intervals for analysis
-        save_datasets(
-            ensemble=self.ensemble,
-            ensemble_ase_sets=self.ensemble_ase_sets,
-            path=self.dataset_dir / "final",
-        )
+        if RANK == 0:
+            save_datasets(
+                ensemble=self.ensemble,
+                ensemble_ase_sets=self.ensemble_ase_sets,
+                path=self.dataset_dir / "final",
+            )
 
     def converge(self):
         """
@@ -1633,6 +1667,7 @@ class ALProcedure(PrepareALProcedure):
                         log_errors=self.mace_settings["MISC"]["error_table"],
                         epoch=epoch,
                     )
+                    # TODO: remove hardcode
                     if best_valid_loss > valid_loss and (best_valid_loss - valid_loss) > 0.01:
                         best_valid_loss = valid_loss
                         best_epoch = epoch
@@ -1945,7 +1980,7 @@ class StandardMACEEnsembleProcedure:
         ]
         self.scaling = self.mace_settings["TRAINING"]["scaling"]
         self.model_dir = self.mace_settings["GENERAL"]["model_dir"]
-        self.eval_interval = self.mace_settings['MISC']['eval_interval']
+        self.eval_interval = self.mace_settings['TRAINING']['eval_interval']
         self.max_num_epochs = self.mace_settings['TRAINING']['max_num_epochs']
         self.patience = self.mace_settings['TRAINING']['patience']
     

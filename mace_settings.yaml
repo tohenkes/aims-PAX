@@ -4,9 +4,7 @@ GENERAL:
   checkpoints_dir: ./checkpoints
   results_dir: ./results
   model_dir: ./model
-  save_cpu: False
   default_dtype: float32
-  compute_forces: True
   compute_stress: False
   seed: 100
 
@@ -29,7 +27,6 @@ ARCHITECTURE:
   gate: silu
   MLP_irreps: 16x0e
   interaction_first: RealAgnosticResidualInteractionBlock
-  E0s: average
   compute_avg_num_neighbors: True
   #atomic_energies:
   #  1: 0.1
@@ -52,18 +49,11 @@ TRAINING:
   ema: True
   ema_decay: 0.99
   max_num_epochs: 30
-  swa_energy_weight: 1000.
-  swa_forces_weight: 10.
-  swa_virials_weight: 10.
-  swa_stress_weight: 10.
-  swa_dipole_weight: 1.
-  swa_lr: 0.001
   loss: weighted
   energy_weight: 1.
   forces_weight: 1000.
   virials_weight: 1.
   stress_weight: 1.
-  dipole_weight: 1.
   config_type_weights: {Default: 1.0}
   patience: 15
   clip_grad: 10.
@@ -73,7 +63,5 @@ MISC:
   device: cuda
   keep_checkpoints: False
   restart_latest: False
-  wandb: False
-  eval_interval: 5
   error_table: PerAtomMAE
   log_level: INFO
