@@ -133,6 +133,8 @@ For now we have only one MD setting for all trajectories and the selection for s
 - [x] parallelism for FHI aims in AL procedure
 - [ ] energy, force weight swap in loss fn during convergence
 - [x] make it work with gpu
+- [ ] Flesh out sanity checks
+- [ ] multiple MD settings
 - [ ] scf failsafe
 - [ ] analysis on parameters with naphtalene
 - [ ] same with MD17/22?
@@ -143,6 +145,8 @@ For now we have only one MD setting for all trajectories and the selection for s
 - [ ] add more documentation
 - [ ] combine mace_settings and active_learning_settings into control.in (?)
 - [ ] refactor code, especially procedures.py and utilities.py and all the modified MACE parts
+- [ ] own MD engine using pytorch or TorchMD?
+- [ ] own asi wrapper
 
 
 # Requirements
