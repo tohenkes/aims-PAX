@@ -1403,7 +1403,8 @@ class ALProcedure(PrepareALProcedure):
                         logging.info(
                             f"Uncertainty of point is beyond threshold {np.round(self.threshold,3)} at worker {idx}: {round(uncertainty.item(),3)}."
                         )
-                    
+                    # for analysis
+                    self.t_intervals[idx].append(current_MD_step)
                     # at the moment the process waits for the calculation to finish
                     # ideally it should calculate in the background and the other
                     # workers sample/train in the meantime
@@ -1428,8 +1429,7 @@ class ALProcedure(PrepareALProcedure):
                     MPI.COMM_WORLD.Barrier()
                     self.waiting_task(idx)
 
-                    # for analysis
-                    self.t_intervals[idx].append(current_MD_step)
+                    
                     if RANK == 0:
                         logging.info(
                             f"Trajectory worker {idx} is waiting for job to finish."

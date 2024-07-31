@@ -133,7 +133,7 @@ For now we have only one MD setting for all trajectories and the selection for s
 - [x] parallelism for FHI aims in AL procedure
 - [ ] energy, force weight swap in loss fn during convergence
 - [x] make it work with gpu
-- [ ] Flesh out sanity checks
+- [ ] analysis (save sanity checks, t_intervals, threshold evolution, uncertainties, loss over time)
 - [ ] multiple MD settings
 - [ ] scf failsafe
 - [ ] analysis on parameters with naphtalene
