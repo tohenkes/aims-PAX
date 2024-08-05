@@ -9,7 +9,8 @@ setup(
     long_description=open('README.md').read(),
     long_description_content_type='text/markdown',
     url='https://github.com/tohenkes/FHI_AL',
-    packages=find_packages(),
+    packages=find_packages(where='src'),
+    package_dir={'': 'src'},
     classifiers=[
         "Programming Language :: Python :: 3",
     ],
@@ -21,5 +22,10 @@ setup(
         'asi4py',
         'torch',
         'pyYaml',
-    ]
+    ],
+    entry_points={
+        'console_scripts': [
+            'FHI_AL=FHI_AL.__main__:main',
+        ],
+    },
 )
