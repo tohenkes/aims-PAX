@@ -5,8 +5,8 @@ import ase.build
 import torch
 import numpy as np
 from mace import tools
-from FHI_AL.src.custom_MACECalculator import MACECalculator
-from FHI_AL.src.utilities import (
+from FHI_AL.custom_MACECalculator import MACECalculator
+from FHI_AL.utilities import (
     create_dataloader,
     ensemble_training_setups,
     ensemble_from_folder,
@@ -26,7 +26,7 @@ from FHI_AL.src.utilities import (
     list_files_in_directory,
     AIMSControlParser,
 )
-from FHI_AL.src.train_epoch_mace import train_epoch, validate_epoch_ensemble
+from FHI_AL.train_epoch_mace import train_epoch, validate_epoch_ensemble
 import ase
 from ase.io import read
 import logging
