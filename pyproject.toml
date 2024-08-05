@@ -1,0 +1,35 @@
+[build-system]
+requires = ["setuptools>=61.0"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "FHI_AL"
+version = "0.1"
+description = "Active learning for FHI-aims"
+readme = "README.md"
+requires-python = ">=3.9"
+license = { text = "Placeholder" }
+authors = [
+    { name = "Tobias Henkes", email = "tobias.henkes@uni.lu" }
+]
+keywords = []
+classifiers = [
+    "Programming Language :: Python :: 3"
+]
+dependencies = [
+    "ase",
+    "numpy",
+    "mace-torch",
+    "asi4py",
+    "torch",
+    "pyYaml",
+]
+
+[project.urls]
+homepage = "https://github.com/tohenkes/FHI_AL"
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[project.scripts]
+FHI_AL = "FHI_AL.__main__:main"
