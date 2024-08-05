@@ -13,12 +13,10 @@
 *.ipynb
 *.ase
 *.sh
+/FHI_AL.egg-info
 /legacy
 /sockets
 asi_test.py
 test_ase.py
 test_procedure.py
-f90_connect/f_print_coords.f90
-f90_connect/interface_module.f90
-f90_connect/mycfunc.c
-f90_connect/mymodule.py
+
