@@ -3,7 +3,7 @@ from setuptools import setup, find_packages
 setup(
     name='FHI_AL',
     version='0.1',
-    author='Tobias Henkes, Igor Poltavsky, Mariana Rossi',
+    author='Tobias Henkes',
     author_email='tobias.henkes@uni.lu',
     description='Active learning for FHI-aims',
     long_description=open('README.md').read(),

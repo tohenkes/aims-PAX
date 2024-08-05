@@ -1,6 +1,6 @@
 ACTIVE_LEARNING:
-  desired_acc: 0.0042
-  lambda: 20.
+  desired_acc: 0.042
+  lambda: 10.
   n_samples: 5
   initial_valid_ratio: 0.2
   valid_ratio: 3

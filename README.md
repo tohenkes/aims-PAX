@@ -1,5 +1,37 @@
 # Tutorial
 
+## Installation 
+
+Make sure that the following packages are installed (see also requirements.txt):
+
+1. ASE
+2. numpy
+3. asi4py
+4. mace
+5. pyTorch
+6. pyYaml
+
+Also, you have to compile FHI AIMS as a library (BUILD_SHARED_LIBS has to be set to ON in the CMake file).
+
+Afterwards, download or clone this repository and run
+```
+pip install .
+```
+inside the directory.
+
+## Running 
+
+To run the whole thing, one has to specify the settings for AIMS, the MACE model and active learning. 
+
+1. make sure the following files are in the working directory:
+    - control.in, 
+    - geometry.in,
+    - mace_settings.yaml,
+    - and active_learning_settings.yaml 
+2. ``` mpirun -n $CORES FHI_AL ```
+
+The settings are explained below and the script automatically runs the all the steps explained above. Both procedures, initial dataset acquisition and active learning, are classes that can be used independently from each other.
+
 ## The workflow 
 
 The overall workflow of the procedure and some comments thereupon are written here. For more details on specific parameters take a look at the settings glossary at the bottom.
@@ -25,18 +57,6 @@ For a (fixed) interval, points from the MLFF MD are taken and computed using FHI
 *obviously this handdrawn scheme is only temporary*
 ![Image](readme_figs/al.jpg)
 
-## Running 
-
-To run the whole thing ,one has to specify the settings for AIMS, the MACE model and active learning. 
-
-1. make sure the following files are in the working directory:
-    - control.in, 
-    - geometry.in,
-    - mace_settings.yaml,
-    - and active_learning_settings.yaml 
-2. '''mpirun -n $CORES python run_whole_procedure.py'''.
-
-The settings are explained below and the script automatically runs the all the steps explained above. Both procedures, initial dataset acquisition and active learning, are classes that can be used independently from each other.
 ## Settings 
 
 ### FHI aims settings 
@@ -147,15 +167,6 @@ For now we have only one MD setting for all trajectories and the selection for s
 - [ ] refactor code, especially procedures.py and utilities.py and all the modified MACE parts
 - [ ] own MD engine using pytorch or TorchMD?
 - [ ] own asi wrapper
+- [ ] unit tests
 
 
-# Requirements
-
-1. ASE
-2. numpy
-3. asi4py
-4. mace
-5. pyTorch
-6. pyYaml
-
-I think that's it. Please tell me if something missing.
