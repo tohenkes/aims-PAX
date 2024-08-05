@@ -27,7 +27,7 @@ from FHI_AL.utilities import (
     list_files_in_directory,
     AIMSControlParser,
 )
-from FHI_AL.train_epoch_mace import train_epoch, validate_epoch_ensemble
+from FHI_AL.src.train_epoch_mace import train_epoch, validate_epoch_ensemble
 import ase
 from ase.io import read
 import logging

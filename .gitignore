@@ -13,7 +13,6 @@
 *.ipynb
 *.ase
 *.sh
-run_whole_procedure.*
 /legacy
 /sockets
 asi_test.py
