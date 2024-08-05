@@ -1,4 +1,4 @@
-from FHI_AL.src.procedures import InitalDatasetProcedure, ALProcedure
+from FHI_AL.procedures import InitalDatasetProcedure, ALProcedure
 from yaml import safe_load
 from mpi4py import MPI
 
