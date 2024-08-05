@@ -5,7 +5,6 @@
 *.extxyz
 *.pt
 *.model
-*.txt
 *.npz
 *.in
 *.out
@@ -14,9 +13,7 @@
 *.ase
 *.sh
 /FHI_AL.egg-info
-/legacy
-/sockets
-asi_test.py
-test_ase.py
-test_procedure.py
+
+
+
 
