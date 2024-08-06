@@ -15,6 +15,9 @@ Also, you have to compile FHI AIMS as a library (BUILD_SHARED_LIBS has to be set
 
 Afterwards, download or clone this repository and run
 ```
+pip install -r requirements.txt
+```
+```
 pip install .
 ```
 inside the directory.
