@@ -6,13 +6,13 @@
 *.pt
 *.model
 *.npz
-*.in
 *.out
 *.db
 *.ipynb
 *.ase
 *.sh
-/FHI_AL.egg-info
+src/FHI_AL.egg-info
+/build
 
 
 

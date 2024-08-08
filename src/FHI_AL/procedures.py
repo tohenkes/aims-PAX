@@ -14,7 +14,6 @@ from FHI_AL.utilities import (
     update_model_auxiliaries,
     save_checkpoint,
     save_datasets,
-    pre_trajectories_from_folder,
     load_ensemble_sets_from_folder,
     ase_to_mace_ensemble_sets,
     create_mace_dataset,
@@ -50,12 +49,8 @@ class PrepareInitialDatasetProcedure:
         self,
         mace_settings: dict,
         al_settings: dict,
-        path_to_aims_lib: str,
-        atomic_energies_dict: dict = None,
-        species_dir: str = None,
         path_to_control: str = "./control.in",
         path_to_geometry: str = "./geometry.in",
-        ensemble_seeds: np.array = None
     ) -> None:
         """
         Args:
@@ -86,21 +81,18 @@ class PrepareInitialDatasetProcedure:
             logging.info('Initializing initial dataset procedure.')
             
         self.control_parser = AIMSControlParser()
-        self.ASI_path = path_to_aims_lib
         self.handle_mace_settings(mace_settings)
         self.handle_al_settings(al_settings)
-        self.handle_aims_settings(path_to_control, species_dir)
+        self.handle_aims_settings(path_to_control, self.species_dir)
         self.create_folders()
         self.z = Z_from_geometry_in()
         self.update_atomic_energies = False
 
-        if atomic_energies_dict is None:
+        if self.atomic_energies_dict is None:
             self.atomic_energies_dict = {
                 z: 0 for z in np.unique(self.z)
             }
             self.update_atomic_energies = True
-        else:
-            self.atomic_energies_dict = atomic_energies_dict
 
         self.atomic_energies = np.array(
             [
@@ -113,21 +105,16 @@ class PrepareInitialDatasetProcedure:
         )
         if RANK == 0:
             logging.info(f'{self.atomic_energies_dict}')
+
         self.atoms = read(path_to_geometry)
         self.n_atoms = len(self.z)
-        #self.handle_MD_settings(al_settings)
         self.epoch = 0
         
         np.random.seed(self.mace_settings["GENERAL"]["seed"])
         random.seed(self.mace_settings["GENERAL"]["seed"])
-        
-        if ensemble_seeds is not None:
-            self.ensemble_size = len(ensemble_seeds)
-            self.ensemble_seeds = ensemble_seeds
-        else:
-            self.ensemble_seeds = np.random.randint(
-                0, 1000, size=self.ensemble_size
-            )
+        self.ensemble_seeds = np.random.randint(
+            0, 1000, size=self.ensemble_size
+        )
         # the ensemble dictionary contains the models and their tags as values and keys
         # the seeds_tags_dict connects the seeds to the tags of each ensemble member
         # the training_setups dictionary contains the training setups for each ensemble member
@@ -139,7 +126,7 @@ class PrepareInitialDatasetProcedure:
             ) = setup_ensemble_dicts(
                 seeds=self.ensemble_seeds,
                 mace_settings=self.mace_settings,
-                al_settings=self.al_settings,
+                al_settings=self.al,
                 atomic_energies_dict=self.atomic_energies_dict,
             )
         # each ensemble member has their own initial dataset.
@@ -150,6 +137,13 @@ class PrepareInitialDatasetProcedure:
                 {tag: {"train": [], "valid": []} for tag in self.ensemble.keys()},
                 {tag: {"train": [], "valid": []} for tag in self.ensemble.keys()},
             )
+            
+        if self.analysis:
+            self.collect_losses = {
+                "epoch": [],
+                "avg_losses": [],
+                "ensemble_losses": [],
+            }
 
         # initializing the md and FHI aims
         self.dyn = self.setup_md(self.atoms, md_settings=self.md_settings)
@@ -177,6 +171,8 @@ class PrepareInitialDatasetProcedure:
         self.scaling = self.mace_settings["TRAINING"]["scaling"]
         self.dtype = self.mace_settings["GENERAL"]["default_dtype"]
         self.device = self.mace_settings["MISC"]["device"]
+        self.atomic_energies_dict = self.mace_settings["ARCHITECTURE"].get("atomic_energies_dict", None)
+        
 
     def handle_al_settings(self, al_settings: dict) -> None:
         """
@@ -186,24 +182,29 @@ class PrepareInitialDatasetProcedure:
             al_settings (dict): Dictionary containing the active learning settings.
         """
 
-        self.al_settings = al_settings["ACTIVE_LEARNING"]
+        self.al = al_settings["ACTIVE_LEARNING"]
         self.md_settings = al_settings["MD"]
-        self.ensemble_size = self.al_settings["ensemble_size"]
-        self.desired_acc = self.al_settings["desired_acc"]
-        self.lamb = self.al_settings["lambda"]
-        self.n_samples = self.al_settings["n_samples"]
-        self.max_initial_epochs = self.al_settings["max_initial_epochs"]
-        self.max_final_epochs = self.al_settings["max_final_epochs"]
-        self.valid_skip = self.al_settings["valid_skip"]
-        self.skip_step = self.al_settings["skip_step"]
-        self.intermediate_epochs = self.al_settings["intermediate_epochs"]
-        self.initial_valid_ratio = self.al_settings["initial_valid_ratio"]
-
+        self.ensemble_size = self.al["ensemble_size"]
+        self.desired_acc = self.al["desired_acc"]
+        self.lamb = self.al["lambda"]
+        self.n_samples = self.al["n_samples"]
+        self.max_initial_epochs = self.al["max_initial_epochs"]
+        self.max_final_epochs = self.al["max_final_epochs"]
+        self.valid_skip = self.al["valid_skip"]
+        self.skip_step = self.al["skip_step"]
+        self.intermediate_epochs = self.al["intermediate_epochs"]
+        self.initial_valid_ratio = self.al["initial_valid_ratio"]
+        self.ASI_path = self.al["aims_lib_path"]
+        self.species_dir = self.al["species_dir"]
+        self.analysis = self.al.get("analysis", False)
+        if not self.al["scheduler_initial"]:
+            self.mace_settings["lr_scheduler"] = None
+            
     def create_folders(self):
         """
         Creates the necessary directories for saving the datasets.
         """
-        self.dataset_dir = Path(self.al_settings["dataset_dir"])
+        self.dataset_dir = Path(self.al["dataset_dir"])
         (self.dataset_dir / "initial" / "training").mkdir(
             parents=True, exist_ok=True
         )
@@ -211,6 +212,8 @@ class PrepareInitialDatasetProcedure:
             parents=True, exist_ok=True
         )
         os.makedirs("model", exist_ok=True)
+        if self.analysis:
+            os.makedirs("analysis", exist_ok=True)
 
     def get_atomic_energies(self):
         #!!!!!!!!!!!!!!!!!!
@@ -268,19 +271,22 @@ class PrepareInitialDatasetProcedure:
             ase.Atoms: Atoms object with the calculator attached.
         """
         # we only calculate the free atoms here so k_grid is not needed
-        if not pbc:
-            aims_settings = self.aims_settings.copy()
-            if aims_settings.get('k_grid') is not None:
-                aims_settings.pop('k_grid')
-        else:
-            aims_settings = self.aims_settings.copy()
-            
+        #if not pbc:
+        #    aims_settings = self.aims_settings.copy()
+        #    if aims_settings.get('k_grid') is not None:
+        #        aims_settings.pop('k_grid')
+        #else:
+        #    aims_settings = self.aims_settings.copy()
+    
         # 1-2 atoms are too small to use scalapack KS solver
         # so we fall back to the serial one for calculating single atoms
-        if serial:
-            aims_settings['KS_method'] = 'serial'
-        else:
-            aims_settings['KS_method'] = 'scalapack_fast'
+        #if serial:
+        #    aims_settings['KS_method'] = 'serial'
+        #else:
+        #    aims_settings['KS_method'] = 'scalapack_fast'
+        
+        aims_settings = self.aims_settings.copy()
+
         def init_via_ase(asi):
             
             from ase.calculators.aims import Aims
@@ -311,28 +317,6 @@ class PrepareInitialDatasetProcedure:
         self.aims_settings = self.control_parser(path_to_control)
         self.aims_settings['compute_forces'] = True
         self.aims_settings['species_dir'] = species_dir
-        
-    # def handle_MD_settings(
-    #         self,
-    #         al_settings: dict
-    #         ):
-    #     """
-    #     Parses the MD settings from the active learning settings.
-
-    #     Args:
-    #         al_settings (dict): Dictionary containing the active learning settings.
-    #     """
-    #     #TODO: make this more flexible
-    #     self.md_settings = al_settings["MD"]
-    #     self.stat_ensemble = self.md_settings["stat_ensemble"].lower()
-    #     if self.stat_ensemble == 'nvt':
-    #         self.thermostat = self.md_settings['thermostat'].lower()
-    #         if self.thermostat == 'langevin':
-    #             self.friction = self.md_settings['friction']
-    #             self.md_seed = self.md_settings['seed']
-                
-    #     self.timestep = self.md_settings['timestep']
-    #     self.temperature = self.md_settings['temperature']
 
     def setup_md(
         self,
@@ -530,7 +514,7 @@ class InitalDatasetProcedure(PrepareInitialDatasetProcedure):
                     ):
                         (
                             ensemble_valid_losses,
-                            _,
+                            valid_loss,
                             metrics,
                         ) = validate_epoch_ensemble(
                             ensemble=self.ensemble,
@@ -541,6 +525,17 @@ class InitalDatasetProcedure(PrepareInitialDatasetProcedure):
                             epoch=self.epoch,
                         )
                         current_valid = metrics["mae_f"]
+                        
+                        if self.analysis:
+                            self.collect_losses["epoch"].append(
+                                self.epoch
+                            )
+                            self.collect_losses["avg_losses"].append(
+                                valid_loss
+                            )
+                            self.collect_losses["ensemble_losses"].append(
+                                ensemble_valid_losses
+                            )
 
                         # if the desired accuracy is reached we save the models
                         if self.desired_acc * self.lamb >= current_valid:
@@ -603,6 +598,12 @@ class InitalDatasetProcedure(PrepareInitialDatasetProcedure):
             current_valid = MPI.COMM_WORLD.bcast(current_valid, root=0)
             self.epoch = MPI.COMM_WORLD.bcast(self.epoch, root=0)
             MPI.COMM_WORLD.Barrier()
+            if RANK == 0:
+                if self.analysis:
+                    np.savez(
+                        "analysis/initial_losses.npz",
+                        **self.collect_losses
+                    )
         self.atoms.calc.close()
         return 0
 
@@ -647,7 +648,7 @@ class InitalDatasetProcedure(PrepareInitialDatasetProcedure):
                 )
             best_valid_loss = np.inf
             epoch = 0
-            patience = self.al_settings["patience"]
+            patience = self.al["patience"]
             no_improvement = 0
             ensemble_valid_losses = {tag: np.inf for tag in self.ensemble.keys()}
             for j in range(self.max_final_epochs):
@@ -740,15 +741,8 @@ class PrepareALProcedure:
         self,
         mace_settings,
         al_settings,
-        species_dir: str,
-        path_to_aims_lib: str,
-        atomic_energies_dict: dict = None,
         path_to_control: str = "./control.in",
-        path_to_geometry: str = "./geometry.in",
-        seeds_tags_dict: dict = None,
-        path_to_trajectories: str = None,
-        save_data_interval: int = 10,
-        analysis: bool = False,
+        path_to_geometry: str = "./geometry.in"
     ) -> None:
         
         logging.basicConfig(
@@ -767,12 +761,10 @@ class PrepareALProcedure:
             logging.info("Initializing active learning procedure.")
         
         self.control_parser = AIMSControlParser()
-        self.save_data_interval = save_data_interval
-        self.handle_al_settings(al_settings['ACTIVE_LEARNING'])
+        self.handle_al_settings(al_settings)
         self.handle_mace_settings(mace_settings)
-        self.handle_aims_settings(path_to_control, species_dir)
+        self.handle_aims_settings(path_to_control)
         np.random.seed(self.mace_settings["GENERAL"]["seed"])
-        self.ASI_path = path_to_aims_lib
         #TODO: will break when using multiple settings for different trajectories and 
         # it should be adapted to the way the initial dataset procecure treats md settings
         self.md_settings = al_settings["MD"]
@@ -784,12 +776,20 @@ class PrepareALProcedure:
         
         self.n_atoms = len(self.z)
         
-        if seeds_tags_dict is None:
-            self.seeds = dict(
-                np.load(
-                    self.dataset_dir / "seeds_tags_dict.npz", allow_pickle=True
+        if self.seeds_tags_dict is None:
+            try:
+                self.seeds = dict(
+                    np.load(
+                        self.dataset_dir / "seeds_tags_dict.npz",
+                        allow_pickle=True
+                    )
                 )
+            except:
+                logging.error(
+    f"Could not load seeds_tags_dict.npz. Either specify it in the active "
+    f"learning settings or put it as seeds_tags_dict.npz in {self.dataset_dir}."
             )
+
         # TODO: remove hardcode
         self.use_scheduler = False
 
@@ -799,14 +799,14 @@ class PrepareALProcedure:
                 device=self.device,
             )
 
-            if atomic_energies_dict is not None:
+            if self.atomic_energies_dict is not None:
                 # if they have been explicitly specified the model should not update them
                 # anymore
                 self.update_atomic_energies = False
                 self.ensemble_atomic_energies_dict = {}
                 self.ensemble_atomic_energies = {}
                 for tag in self.ensemble.keys():
-                    self.ensemble_atomic_energies_dict[tag] = atomic_energies_dict
+                    self.ensemble_atomic_energies_dict[tag] = self.atomic_energies_dict
                     self.ensemble_atomic_energies[tag] = np.array(
                         [
                             self.ensemble_atomic_energies_dict[tag][z]
@@ -818,7 +818,8 @@ class PrepareALProcedure:
                     self.get_atomic_energies_from_ensemble()
                 except:
                     if RANK == 0:
-                        logging.info('Could not load atomic energies from ensemble members.')
+                        logging.info('Could not load atomic energies '
+                                     'from ensemble members.')
                 self.update_atomic_energies = True
 
             self.training_setups = ensemble_training_setups(
@@ -826,9 +827,6 @@ class PrepareALProcedure:
                 mace_settings=self.mace_settings,
             )
             
-            
-        if path_to_trajectories is not None:
-            self.simulate_trajectories(path_to_trajectories)
 
         # TODO: make option to directly load the dataset from the
         # initial dataset object instead of reading from disk
@@ -836,7 +834,7 @@ class PrepareALProcedure:
             logging.info("Loading initial datasets.")
             self.ensemble_ase_sets = load_ensemble_sets_from_folder(
                 ensemble=self.ensemble,
-                path_to_folder=self.al_settings["dataset_dir"] + "/initial",
+                path_to_folder=self.al["dataset_dir"] + "/initial",
             )
             self.ensemble_mace_sets = ase_to_mace_ensemble_sets(
                 ensemble_ase_sets=self.ensemble_ase_sets,
@@ -872,14 +870,27 @@ class PrepareALProcedure:
         self.trajectory_epochs = {
             trajectory: 0 for trajectory in range(self.num_trajectories)
         }
-        # this saves the intervals between points that cross the uncertainty threshold
-        self.t_intervals = {
-            trajectory: [] for trajectory in range(self.num_trajectories)
-        }
-        # this saves uncertainty and true errors for each trajectory
-        self.sanity_checks = {
-            trajectory: [] for trajectory in range(self.num_trajectories)
-        }
+        if self.analysis:
+            # this saves the intervals between points that cross the uncertainty threshold
+            self.t_intervals = {
+                trajectory: [] for trajectory in range(self.num_trajectories)
+            }
+            # this saves uncertainty and true errors for each trajectory
+            self.sanity_checks = {
+                trajectory: [] for trajectory in range(self.num_trajectories)
+            }
+            # this saves the validation losses for each trajectory
+            self.collect_losses = {
+                "epoch": [],
+                "avg_losses": [],
+                "ensemble_losses": [],
+            }
+            
+            self.collect_thresholds = {
+                trajectory: [] for trajectory in range(self.num_trajectories)
+            }
+            
+
         if RANK == 0:
             self.setup_mace_calc()
             for trajectory in self.trajectories.values():
@@ -895,9 +906,7 @@ class PrepareALProcedure:
             # this saves the state of the trajectories
 
 
-        self.uncertainties = []  # for moving average   
-        self.sanity_checks_valid = {}
-        self.analysis = analysis # whether to do save sanity checks, intervals etc.
+        self.uncertainties = []  # for moving average
         
         
     def get_atomic_energies_from_ensemble(self):
@@ -934,29 +943,38 @@ class PrepareALProcedure:
         self.model_dir = self.mace_settings["GENERAL"]["model_dir"]
         self.dtype = self.mace_settings["GENERAL"]["default_dtype"]
         self.device = self.mace_settings["MISC"]["device"]
+        self.atomic_energies_dict = self.mace_settings.get("atomic_energies_dict", None)
     
     def handle_al_settings(self, al_settings):
-        self.al_settings = al_settings
-        self.max_MD_steps = al_settings["max_MD_steps"]
-        self.max_epochs_worker = al_settings["max_epochs_worker"]
-        self.max_final_epochs = al_settings["max_final_epochs"]
-        self.desired_accuracy = al_settings["desired_acc"]
-        self.num_trajectories = al_settings["num_trajectories"]
-        self.skip_step = al_settings["skip_step"]
-        self.valid_skip = al_settings["valid_skip"]
-        self.sanity_skip = al_settings["sanity_skip"]
-        self.valid_ratio = al_settings["valid_ratio"]
-        self.max_set_size = al_settings["max_set_size"]
-        self.num_trajectories = al_settings["num_trajectories"]
-        self.c_x = al_settings["c_x"]
-        self.intermediate_epochs = al_settings["intermediate_epochs"]
-        self.dataset_dir = Path(al_settings["dataset_dir"])
-        self.patience = al_settings["patience"]
+        
+        self.al = al_settings['ACTIVE_LEARNING']
+        self.al_misc = al_settings.get('MISC', {})
+        
+        self.max_MD_steps = self.al["max_MD_steps"]
+        self.max_epochs_worker = self.al["max_epochs_worker"]
+        self.max_final_epochs = self.al["max_final_epochs"]
+        self.desired_accuracy = self.al["desired_acc"]
+        self.num_trajectories = self.al["num_trajectories"]
+        self.skip_step = self.al["skip_step"]
+        self.valid_skip = self.al["valid_skip"]
+        self.sanity_skip = self.al["sanity_skip"]
+        self.valid_ratio = self.al["valid_ratio"]
+        self.max_set_size = self.al["max_set_size"]
+        self.num_trajectories = self.al["num_trajectories"]
+        self.c_x = self.al["c_x"]
+        self.intermediate_epochs = self.al["intermediate_epochs"]
+        self.dataset_dir = Path(self.al["dataset_dir"])
+        self.patience = self.al["patience"]
+        self.species_dir = self.al["species_dir"]
+        self.ASI_path = self.al["aims_lib_path"]
+        self.analysis = self.al.get("analysis", False)
+        self.seeds_tags_dict = self.al.get("seeds_tags_dict", None)
+        
+        self.save_data_len_interval = self.al_misc.get("save_data_len_interval", 10)
     
     def handle_aims_settings(
         self,
-        path_to_control: str,
-        species_dir: str
+        path_to_control: str
         ):
         """
         Loads and parses the AIMS control file to get the settings for the AIMS calculator.
@@ -969,7 +987,7 @@ class PrepareALProcedure:
         
         self.aims_settings = self.control_parser(path_to_control)
         self.aims_settings['compute_forces'] = True
-        self.aims_settings['species_dir'] = species_dir
+        self.aims_settings['species_dir'] = self.species_dir
     
     def create_folders(self):
         """
@@ -981,6 +999,8 @@ class PrepareALProcedure:
         (self.dataset_dir / "final" / "validation").mkdir(
             parents=True, exist_ok=True
         )
+        if self.analysis:
+            os.makedirs("analysis", exist_ok=True)
 
     def setup_aims_calc(
             self,
@@ -1052,21 +1072,6 @@ class PrepareALProcedure:
     
         return dyn
 
-    def simulate_trajectories(
-            self,
-            path_to_trajectories: str
-            ):
-        """
-        Loads existing trajectories from a folder. 
-
-        Args:
-            path_to_trajectories (str): Path to the folder containing the 
-                                        trajectories in ASE readable format.
-        """
-        self.trajectories = pre_trajectories_from_folder(
-            path=path_to_trajectories,
-            num_trajectories=self.num_trajectories,
-        )
 
 class ALProcedure(PrepareALProcedure):
     """
@@ -1074,8 +1079,8 @@ class ALProcedure(PrepareALProcedure):
     members, the molecular dynamics simulations, the sampling of points and the saving
     of the datasets.
     """
-    
     def sanity_check(
+    #TODO: put this somewhere else and its ugly
             self,
             sanity_prediction: np.ndarray,
             true_forces: np.ndarray
@@ -1130,20 +1135,6 @@ class ALProcedure(PrepareALProcedure):
                 for tag in self.ensemble_ase_sets.keys():
                     self.ensemble_ase_sets[tag]["valid"] += [self.point]
                     self.ensemble_mace_sets[tag]["valid"] += self.mace_point
-
-            if self.analysis:
-                if RANK == 0:    
-                    sanity_prediction = ensemble_prediction(
-                        models=list(self.ensemble.values()),
-                        atoms_list=self.ensemble_ase_sets[tag]["valid"],
-                        device=self.device,
-                        dtype=self.mace_settings["GENERAL"]["default_dtype"],
-                    )
-                MPI.COMM_WORLD.Barrier()
-                sanity_prediction = MPI.COMM_WORLD.bcast(sanity_prediction, root=0)
-                MPI.COMM_WORLD.Barrier()
-                
-                self.sanity_check(sanity_prediction, self.point.arrays["forces"])
 
         else:
             self.trajectory_training[idx] = "training"
@@ -1256,7 +1247,7 @@ class ALProcedure(PrepareALProcedure):
                     self.trajectory_epochs[idx] % self.valid_skip == 0
                     or self.trajectory_epochs[idx] == self.max_epochs_worker - 1
                 ):
-                    ensemble_valid_loss, _, metrics = validate_epoch_ensemble(
+                    ensemble_valid_loss, valid_loss, metrics = validate_epoch_ensemble(
                         ensemble=self.ensemble,
                         training_setups=self.training_setups,
                         ensemble_set=self.ensemble_mace_sets,
@@ -1264,7 +1255,11 @@ class ALProcedure(PrepareALProcedure):
                         log_errors=self.mace_settings["MISC"]["error_table"],
                         epoch=self.trajectory_epochs[idx],
                     )
-                    
+                    if self.analysis:
+                        self.collect_losses["epoch"].append(self.total_epoch)
+                        self.collect_losses['avg_losses'].append(valid_loss)
+                        self.collect_losses['ensemble_losses'].append(ensemble_valid_loss)
+
                     self.current_valid_error = metrics["mae_f"]
 
                     for tag in ensemble_valid_loss.keys():
@@ -1382,6 +1377,11 @@ class ALProcedure(PrepareALProcedure):
                     if len(self.uncertainties) > 10:
                         mov_avg_uncert = np.mean(self.uncertainties)
                         self.threshold = mov_avg_uncert * (1.0 + self.c_x)
+                        
+                        if self.analysis:
+                            self.collect_thresholds[
+                                idx
+                                ].append(self.threshold)
             
                 if RANK != 0:
                     uncertainty = None
@@ -1555,14 +1555,32 @@ class ALProcedure(PrepareALProcedure):
                         "Desired accuracy reached. Training until convergence."
                     )
                 break
-            
-            if self.train_dataset_len % self.save_data_interval == 0:
-                if RANK == 0:
+
+            if RANK == 0:
+                if self.train_dataset_len % self.save_data_len_interval == 0:
                     save_datasets(
                         ensemble=self.ensemble,
                         ensemble_ase_sets=self.ensemble_ase_sets,
                         path=self.dataset_dir / "final",
-                    )             
+                    )
+                if self.analysis:
+                    np.savez(
+                        "analysis/sanity_checks.npz",
+                        self.sanity_checks
+                    )
+                    np.savez(
+                        "analysis/t_intervals.npz",
+                        self.t_intervals
+                    )
+                    np.savez(
+                        "analysis/al_losses.npz",
+                        **self.collect_losses
+                    )
+                    np.savez(
+                        "analysis/thresholds.npz",
+                        self.collect_thresholds
+                    )
+       
         
         # turn keys which are ints into strings
         # save the datasets and the intervals for analysis
@@ -1701,7 +1719,7 @@ class ALProcedure(PrepareALProcedure):
                     )
         MPI.COMM_WORLD.Barrier()    
 
-
+# TODO: This is not done yet
 class StandardMACEEnsembleProcedure:
     """
     Just a simple Class to train ensembles from scratch using existing

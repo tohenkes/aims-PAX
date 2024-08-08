@@ -22,7 +22,8 @@ ACTIVE_LEARNING:
   num_trajectories: 3 # number of trajectories to from sample in parallel
   species_dir: "/project/home/p200243/tcp_software/aims_240507_library/FHIaims/species_defaults/defaults_2020/light"
   aims_lib_path: "/project/home/p200243/tcp_software/aims_240507_library/libaims.240627.scalapack.mpi.so"
-
+  analysis: True
+  
 MD:
   stat_ensemble: NVT
   thermostat: Langevin
@@ -30,4 +31,7 @@ MD:
   timestep: 0.5
   friction: 0.001
   seed: 42
+
+MISC:
+  save_dataset_len_interval: 10
   
