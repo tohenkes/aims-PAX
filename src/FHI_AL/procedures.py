@@ -18,8 +18,12 @@ from FHI_AL.utilities import (
     ase_to_mace_ensemble_sets,
     create_mace_dataset,
     ensemble_prediction,
+    ensemble_prediction_v2,
     setup_mace_training,
     max_sd_2,
+    avg_sd,
+    atom_wise_sd,
+    atom_wise_f_error,
     Z_from_geometry_in,
     list_files_in_directory,
     AIMSControlParser,
@@ -191,7 +195,7 @@ class PrepareInitialDatasetProcedure:
         self.max_initial_epochs = self.al["max_initial_epochs"]
         self.max_final_epochs = self.al["max_final_epochs"]
         self.valid_skip = self.al["valid_skip"]
-        self.skip_step = self.al["skip_step"]
+        self.skip_step = self.al["skip_step_initial"]
         self.intermediate_epochs = self.al["intermediate_epochs"]
         self.initial_valid_ratio = self.al["initial_valid_ratio"]
         self.ASI_path = self.al["aims_lib_path"]
@@ -877,7 +881,14 @@ class PrepareALProcedure:
             }
             # this saves uncertainty and true errors for each trajectory
             self.sanity_checks = {
-                trajectory: [] for trajectory in range(self.num_trajectories)
+                trajectory: {
+                    "atom_wise_uncertainty": [],
+                    "uncertainty_via_max": [],
+                    "uncertainty_via_avg": [],
+                    "max_error": [],
+                    "mean_error": [],
+                    "atom_wise_error": []
+                    } for trajectory in range(self.num_trajectories)
             }
             # this saves the validation losses for each trajectory
             self.collect_losses = {
@@ -955,7 +966,7 @@ class PrepareALProcedure:
         self.max_final_epochs = self.al["max_final_epochs"]
         self.desired_accuracy = self.al["desired_acc"]
         self.num_trajectories = self.al["num_trajectories"]
-        self.skip_step = self.al["skip_step"]
+        self.skip_step = self.al["skip_step_mlff"]
         self.valid_skip = self.al["valid_skip"]
         self.sanity_skip = self.al["sanity_skip"]
         self.valid_ratio = self.al["valid_ratio"]
@@ -1096,13 +1107,26 @@ class ALProcedure(PrepareALProcedure):
         Returns:
             tuple[np.ndarray, np.ndarray]: force uncertainty, true force error
         """
-        sanity_uncertainty = max_sd_2(sanity_prediction)
+        uncertainty_via_max = max_sd_2(sanity_prediction)
+        uncertainty_via_avg = avg_sd(sanity_prediction)
+        atom_wise_uncertainty = atom_wise_sd(sanity_prediction)
         mean_sanity_prediction = sanity_prediction.mean(0).squeeze()
         difference = true_forces - mean_sanity_prediction
         diff_sq = difference**2
         diff_sq_mean = np.mean(diff_sq, axis=-1)
+        
         max_error = np.max(np.sqrt(diff_sq_mean), axis=-1)
-        return sanity_uncertainty, max_error
+        mean_error = np.mean(np.sqrt(diff_sq_mean), axis=-1)
+        atom_wise_error = atom_wise_f_error(mean_sanity_prediction, true_forces)
+
+        return (
+            atom_wise_uncertainty,
+            uncertainty_via_max,
+            uncertainty_via_avg,
+            atom_wise_error,
+            max_error,
+            mean_error
+            )
 
     def waiting_task(
             self,
@@ -1268,9 +1292,10 @@ class ALProcedure(PrepareALProcedure):
                         else:
                             self.ensemble_no_improvement[tag] += 1
                         
-                        if self.ensemble_no_improvement[tag] > self.patience:
+                        if self.ensemble_no_improvement[tag] > self.max_epochs_worker:
                             logging.info(
-                                f"No improvements for {self.patience} epochs at ensemble member {tag}."
+                                f"No improvements for {self.max_epochs_worker} epochs "
+                                f"(maximum epochs per worker) at ensemble member {tag}."
                             )
                             self.ensemble_reset_opt[tag] = True
                             self.ensemble_no_improvement[tag] = 0
@@ -1446,7 +1471,6 @@ class ALProcedure(PrepareALProcedure):
                 
                 if current_MD_step % self.skip_step == 0:
                     sanity_prediction = prediction
-                    sanity_uncertainty = uncertainty
                 else:
                     if RANK == 0:
                         sanity_prediction = ensemble_prediction(
@@ -1458,18 +1482,29 @@ class ALProcedure(PrepareALProcedure):
                     MPI.COMM_WORLD.Barrier()
                     sanity_prediction = MPI.COMM_WORLD.bcast(sanity_prediction, root=0)
                     MPI.COMM_WORLD.Barrier()
-
-                    sanity_uncertainty = max_sd_2(sanity_prediction)
                     
-                if self.aims_calculator.results.get("forces") is None:
-                    MPI.COMM_WORLD.Barrier()
-                    self.aims_calculator.calculate(self.point, properties=["energy","forces"])
-
-                sanity_uncertainty, max_error = self.sanity_check(
+                #TODO: sometimes already calculated above so we should not calculate it again
+                MPI.COMM_WORLD.Barrier()
+                self.aims_calculator.calculate(self.point, properties=["energy","forces"])
+                MPI.COMM_WORLD.Barrier()
+                (
+                    atom_wise_uncertainty,
+                    uncertainty_via_max,
+                    uncertainty_via_avg,
+                    atom_wise_error,
+                    max_error,
+                    mean_error
+                ) = self.sanity_check(
                     sanity_prediction=sanity_prediction,
                     true_forces = self.aims_calculator.results['forces']
                 )
-                self.sanity_checks[idx].append((sanity_uncertainty, max_error))
+                self.sanity_checks[idx]['atom_wise_uncertainty'].append(atom_wise_uncertainty)
+                self.sanity_checks[idx]['uncertainty_via_max'].append(uncertainty_via_max)
+                self.sanity_checks[idx]['uncertainty_via_avg'].append(uncertainty_via_avg)
+                self.sanity_checks[idx]['atom_wise_error'].append(atom_wise_error)
+                self.sanity_checks[idx]['max_error'].append(max_error)
+                self.sanity_checks[idx]['mean_error'].append(mean_error)
+                
                 self.check += 1
 
     def run(self):
@@ -1729,14 +1764,9 @@ class StandardMACEEnsembleProcedure:
     def __init__(
         self, 
         mace_settings: dict,
-        path_to_aims_lib: str,
-        species_dir: str = None,
-        path_to_control: str = "./control.in",
-        dataset_dir_train: str = None,
-        dataset_dir_valid: str = None,
-        num_members: int = None,
-        ensemble_ase_sets: dict = None,
-        seeds: list = None,
+        active_learning_settings: dict,
+        train_set_dir: str = "data/final/training",
+        valid_set_dir: str = "data/final/validation",
         ) -> None:
         self.handle_mace_settings(mace_settings)
         logging.basicConfig(
@@ -1750,19 +1780,30 @@ class StandardMACEEnsembleProcedure:
             #    tag=tag,
             directory=self.mace_settings["GENERAL"]["log_dir"],
         )
-        self.handle_aims_settings(
-            path_to_control=path_to_control,
-            species_dir=species_dir
-        )
-        self.ASI_path = path_to_aims_lib
         self.create_folders()
-        self.get_atomic_energies()
-        if seeds is None:
-            self.ensemble_seeds = np.random.randint(
-                        0, 1000, size=num_members
-                            )
-        else:
-            self.ensemble_seeds = np.array(seeds)    
+        self.z = Z_from_geometry_in()
+
+        if self.atomic_energies_dict is None:
+            self.atomic_energies_dict = {
+                z: 0 for z in np.unique(self.z)
+            }
+            self.update_atomic_energies = True
+
+        self.atomic_energies = np.array(
+            [
+                self.atomic_energies_dict[z]
+                for z in self.atomic_energies_dict.keys()
+            ]
+        )
+        self.z_table = tools.get_atomic_number_table_from_zs(
+            z for z in self.atomic_energies_dict.keys()
+        )
+
+        np.random.seed(self.mace_settings["GENERAL"]["seed"])
+        random.seed(self.mace_settings["GENERAL"]["seed"])
+        self.ensemble_seeds = np.random.randint(
+            0, 1000, size=active_learning_settings["ACTIVE_LEARNING"]["ensemble_size"]
+        )
     
         (
         self.seeds_tags_dict,
@@ -1771,50 +1812,58 @@ class StandardMACEEnsembleProcedure:
         ) = setup_ensemble_dicts(
             seeds=self.ensemble_seeds,
             mace_settings=self.mace_settings,
-            al_settings=None,
             atomic_energies_dict=self.atomic_energies_dict,
             save_seeds_tags_dict=False
         )
-        if ensemble_ase_sets is not None:
-            self.ensemble_ase_sets = ensemble_ase_sets
-        else:
-            train_set = read(dataset_dir_train)
-            valid_set = read(dataset_dir_valid)
+        for tag in self.ensemble.keys():
+            train_set = read(train_set_dir + f"/train_set_{tag}.xyz",index=":")
+            valid_set = read(valid_set_dir + f"/valid_set_{tag}.xyz",index=":")
+            logging.info(
+                f"Training set {tag} contains {len(train_set)} structures."
+            )
             self.ensemble_ase_sets = {
                 tag: {"train": train_set, "valid": valid_set} for tag in self.ensemble.keys()
             }
+        self.ensemble_mace_sets = {
+            tag: {
+                    "train": create_mace_dataset(
+                    data=self.ensemble_ase_sets[tag]["train"],
+                    z_table=self.z_table,
+                    seed=self.seeds_tags_dict[tag],
+                    r_max=self.r_max
+                    ),
+                    "valid": create_mace_dataset(
+                    data=self.ensemble_ase_sets[tag]["valid"],
+                    z_table=self.z_table,
+                    seed=self.seeds_tags_dict[tag],
+                    r_max=self.r_max
+                    )
+                } for tag in self.ensemble.keys()
+        }
             
     def train(self):
         
         for _, (tag, model) in enumerate(self.ensemble.items()):
-            train_set = create_mace_dataset(
-                data=self.ensemble_ase_sets[tag]["train"],
-                z_table=self.z_table,
-                seed=self.seeds_tags_dict[tag],
-                r_max=self.r_max,
-            )
-            valid_set = create_mace_dataset(
-                data=self.ensemble_ase_sets[tag]["valid"],
-                z_table=self.z_table,
-                seed=self.seeds_tags_dict[tag],
-                r_max=self.r_max,
-            )
             (
-                self.ensemble_ase_sets[tag]["train_loader"],
-                self.ensemble_ase_sets[tag]["valid_loader"],
+                self.ensemble_mace_sets[tag]["train_loader"],
+                self.ensemble_mace_sets[tag]["valid_loader"],
             ) = create_dataloader(
-                train_set,
-                valid_set,
+                self.ensemble_mace_sets[tag]["train"],
+                self.ensemble_mace_sets[tag]["valid"],
                 self.set_batch_size,
                 self.set_valid_batch_size,
             )
 
             update_model_auxiliaries(
                 model=model,
-                train_loader=self.ensemble_ase_sets[tag]["train_loader"],
+                mace_sets=self.ensemble_mace_sets[tag],
                 atomic_energies=self.atomic_energies,
                 scaling=self.scaling,
-                
+                update_atomic_energies=self.update_atomic_energies,
+                z_table=self.z_table,
+                atomic_energies_dict=self.atomic_energies_dict,
+                dtype=self.dtype,
+                device=self.device,
             )
             
         best_valid_loss = np.inf
@@ -1831,7 +1880,7 @@ class StandardMACEEnsembleProcedure:
                 )
                 train_epoch(
                     model=model,
-                    train_loader=self.ensemble_ase_sets[tag]["train_loader"],
+                    train_loader=self.ensemble_mace_sets[tag]["train_loader"],
                     loss_fn=training_setup["loss_fn"],
                     optimizer=training_setup["optimizer"],
                     lr_scheduler=training_setup["lr_scheduler"],
@@ -1847,7 +1896,7 @@ class StandardMACEEnsembleProcedure:
                 # ensemble_loss += loss
             # ensemble_loss /= len(ensemble)
 
-            if epoch % self.eval_interval == 0:
+            if epoch % self.eval_interval == 0 or epoch == self.max_num_epochs - 1:
                 (
                     ensemble_valid_losses,
                     valid_loss,
@@ -1855,7 +1904,7 @@ class StandardMACEEnsembleProcedure:
                 ) = validate_epoch_ensemble(
                     ensemble=self.ensemble,
                     training_setups=self.training_setups,
-                    ensemble_set=self.ensemble_ase_sets,
+                    ensemble_set=self.ensemble_mace_sets,
                     logger=logger,
                     log_errors=self.mace_settings["MISC"]["error_table"],
                     epoch=epoch,
@@ -1891,101 +1940,6 @@ class StandardMACEEnsembleProcedure:
                 logging.info(
                     f"Maximum number of epochs reached. Best model (Epoch {best_epoch}) based on validation loss saved."
                 )
-    
-    def handle_aims_settings(
-        self,
-        path_to_control: str,
-        species_dir: str
-        ):
-        """
-        Parses the AIMS control file to get the settings for the AIMS calculator.
-
-        Args:
-            path_to_control (str): Path to the AIMS control file.
-            species_dir (str): Path to the species directory of AIMS.
-        """
-        #TODO: make this more flexible
-        self.aims_settings = {}
-        with open(path_to_control, "r") as f: 
-            for line in f:
-                if "xc" in line and '#' not in line:
-                    self.aims_settings['xc'] = line.split()[1]
-                if "relativistic" in line and '#' not in line:
-                    self.aims_settings['relativistic'] = line.split()[1] + " " + line.split()[2]
-                if "charge" in line and '#' not in line:
-                    self.aims_settings['charge'] = line.split()[1]
-                if "many_body_dispersion" in line and '#' not in line:
-                    self.aims_settings['many_body_dispersion'] = '' # TODO: i think this is not working
-        self.aims_settings['species_dir'] = species_dir
-
-    def setup_calculator(self, atoms: ase.Atoms) -> ase.Atoms:
-        """
-        Attaches the AIMS calculator to the atoms object. Uses the AIMS settings
-        from the control.in to set up the calculator.
-
-        Args:
-            atoms (ase.Atoms): Atoms object to attach the calculator to.
-
-        Returns:
-            ase.Atoms: Atoms object with the calculator attached.
-        """
-        def init_via_ase(asi):
-            
-            from ase.calculators.aims import Aims
-            #TODO: make this more flexible
-            if self.aims_settings.get("many_body_dispersion") is not None:
-                calc = Aims(xc=self.aims_settings["xc"],
-                    relativistic=self.aims_settings["relativistic"],
-                    species_dir=self.aims_settings["species_dir"],
-                    compute_forces=True,
-                    many_body_dispersion='',) # mbd in aims has only the
-                                              # keyword, so it must be
-                                              # an empty string here
-            else:
-                calc = Aims(xc=self.aims_settings["xc"],
-                    relativistic=self.aims_settings["relativistic"],
-                    species_dir=self.aims_settings["species_dir"],
-                    compute_forces=True,
-                    )
-            
-            calc.write_input(asi.atoms)
-        atoms.calc = ASI_ASE_calculator(
-            self.ASI_path,
-            init_via_ase,
-            MPI.COMM_WORLD,
-            atoms
-            )
-        return atoms
-    
-    def get_atomic_energies(self):
-        """
-        Calculates the isolated atomic energies for the elements in the geometry using AIMS.
-        TODO: make it possible to provide the numbers yourself or use the average atomic
-              energies (then we'd have to update them continously like the shift and scaling factor)
-              The function get_atomic_energies_from_ensemble(self) in the AL procedure has to be changed then.
-        """     
-        if RANK == 0:
-            logging.info('Calculating isolated atomic energies.')
-        self.atomic_energies_dict = {}        
-        unique_atoms = np.unique(self.z)
-        for element in unique_atoms:
-            if RANK == 0:
-                logging.info(f'Calculating energy for element {element}.')
-            atom = ase.Atoms([int(element)],positions=[[0,0,0]])
-            self.setup_calculator(atom)
-            self.atomic_energies_dict[element] = atom.get_potential_energy() 
-            atom.calc.close() # kills AIMS process so we can start a new one later
- 
-        self.atomic_energies = np.array(
-            [
-                self.atomic_energies_dict[z]
-                for z in self.atomic_energies_dict.keys()
-            ]
-        )
-        self.z_table = tools.get_atomic_number_table_from_zs(
-            z for z in self.atomic_energies_dict.keys()
-        )
-        logging.info(f'{self.atomic_energies_dict}')
 
     def handle_mace_settings(self, mace_settings: dict):
         self.mace_settings = mace_settings
@@ -2000,6 +1954,10 @@ class StandardMACEEnsembleProcedure:
         self.eval_interval = self.mace_settings['TRAINING']['eval_interval']
         self.max_num_epochs = self.mace_settings['TRAINING']['max_num_epochs']
         self.patience = self.mace_settings['TRAINING']['patience']
+        self.device = self.mace_settings["MISC"]["device"]
+        self.dtype = self.mace_settings["GENERAL"]["default_dtype"]
+        self.atomic_energies_dict = self.mace_settings["ARCHITECTURE"].get("atomic_energies_dict", None)
+
     
     def create_folders(self):
         
@@ -2008,4 +1966,85 @@ class StandardMACEEnsembleProcedure:
         self.standard_model_dir.mkdir(
             parents=True, exist_ok=True
         )
+
+    def setup_mace_calc(self):
+        """
+        Loads the models of the existing ensemble and creates the MACE calculator.
+        """
+        model_paths = list_files_in_directory(Path(self.model_dir) / "standard")
+        self.models = [
+            torch.load(f=model_path, map_location=self.device) for model_path in model_paths
+        ]
+        # the calculator needs to be updated consistently see below
+        self.mace_calc = MACECalculator(
+            models=self.models,
+            device=self.device,
+            default_dtype=self.dtype)
         
+    def sanity_check(
+    #TODO: put this somewhere else and its ugly
+            self,
+            sanity_prediction: np.ndarray,
+            true_forces: np.ndarray
+            ) -> tuple[np.ndarray, np.ndarray]:
+        """
+        Calculates the force uncertainty and the maximum 
+        force error for a given prediction and true forces.
+
+        Args:
+            sanity_prediction (np.ndarray): Ensemble prediction. [n_members, n_points, n_atoms, 3]
+            true_forces (np.ndarray): True forces. [n_points, n_atoms, 3]
+
+        Returns:
+            tuple[np.ndarray, np.ndarray]: force uncertainty, true force error
+        """
+        uncertainty_via_max = max_sd_2(sanity_prediction)
+        uncertainty_via_avg = avg_sd(sanity_prediction)
+        atom_wise_uncertainty = atom_wise_sd(sanity_prediction)
+        mean_sanity_prediction = sanity_prediction.mean(0).squeeze()
+        difference = true_forces - mean_sanity_prediction
+        diff_sq = difference**2
+        diff_sq_mean = np.mean(diff_sq, axis=-1)
+        
+        max_error = np.max(np.sqrt(diff_sq_mean), axis=-1)
+        mean_error = np.mean(np.sqrt(diff_sq_mean), axis=-1)
+        atom_wise_error = atom_wise_f_error(mean_sanity_prediction, true_forces)
+
+        return {
+            "atom_wise_uncertainty": atom_wise_uncertainty,
+            "uncertainty_via_max": uncertainty_via_max,
+            "uncertainty_via_avg": uncertainty_via_avg,
+            "max_error": max_error,
+            "mean_error": mean_error,
+            "atom_wise_error": atom_wise_error
+        }
+
+    def test(
+        self,
+        path_to_ds: str,
+    ):
+        """
+        Tests the ensemble on a dataset.
+
+        Args:
+            path_to_ds (str): Path to the dataset.
+        """
+        test_set = read(path_to_ds, index=":")
+        test_mace_ds = create_mace_dataset(
+            data=test_set,
+            z_table=self.z_table,
+            seed=None,
+            r_max=self.r_max,
+        )
+        logging.info("Created DS.")
+        ensemble_energies, ensemble_forces = ensemble_prediction_v2(
+            models=list(self.ensemble.values()),
+            mace_ds=test_mace_ds,
+            device=self.device,
+            dtype=self.dtype,
+            return_energies=True
+        )
+        reference_energies = np.array([atoms.info["energy"] for atoms in test_set])
+        reference_forces = np.array([atoms.arrays["forces"] for atoms in test_set])
+        check = self.sanity_check(ensemble_forces, reference_forces)
+        np.savez("check.npz", **check)

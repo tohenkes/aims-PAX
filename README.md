@@ -168,6 +168,9 @@ For now we have only one MD setting for all trajectories and the selection for s
 - [ ] own MD engine using pytorch (or TorchMD?)
 - [ ] own asi wrapper
 - [ ] unit tests
-- [ ] console scripts for initial dataset/active learning separately
+- [x] console scripts for initial dataset/active learning separately
+- [ ] implement default settings and create checks when reading the input
+- [ ] make restarting the procedure possible
+- [x] separate skip_step for initial and al
 
 

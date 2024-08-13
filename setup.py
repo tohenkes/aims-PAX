@@ -26,6 +26,9 @@ setup(
     entry_points={
         'console_scripts': [
             'FHI_AL=FHI_AL.__main__:main',
+            'FHI_AL-initial-ds=FHI_AL.create_initial_ds:main',
+            'FHI_AL-al=FHI_AL.al_procedure_only:main',
+            "FHI_AL-scratch=FHI_AL.scratch_train:main"
         ],
     },
 )

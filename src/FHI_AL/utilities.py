@@ -457,21 +457,21 @@ def compute_average_E0s(
 
 
 def max_sd_2(
-    prediction: np.array, 
+    ensemble_prediction: np.array, 
     return_argmax: bool = False,
 ) -> np.array:
     """
     Compute the maximum standard deviation of the ensemble prediction.
 
     Args:
-        prediction (np.array): Ensemble prediction of forces: [n_ensemble_members, n_mols, n_atoms, xyz].
+        ensemble_prediction (np.array): Ensemble prediction of forces: [n_ensemble_members, n_mols, n_atoms, xyz].
 
     Returns:
         np.array: Maximum standard deviation of atomic forces per molecule: [n_mols].
     """
     # average prediction over ensemble of models
-    pred_av = np.average(prediction, axis=0, keepdims=True)
-    diff_sq = (prediction - pred_av) ** 2.
+    pred_av = np.average(ensemble_prediction, axis=0, keepdims=True)
+    diff_sq = (ensemble_prediction - pred_av) ** 2.
     diff_sq_mean = np.mean(diff_sq, axis=(0,-1))
     max_sd = np.max(np.sqrt(diff_sq_mean),axis=-1)
     if return_argmax:
@@ -479,6 +479,60 @@ def max_sd_2(
     else:
         return max_sd
     
+def avg_sd(
+        ensemble_prediction: np.array,
+    ) -> np.array:
+    """
+    Compute the average standard deviation of the ensemble prediction.
+
+    Args:
+        ensemble_prediction (np.array): Ensemble prediction of forces: [n_ensemble_members, n_mols, n_atoms, xyz].
+
+    Returns:
+        np.array: Average standard deviation of atomic forces per molecule: [n_mols].
+    """
+    # average prediction over ensemble of models
+    pred_av = np.average(ensemble_prediction, axis=0, keepdims=True)
+    diff_sq = (ensemble_prediction - pred_av) ** 2.
+    diff_sq_mean = np.mean(diff_sq, axis=(0,-1))
+    avg_sd = np.mean(np.sqrt(diff_sq_mean),axis=-1)
+    return avg_sd
+
+def atom_wise_sd(
+    ensemble_prediction: np.array,
+) -> np.array:
+    """
+    Compute the atom-wise standard deviation of the ensemble prediction.
+
+    Args:
+        prediction (np.array): Prediction of forces: [n_ensemble_members, n_mols, n_atoms, xyz].
+
+    Returns:
+        np.array: Atom-wise standard deviation of atomic forces per molecule: [n_mols, n_atoms].
+    """
+    # average prediction over ensemble of models
+    pred_av = np.average(ensemble_prediction, axis=0, keepdims=True)
+    diff_sq = (ensemble_prediction - pred_av) ** 2.
+    diff_sq_mean = np.mean(diff_sq, axis=(0,-1))
+    atom_wise_sd = np.sqrt(diff_sq_mean)
+    return atom_wise_sd
+
+def atom_wise_f_error(
+    prediction: np.array,
+    target: np.array,
+) -> np.array:
+    """
+    Compute the atom-wise force error of the ensemble prediction.
+
+    Args:
+        prediction (np.array): Prediction of forces: [n_mols, n_atoms, xyz].
+        target (np.array): Target forces: [n_mols, n_atoms, xyz].
+
+    Returns:
+        np.array: Atom-wise force error of atomic forces per molecule: [n_mols, n_atoms].
+    """
+    atom_wise_f_error = np.sqrt(np.mean((prediction - target)**2, axis=(-1)))
+    return atom_wise_f_error
 
 def split_data(
     data: list,
@@ -718,6 +772,7 @@ def ensemble_prediction(
     """
     Predict forces for a list of ASE atoms objects using an ensemble of models. 
     !!! Does not reduce the energies or forces to a single value. !!!
+    TODO: currently only works for atoms list with a single species.
 
     Args:
         models (list): List of models.
@@ -754,6 +809,123 @@ def ensemble_prediction(
 
     all_energies = np.stack(all_energies).reshape(
         (len(models), len(atoms_list))
+    )
+
+    if return_energies:
+        return all_energies, all_forces
+    return all_forces
+
+
+def evaluate_model_v2(
+    mace_ds: list,
+    model: str,
+    batch_size: int,
+    device: str,
+    compute_stress: bool = False,
+    dtype: str = "float64",
+) -> torch.tensor:
+    """
+    Evaluate a MACE model on a list of ASE atoms objects.
+    This only handles atoms list with a single species. 
+
+    Args:
+        atoms_list (list): List of ASE atoms objects.
+        model (str): MACE model to evaluate.
+        batch_size (int): Batch size for evaluation.
+        device (str): Device to evaluate the model on.
+        compute_stress (bool, optional): Compute stress or not. Defaults to False.
+        dtype (str, optional): Data type of model. Defaults to "float64".
+
+    Returns:
+        torch.tensor: _description_
+    """
+    torch_tools.set_default_dtype(dtype)
+    data_loader = torch_geometric.dataloader.DataLoader(
+        dataset=mace_ds,
+        batch_size=batch_size,
+        shuffle=False,
+        drop_last=False,
+    )
+
+    # Collect data
+    energies_list = []
+    stresses_list = []
+    forces_collection = []
+
+    for batch in data_loader:
+        batch = batch.to(device)
+        output = model(batch.to_dict(), compute_stress=compute_stress)
+        energies_list.append(torch_tools.to_numpy(output["energy"]))
+        if compute_stress:
+            stresses_list.append(torch_tools.to_numpy(output["stress"]))
+
+        forces = np.split(
+            torch_tools.to_numpy(output["forces"]),
+            indices_or_sections=batch.ptr[1:],
+            axis=0,
+        )
+        forces_collection.append(forces[:-1])  # drop last as its emtpy
+
+    energies = np.concatenate(energies_list, axis=0)
+    # TODO: This only works for predicting a single molecule not different ones in one set
+    forces_array = np.stack(forces_collection).reshape(len(energies), -1, 3)
+    assert len(mace_ds) == len(energies) == len(forces_array)
+    if compute_stress:
+        stresses = np.concatenate(stresses_list, axis=0)
+        assert len(mace_ds) == stresses.shape[0]
+
+        return energies, forces_array, stresses
+    else:
+        return energies, forces_array 
+    
+def ensemble_prediction_v2(
+    models: list,
+    mace_ds: list,
+    device: str,
+    dtype: str = "float64",
+    batch_size: int = 1,
+    return_energies: bool = False,
+) -> np.array:
+    """
+    Predict forces for a list of ASE atoms objects using an ensemble of models. 
+    !!! Does not reduce the energies or forces to a single value. !!!
+    TODO: currently only works for atoms list with a single species.
+
+    Args:
+        models (list): List of models.
+        atoms_list (list): List of ASE atoms objects.
+        device (str): Device to evaluate the models on.
+        dtype (str, optional): Dtype of models. Defaults to "float64".
+        batch_size (int, optional): Batch size of evaluation. Defaults to 1.
+        return_energies (bool, optional): Whether to return energies or not. Defaults to False.
+
+    Returns:
+        np.array: Forces [n_models, n_mols, n_atoms, xyz]
+        Optionally:
+        np.array: Energies [n_models, n_mols], Forces [n_models, n_mols, n_atoms, xyz]
+
+    """
+    all_forces = []
+    all_energies = []
+    i = 0
+    for model in models:
+        E, F = evaluate_model_v2(
+            mace_ds=mace_ds,
+            model=model,
+            batch_size=batch_size,
+            dtype=dtype,
+            device=device,
+        )
+        all_forces.append(F)
+        all_energies.append(E)
+        i += 1
+
+    all_forces = np.stack(all_forces).reshape(
+        (len(models), len(mace_ds), -1, 3)
+    )
+
+    all_energies = np.stack(all_energies).reshape(
+        (len(models), len(mace_ds))
     )
 
     if return_energies:
@@ -820,8 +992,8 @@ def ensemble_training_setups(ensemble, mace_settings):
 def setup_ensemble_dicts(
     seeds: np.array,
     mace_settings: dict,
-    al_settings: dict,
     atomic_energies_dict: dict,
+    al_settings: dict = None,
     save_seeds_tags_dict: str = "seeds_tags_dict.npz",
     ) -> tuple:
     """
