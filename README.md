@@ -116,10 +116,12 @@ following subdictionaries and keys:
     - **ensemble_size** *(int)*: Number of models in the ensemble.
     - **c_x** *Rename* *(float)*: Parameter to calculate the uncertainty threshold based on the formula threshold = moving_avg_uncert * (1 - c_x).
     - **dataset_dir** *(str)*: Path to save the generated datasets to (see below).
-    - **skip_step** *(int)*: How many MD steps to skip during sampling (*ab initio* or MLFF).
+    - **skip_step_initial** *(int)*: How many MD steps to skip during *ab initio* sampling for initial dataset.
+    - **skip_step_mlff** *(int)*: How many MD steps to skip during MLFF sampling for active learning.
     - **num_trajectories** *(int)*: How many trajectories are sampled from during the active learning phase.
     - **species_dir** *(str)*: Path to the directory containing the FHI AIMS species defaults.
     - **aims_lib_path** *(str)*: Path to the compiled FHI AIMS library (*not* executable).
+    - **margin** *(float)*: The threshold used to determine whether a change in error is considered an improvement, contributing to metrics such as patience or convergence.
 
 For now we have only one MD setting for all trajectories and the selection for settings is limited to Langevin dynamics. Currently these settings are used for *ab initio* and MLFF MD.
 - MD

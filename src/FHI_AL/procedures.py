@@ -201,6 +201,7 @@ class PrepareInitialDatasetProcedure:
         self.ASI_path = self.al["aims_lib_path"]
         self.species_dir = self.al["species_dir"]
         self.analysis = self.al.get("analysis", False)
+        self.margin = self.al.get("margin", 0.001)
         if not self.al["scheduler_initial"]:
             self.mace_settings["lr_scheduler"] = None
             
@@ -700,7 +701,7 @@ class InitalDatasetProcedure(PrepareInitialDatasetProcedure):
                         log_errors=self.mace_settings["MISC"]["error_table"],
                         epoch=epoch,
                     )
-                    if best_valid_loss > valid_loss and (best_valid_loss - valid_loss) > 0.01:
+                    if best_valid_loss > valid_loss and (best_valid_loss - valid_loss) > self.margin:
                         best_valid_loss = valid_loss
                         no_improvement = 0
                         for tag, model in self.ensemble.items():
@@ -887,7 +888,8 @@ class PrepareALProcedure:
                     "uncertainty_via_avg": [],
                     "max_error": [],
                     "mean_error": [],
-                    "atom_wise_error": []
+                    "atom_wise_error": [],
+                    "threshold": [],
                     } for trajectory in range(self.num_trajectories)
             }
             # this saves the validation losses for each trajectory
@@ -980,6 +982,7 @@ class PrepareALProcedure:
         self.ASI_path = self.al["aims_lib_path"]
         self.analysis = self.al.get("analysis", False)
         self.seeds_tags_dict = self.al.get("seeds_tags_dict", None)
+        self.margin = self.al.get("margin", 0.001)
         
         self.save_data_len_interval = self.al_misc.get("save_data_len_interval", 10)
     
@@ -1504,6 +1507,7 @@ class ALProcedure(PrepareALProcedure):
                 self.sanity_checks[idx]['atom_wise_error'].append(atom_wise_error)
                 self.sanity_checks[idx]['max_error'].append(max_error)
                 self.sanity_checks[idx]['mean_error'].append(mean_error)
+                self.sanity_checks[idx]['threshold'].append(self.threshold)
                 
                 self.check += 1
 
@@ -1719,8 +1723,8 @@ class ALProcedure(PrepareALProcedure):
                         log_errors=self.mace_settings["MISC"]["error_table"],
                         epoch=epoch,
                     )
-                    # TODO: remove hardcode
-                    if best_valid_loss > valid_loss and (best_valid_loss - valid_loss) > 0.01:
+
+                    if best_valid_loss > valid_loss and (best_valid_loss - valid_loss) > self.margin:
                         best_valid_loss = valid_loss
                         best_epoch = epoch
                         no_improvement = 0
