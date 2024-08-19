@@ -187,6 +187,7 @@ class PrepareInitialDatasetProcedure:
         """
 
         self.al = al_settings["ACTIVE_LEARNING"]
+        self.misc = al_settings["MISC"]
         self.md_settings = al_settings["MD"]
         self.ensemble_size = self.al["ensemble_size"]
         self.desired_acc = self.al["desired_acc"]
@@ -204,6 +205,8 @@ class PrepareInitialDatasetProcedure:
         self.margin = self.al.get("margin", 0.001)
         if not self.al["scheduler_initial"]:
             self.mace_settings["lr_scheduler"] = None
+        self.create_restart = self.misc.get("create_restart", False)
+        self.restart = os.path.exists("restart")
             
     def create_folders(self):
         """
@@ -219,6 +222,8 @@ class PrepareInitialDatasetProcedure:
         os.makedirs("model", exist_ok=True)
         if self.analysis:
             os.makedirs("analysis", exist_ok=True)
+        if self.create_restart:
+            os.makedirs("restart", exist_ok=True)
 
     def get_atomic_energies(self):
         #!!!!!!!!!!!!!!!!!!
@@ -411,10 +416,6 @@ class InitalDatasetProcedure(PrepareInitialDatasetProcedure):
                 logging.info(f"Sampling new points at step {step}.")
             self.run_MD(self.atoms, self.dyn)
             
-            # Currently there is only one process doing the training.
-            # This does not really matter when using GPUs but with
-            # CPUs we are not using the full potential
-            # TODO: look into pyTorch distributed
             if RANK == 0:
                 random.shuffle(self.sampled_points)
                 # each ensemble member collects their respective points
@@ -1392,13 +1393,12 @@ class ALProcedure(PrepareALProcedure):
                     )
                     
                     self.point = self.trajectories[idx].copy()
-                    prediction = None
                     prediction = self.trajectories[idx].calc.results["forces_comm"]
                 
                     uncertainty = max_sd_2(prediction)
                     # compute moving average of uncertainty
                     self.uncertainties.append(uncertainty)
-                    # TODO: Remove hardcode
+                    # TODO: Remove hardcode, make a function out of this
                     # limit the history to 400
                     if len(self.uncertainties) > 400:
                         self.uncertainties = self.uncertainties[-400:]

@@ -21,8 +21,8 @@ ACTIVE_LEARNING:
   skip_step_initial: 1 # step to skip in sampling initial MD
   skip_step_mlff: 5 # step to skip in sampling MLFF MD
   num_trajectories: 3 # number of trajectories to from sample in parallel
-  species_dir: "/project/home/p200243/tcp_software/aims_240507_library/FHIaims/species_defaults/defaults_2020/light"
-  aims_lib_path: "/project/home/p200243/tcp_software/aims_240507_library/libaims.240627.scalapack.mpi.so"
+  species_dir: "/home/tobias/FHIaims/species_defaults/defaults_2020/light"
+  aims_lib_path: "/home/tobias/FHI-aims/libaims.240410.mpi.so"
   analysis: True
   
 MD:
@@ -35,4 +35,5 @@ MD:
 
 MISC:
   save_dataset_len_interval: 10
+  create_restart: True
   
