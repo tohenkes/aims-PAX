@@ -174,5 +174,9 @@ For now we have only one MD setting for all trajectories and the selection for s
 - [ ] implement default settings and create checks when reading the input
 - [ ] make restarting the procedure possible
 - [x] separate skip_step for initial and al
+- [ ] compile models at the end
+- [ ] foundation model initial geometries
+- [ ] fine-tuning of foundational models
+- [ ] select best performing ensembl member/knowledge distillation
 
 

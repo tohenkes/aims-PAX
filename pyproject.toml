@@ -32,7 +32,8 @@ homepage = "https://github.com/tohenkes/FHI_AL"
 where = ["src"]
 
 [project.scripts]
-FHI_AL = "FHI_AL.__main__:main"
-FHI_AL-initial-ds = "FHI_AL.create_initial_ds:main"
-FHI_AL-al = "FHI_AL.al_procedure_only:main"
-FHI_AL-scratch = "FHI_AL.scratch_train:main"
+FHI_AL = "FHI_AL.cli.__main__:main"
+FHI_AL-initial-ds = "FHI_AL.cli.create_initial_ds:main"
+FHI_AL-al = "FHI_AL.cli.al_procedure_only:main"
+FHI_AL-scratch = "FHI_AL.cli.scratch_train:main"
+FHI_AL-atomic-energies = "FHI_AL.cli.get_atomic_energies:main"

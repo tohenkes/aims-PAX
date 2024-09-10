@@ -12,8 +12,8 @@ from mace import tools, modules
 from mace.tools import AtomicNumberTable, torch_geometric, torch_tools, utils
 from mace.data.utils import compute_average_E0s
 from ase.io import read
-from FHI_AL.setup_MACE import setup_mace
-from FHI_AL.setup_MACE_training import setup_mace_training
+from FHI_AL.tools.setup_MACE import setup_mace
+from FHI_AL.tools.setup_MACE_training import setup_mace_training
 from dataclasses import dataclass
 import ase.data
 import ase.io
@@ -646,6 +646,10 @@ def ensemble_from_folder(
     Returns:
         list: List of models.
     """
+    
+    assert os.path.exists(path_to_models)
+    assert os.listdir(Path(path_to_models))
+
     ensemble = {}
     for filename in os.listdir(path_to_models):
         if os.path.isfile(os.path.join(path_to_models, filename)):
@@ -979,22 +983,48 @@ def get_uncert_alpha(
     return np.mean((reference-ensemble_avg)**2 / uncertainty **2)
     
 
-def ensemble_training_setups(ensemble, mace_settings):
+def ensemble_training_setups(
+        ensemble: dict,
+        mace_settings: dict,
+        restart: bool = False,
+        ) -> dict:
     training_setups = {}
     for tag, model in ensemble.items():
         training_setups[tag] = setup_mace_training(
             settings=mace_settings,
             model=model,
             tag=tag,
+            restart=restart
         )
     return training_setups
 
-def setup_ensemble_dicts(
+def create_seeds_tags_dict(
     seeds: np.array,
     mace_settings: dict,
-    atomic_energies_dict: dict,
     al_settings: dict = None,
     save_seeds_tags_dict: str = "seeds_tags_dict.npz",
+):
+    seeds_tags_dict = {}
+    for seed in seeds:
+        tag = mace_settings['GENERAL']["name_exp"] + "-" + str(seed)
+        seeds_tags_dict[tag] = seed
+    if save_seeds_tags_dict:
+        np.savez(al_settings["dataset_dir"]+ '/' + save_seeds_tags_dict, **seeds_tags_dict)
+    return seeds_tags_dict
+
+def create_ztable(
+        zs: list,
+):
+    z_table = tools.get_atomic_number_table_from_zs(
+        z for z in zs
+    )
+    return z_table
+
+def setup_ensemble_dicts(
+    seeds_tags_dict: dict,
+    z_table: tools.AtomicNumberTable,
+    mace_settings: dict,
+    ensemble_atomic_energies_dict: dict,
     ) -> tuple:
     """
     Creates dictionaries for the ensemble members i.e. a dictionary of models.
@@ -1011,30 +1041,62 @@ def setup_ensemble_dicts(
         tuple: Tuple of seeds_tags_dict, ensemble, training_setups.
     """
     
-    z_table = tools.get_atomic_number_table_from_zs(
-        z for z in atomic_energies_dict.keys()
-    )
-    seeds_tags_dict = {}
     ensemble = {}
-
-    for seed in seeds:
+    for tag, seed in seeds_tags_dict.items():
         mace_settings['GENERAL']["seed"] = seed
         tag = mace_settings['GENERAL']["name_exp"] + "-" + str(seed)
         seeds_tags_dict[tag] = seed
         ensemble[tag] =  setup_mace(
                 settings=mace_settings,
                 z_table=z_table,
-                atomic_energies_dict=atomic_energies_dict,
+                atomic_energies_dict=ensemble_atomic_energies_dict[tag],
                 )
+    return ensemble
 
-    training_setups = ensemble_training_setups(ensemble, mace_settings)
-
-    if save_seeds_tags_dict:
-        np.savez(al_settings["dataset_dir"]+ '/' + save_seeds_tags_dict, **seeds_tags_dict)
+def get_atomic_energies_from_ensemble(
+    ensemble: dict,
+    z
+):
+    """
+    Loads the atomic energies from existing ensemble members.
+    """
+    ensemble_atomic_energies_dict = {}
+    ensemble_atomic_energies = {}
+    for tag, model in ensemble.items():
+        ensemble_atomic_energies[tag] = np.array(model.atomic_energies_fn.atomic_energies.cpu())
+        ensemble_atomic_energies_dict[tag] = {}
+        for i, atomic_energy in enumerate(ensemble_atomic_energies[tag]):
+            # TH: i don't know if the atomic energies are really sorted by atomic number
+            # inside the models. TODO: check that
+            ensemble_atomic_energies_dict[tag][np.sort(np.unique(z))[i]] = atomic_energy
         
-    return (seeds_tags_dict, ensemble, training_setups)
+    return (ensemble_atomic_energies, ensemble_atomic_energies_dict)
 
+def get_atomic_energies_from_pt(
+    path_to_checkpoints: str,
+    z,
+    seeds_tags_dict: dict,
+    convergence: bool = False,
+):  
+    ensemble_atomic_energies_dict = {}
+    ensemble_atomic_energies = {}
+    last_check_pt = list_latest_file(path_to_checkpoints)
+    last_epoch = int(last_check_pt.split(".")[0].split('-')[-1])
+    for tag in seeds_tags_dict.keys():
+        check_pt = torch.load((path_to_checkpoints + '/' + tag 
+                                + f'_epoch-{last_epoch}.pt'))
+        
+        
+        atomic_energies_array = check_pt['model']['atomic_energies_fn.atomic_energies']
+        ensemble_atomic_energies[tag] = np.array(atomic_energies_array.cpu())
+        ensemble_atomic_energies_dict[tag] = {}
+        for i, atomic_energy in enumerate(ensemble_atomic_energies[tag]):
+            # TH: i don't know if the atomic energies are really sorted by atomic number
+            # inside the models. TODO: check that
+            ensemble_atomic_energies_dict[tag][np.sort(np.unique(z))[i]] = atomic_energy
 
+    return (ensemble_atomic_energies, ensemble_atomic_energies_dict)
+        
 def update_mace_set(
     new_train_data,
     new_valid_data,
@@ -1150,7 +1212,9 @@ def ase_to_mace_ensemble_sets(
     return ensemble_mace_sets
 
 def compute_average_E0s(
-    energies_train, zs_train, z_table: AtomicNumberTable
+    energies_train,  
+    zs_train,
+    z_table: AtomicNumberTable
 ) -> Dict[int, float]:
     """
     Function to compute the average interaction energy of each chemical element
@@ -1163,7 +1227,7 @@ def compute_average_E0s(
     for i in range(len_train):
         B[i] = energies_train[i]
         for j, z in enumerate(z_table.zs):
-            A[i, j] = np.count_nonzero(zs_train[i] == z)
+            A[i, j] = np.count_nonzero(np.array(zs_train[i]) == z)
     try:
         E0s = np.linalg.lstsq(A, B, rcond=None)[0]
         atomic_energies_dict = {}
@@ -1219,12 +1283,12 @@ def update_model_auxiliaries(
             ]
         new_atomic_energies_dict = compute_average_E0s(energies_train, zs_train, z_table)
         atomic_energies_dict.update(new_atomic_energies_dict)
-        
         atomic_energies = [
             atomic_energies_dict[z]
             for z in atomic_energies_dict.keys()
         ]   
         atomic_energies = torch.tensor(atomic_energies, dtype=dtype_mapping[dtype])
+        
         model.atomic_energies_fn.atomic_energies = atomic_energies.to(device)
 
     average_neighbors = modules.compute_avg_num_neighbors(train_loader)
@@ -1316,19 +1380,25 @@ def load_ensemble_sets_from_folder(
         dict: Dictionary of ASE style ensemble datasets.
     """
 
-    training_sets = os.listdir(Path(path_to_folder+"/training"))
-    validation_sets = os.listdir(Path(path_to_folder+"/validation"))
+    assert os.path.exists(path_to_folder)
+    assert os.path.exists(Path(path_to_folder / "training"))
+    assert os.path.exists(Path(path_to_folder / "validation"))
+    assert os.listdir(Path(path_to_folder / "training"))
+    assert os.listdir(Path(path_to_folder / "validation"))
+
+    training_sets = os.listdir(Path(path_to_folder / "training"))
+    validation_sets = os.listdir(Path(path_to_folder / "validation"))
 
     ensemble_ase_sets = {tag : {'train': [], 'valid': []} for tag in ensemble.keys()}
     for tag in ensemble.keys():
         for training_set, validation_set in zip(training_sets, validation_sets):
             if tag in training_set:
                 ensemble_ase_sets[tag]['train'] = (
-                    read(Path(path_to_folder+"/training/"+training_set), index=":")
+                    read(Path(path_to_folder / "training" / training_set), index=":")
                 )
             if tag in validation_set:
                 ensemble_ase_sets[tag]['valid'] = (
-                    read(Path(path_to_folder+"/validation/"+validation_set), index=":")
+                    read(Path(path_to_folder/"validation"/validation_set), index=":")
                 )
     return ensemble_ase_sets
 
@@ -1373,6 +1443,28 @@ def list_files_in_directory(
             file_paths.append(os.path.join(root, file))
     
     return file_paths
+
+def list_latest_file(
+    directory: str
+    )-> str:
+    files = os.listdir(directory)
+   
+    latest_file = None
+    latest_mtime = 0
+    
+    for file in files:
+        file_path = os.path.join(directory, file)
+        if os.path.isfile(file_path):
+            file_mtime = os.path.getmtime(file_path)
+            if file_mtime > latest_mtime:
+                latest_mtime = file_mtime
+                latest_file = file
+    
+    
+    if latest_file:
+        return latest_file
+    else:
+        raise FileNotFoundError(f"No files found in {directory}!")
 
 
 class AIMSControlParser:

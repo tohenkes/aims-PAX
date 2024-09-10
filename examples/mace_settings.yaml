@@ -28,9 +28,9 @@ ARCHITECTURE:
   MLP_irreps: 16x0e
   interaction_first: RealAgnosticResidualInteractionBlock
   compute_avg_num_neighbors: True
-  #atomic_energies:
-  #  1: 0.1
-  #  8: 0.1
+  atomic_energies:
+    1: -12.483008663366023
+    8: -2041.7075263924146
 
 TRAINING:
   valid_fraction: 0.1
@@ -60,7 +60,7 @@ TRAINING:
   eval_interval: 5
 
 MISC:
-  device: cuda
+  device: cpu
   keep_checkpoints: False
   restart_latest: False
   error_table: PerAtomMAE

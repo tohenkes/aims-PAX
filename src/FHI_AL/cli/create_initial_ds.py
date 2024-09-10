@@ -1,4 +1,4 @@
-from FHI_AL.procedures import ALProcedure
+from FHI_AL.procedures.initial_dataset import InitalDatasetProcedure
 from yaml import safe_load
 from mpi4py import MPI
 
@@ -9,14 +9,19 @@ def main():
     with open("./active_learning_settings.yaml", "r") as file:
         al_settings = safe_load(file)
 
-    al = ALProcedure(
+    initial_ds = InitalDatasetProcedure(
         mace_settings=mace_settings,
         al_settings=al_settings
     )
-    MPI.COMM_WORLD.Barrier()
 
-    al.run()
-    al.converge()
+    MPI.COMM_WORLD.Barrier()
+    
+    #check if initial_ds_done.txt exists
+    if not initial_ds.check_initial_ds_done():
+        initial_ds.run()
+        
+    if al_settings['ACTIVE_LEARNING']["converge_initial"]:
+        initial_ds.converge() 
 
     MPI.COMM_WORLD.Barrier()
     MPI.Finalize()

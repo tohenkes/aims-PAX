@@ -1,13 +1,13 @@
 ACTIVE_LEARNING:
-  desired_acc: 0.042
+  desired_acc: 0.000042
   lambda: 10.
   n_samples: 5
   initial_valid_ratio: 0.2
   valid_ratio: 3
   converge_initial: False
   scheduler_initial: True
-  max_initial_epochs: 200
-  max_epochs_worker: 20
+  max_initial_epochs: 20
+  max_epochs_worker: 10
   max_final_epochs: 200
   intermediate_epochs: 10
   patience: 20
@@ -21,9 +21,10 @@ ACTIVE_LEARNING:
   skip_step_initial: 1 # step to skip in sampling initial MD
   skip_step_mlff: 5 # step to skip in sampling MLFF MD
   num_trajectories: 3 # number of trajectories to from sample in parallel
-  species_dir: "/home/tobias/FHIaims/species_defaults/defaults_2020/light"
-  aims_lib_path: "/home/tobias/FHI-aims/libaims.240410.mpi.so"
+  species_dir: "/project/home/p200243/tcp_software/aims_master_090824/FHIaims/species_defaults/defaults_2020/light"
+  aims_lib_path: "/project/home/p200243/tcp_software/aims_master_090824/libaims.240717.scalapack.mpi.so"
   analysis: True
+  initial_foundational_size: "small"
   
 MD:
   stat_ensemble: NVT

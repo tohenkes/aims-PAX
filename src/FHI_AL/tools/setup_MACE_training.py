@@ -3,7 +3,7 @@ from typing import Optional
 import torch.nn.functional
 from torch_ema import ExponentialMovingAverage
 from mace import modules, tools
-
+import os
 
 #############################################################################
 ############ This part is mostly taken from the MACE source code ############
@@ -17,6 +17,8 @@ def setup_mace_training(
     settings: dict,
     model,
     tag: str,
+    restart: bool = False,
+    convergence: bool = False,
 )-> dict:
     """
     Setup the MACE training according to the settings and return it.
@@ -130,40 +132,48 @@ def setup_mace_training(
         )
         training_setup["ema"] = ema
     
-
-    checkpoint_handler = tools.CheckpointHandler(
-        directory=general_settings["checkpoints_dir"],
-        tag=tag,
-        keep=misc_settings["keep_checkpoints"],
-        swa_start=training_settings.get('start_swa'),
-    )
-    if misc_settings.get("restart_latest", False):
-        opt_start_epoch = checkpoint_handler.load_latest(
-            state=tools.CheckpointState(
-                model, training_setup["optimizer"], training_setup["lr_scheduler"]
-            ),
-            swa=False,
-            device=misc_settings["device"],
+    if not convergence:
+        checkpoint_handler = tools.CheckpointHandler(
+            directory=general_settings["checkpoints_dir"],
+            tag=tag,
+            keep=misc_settings["keep_checkpoints"],
+            swa_start=training_settings.get('start_swa'),
+        )
+        if restart:
+            epoch = checkpoint_handler.load_latest(
+                state=tools.CheckpointState(
+                    model, training_setup["optimizer"], training_setup["lr_scheduler"]
+                ),
+                swa=False,
+                device=misc_settings["device"],
+            )
+        else:
+            epoch = 0
+        training_setup['checkpoint_handler'] = checkpoint_handler
+    else:
+        checkpoint_handler_convergence = tools.CheckpointHandler(
+            directory=general_settings["checkpoints_dir"]+'/convergence',
+            tag=tag+"_convergence",
+            keep=misc_settings["keep_checkpoints"],
+            swa_start=training_settings.get('start_swa'),
         )
 
-    checkpoint_handler_convergence = tools.CheckpointHandler(
-        directory=general_settings["checkpoints_dir"],
-        tag=tag+"_convergence",
-        keep=misc_settings["keep_checkpoints"],
-        swa_start=training_settings.get('start_swa'),
-    )
-    if misc_settings.get("restart_latest", False):
-        opt_start_epoch = checkpoint_handler_convergence.load_latest(
-            state=tools.CheckpointState(
-                model, training_setup["optimizer"], training_setup["lr_scheduler"]
-            ),
-            swa=False,
-            device=misc_settings["device"],
-        )
-
-    training_setup['checkpoint_handler'] = checkpoint_handler
-    training_setup["checkpoint_handler_convergence"] = checkpoint_handler_convergence
-
+        
+        if restart and os.path.exists(
+            general_settings["checkpoints_dir"]+'/convergence'
+        ):
+            epoch = checkpoint_handler_convergence.load_latest(
+                state=tools.CheckpointState(
+                    model, training_setup["optimizer"], training_setup["lr_scheduler"]
+                ),
+                swa=False,
+                device=misc_settings["device"],
+            )
+        else:
+            epoch = 0
+        training_setup['checkpoint_handler'] = checkpoint_handler_convergence
+    
+    
     training_setup['eval_interval']=training_settings["eval_interval"]
     training_setup['patience']=training_settings["patience"]
     training_setup['device']=misc_settings["device"]
@@ -173,5 +183,6 @@ def setup_mace_training(
         "virials": False, #TODO: Remove hardcoding
         "stress": False, #TODO: Remove hardcoding
     }
+    training_setup['epoch'] = epoch
     return training_setup
     
