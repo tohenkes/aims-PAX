@@ -81,7 +81,7 @@ class PrepareInitialDatasetProcedure:
         self.control_parser = AIMSControlParser()
         self.handle_mace_settings(mace_settings)
         self.handle_al_settings(al_settings)
-        self.handle_aims_settings(path_to_control, self.species_dir)
+        self.handle_aims_settings(path_to_control)
         self.create_folders()
             
         if self.restart:
@@ -129,7 +129,7 @@ class PrepareInitialDatasetProcedure:
                 restart=self.restart
             )
             if self.restart:
-                self.epoch = self.training_setups[list(self.ensemble.keys())[0]]["epoch"]
+                self.epoch = self.training_setups[list(self.ensemble.keys())[0]]["epoch"] + 1
         
         MPI.COMM_WORLD.Barrier()
         self.epoch = MPI.COMM_WORLD.bcast(self.epoch, root=0)
@@ -158,11 +158,14 @@ class PrepareInitialDatasetProcedure:
                 )
                 
         if self.analysis:
-            self.collect_losses = {
-                "epoch": [],
-                "avg_losses": [],
-                "ensemble_losses": [],
-            }
+            if self.restart:
+                self.collect_losses = np.load("restart/last_initial_losses.npz")
+            else:
+                self.collect_losses = {
+                    "epoch": [],
+                    "avg_losses": [],
+                    "ensemble_losses": [],
+                }
 
     #TODO: path to settings could maybe be better
     def handle_mace_settings(self, mace_settings: dict) -> None:
@@ -216,6 +219,10 @@ class PrepareInitialDatasetProcedure:
             self.mace_settings["lr_scheduler"] = None
         self.create_restart = self.misc.get("create_restart", False)
         self.restart = os.path.exists("restart")
+        self.initial_foundational_size = self.al.get("initial_foundational_size", None)
+        if self.initial_foundational_size is not None:
+            assert self.al["initial_foundational_size"] in ("small", "medium", "large"), "Initial foundational size not recognized."
+        
         
     def create_folders(self):
         """
@@ -268,8 +275,7 @@ class PrepareInitialDatasetProcedure:
     
     def handle_aims_settings(
         self,
-        path_to_control: str,
-        species_dir: str,
+        path_to_control: str
         ):
         """
         Parses the AIMS control file to get the settings for the AIMS calculator.
@@ -281,7 +287,7 @@ class PrepareInitialDatasetProcedure:
         
         self.aims_settings = self.control_parser(path_to_control)
         self.aims_settings['compute_forces'] = True
-        self.aims_settings['species_dir'] = species_dir
+        self.aims_settings['species_dir'] = self.species_dir
 
     def setup_md(
         self,
@@ -379,23 +385,26 @@ class PrepareInitialDatasetProcedure:
             atoms (ase.Atoms): Atoms object to be propagated.
             dyn (ase.md.MolecularDynamics): ASE MD engine.
         """
-        self.sampled_points = []
-        for i in range(self.n_samples * self.ensemble_size * self.skip_step):
+        
+        for _ in range(self.skip_step):
             dyn.step()
-            if RANK == 0:
-                if i % self.skip_step == 0:
-                    current_energy = np.array(atoms.get_potential_energy())
-                    current_forces = np.array(atoms.get_forces())
-                    current_point = atoms.copy()
-                    # MACE reads energies and forces from the info & arrays dictionary
-                    current_point.info['energy'] = current_energy
-                    current_point.arrays['forces'] = current_forces 
-                    self.sampled_points.append(current_point)
 
-                if self.create_restart:
-                    self.last_point = current_point
-                    self.last_velocities = dyn.v
-                    
+        if RANK == 0:
+            
+            current_energy = np.array(atoms.get_potential_energy())
+            current_forces = np.array(atoms.get_forces())
+            current_point = atoms.copy()
+            # MACE reads energies and forces from the info & arrays dictionary
+            current_point.info['energy'] = current_energy
+            current_point.arrays['forces'] = current_forces 
+
+        if self.create_restart:
+            self.last_point = current_point
+            self.last_velocities = dyn.v
+        
+        return current_point
+    
+
     def converge(self):
         """
         Function to converge the ensemble on the acquired initial dataset.
@@ -558,7 +567,11 @@ class InitalDatasetProcedure(PrepareInitialDatasetProcedure):
             
             if RANK == 0:
                 logging.info(f"Sampling new points at step {step}.")
-            self.run_MD(self.atoms, self.dyn)
+            
+            self.sampled_points = [
+                self.run_MD(
+                    self.atoms, self.dyn
+                    ) for _ in range(self.ensemble_size * self.n_samples)]
             
             if RANK == 0:
                 random.shuffle(self.sampled_points)
@@ -712,6 +725,11 @@ class InitalDatasetProcedure(PrepareInitialDatasetProcedure):
                                 f"restart/last_velocities.npz",
                                 self.last_velocities
                             )
+                            if self.analysis:
+                                np.savez(
+                                    "restart/last_initial_losses.npz",
+                                    **self.collect_losses
+                                )
                         if self.desired_acc * self.lamb >= current_valid:
                             logging.info(
                                 f"Accuracy criterion reached at step {step}."
@@ -762,30 +780,39 @@ class InitalDatasetProcedure(PrepareInitialDatasetProcedure):
         return 0
 
 class InitialDSFoundational(PrepareInitialDatasetProcedure):
-    
+
     def setup_foundational(self):
-        assert self.al["initial_foundational_size"] in ("small", "medium", "large"), "Initial foundational size not recognized."
         calc = mace_mp(
-            model=self.al["initial_foundational_size"],
+            model=self.initial_foundational_size,
             dispersion=False,
             default_dtype=self.dtype,
             device=self.device)
         return calc
+
+    def recalc_aims(
+            self,
+            current_point: ase.Atoms
+            ) -> ase.Atoms:
+        self.aims_calc.calculate(current_point, properties=["energy", "forces"])
+        current_point.info["energy"] = self.aims_calc.results["energy"]
+        current_point.arrays["forces"] = self.aims_calc.results["forces"]
+        return current_point
     
     def run(self):
         """
         Main function to run the initial dataset generation procedure.
         It samples points and trains the ensemble members until the desired accuracy
         is reached or the maximum number of epochs is reached.
-
         """
-        
         
         # initializing md and FHI aims
         self.dyn = self.setup_md(self.atoms, md_settings=self.md_settings)
-        #self.aims_calc = self.setup_aims_calculator(
-        #    self.atoms
-        #    )
+        self.aims_calc = self.setup_aims_calculator(
+            self.atoms
+            )
+        if RANK == 0:
+            logging.info(f"Initial dataset generation with foundational model of size: {self.initial_foundational_size}.")
+            self.atoms.calc = self.setup_foundational()
         
         current_valid = np.inf
         step = 0
@@ -798,8 +825,30 @@ class InitialDSFoundational(PrepareInitialDatasetProcedure):
             
             if RANK == 0:
                 logging.info(f"Sampling new points at step {step}.")
-            self.run_MD(self.atoms, self.dyn)
             
+            # for doing this in parallel:
+            # immediately after self.skip mace md steps:
+            # 1. broadcast point 
+            # 2. start DFT
+            # 3. continue MD with mace-mp0 in parallel
+            # repeat until self.ensemble * self.n_samples points are sampled
+            # 
+            # here, in serial, i first collect all points and then run dft
+            # so that i have to broadcast the points only once
+
+            self.sampled_points = []
+            for _ in range(self.ensemble_size * self.n_samples):
+                if RANK == 0:
+                    current_point = self.run_MD(self.atoms, self.dyn)
+                    self.sampled_points.append(
+                        current_point
+                    )
+            MPI.COMM_WORLD.Barrier()
+            self.sampled_points = MPI.COMM_WORLD.bcast(self.sampled_points, root=0)
+            MPI.COMM_WORLD.Barrier()
+
+            self.sampled_points = [self.recalc_aims(atoms) for atoms in self.sampled_points]
+
             if RANK == 0:
                 random.shuffle(self.sampled_points)
                 # each ensemble member collects their respective points
@@ -983,16 +1032,16 @@ class InitialDSFoundational(PrepareInitialDatasetProcedure):
                         "analysis/initial_losses.npz",
                         **self.collect_losses
                     )
-        
-        for tag, model in self.ensemble.items():
-            torch.save(
-                model,
-                Path(
-                    self.mace_settings["GENERAL"]["model_dir"]
+        if RANK == 0:
+            for tag, model in self.ensemble.items():
+                torch.save(
+                    model,
+                    Path(
+                        self.mace_settings["GENERAL"]["model_dir"]
+                    )
+                    / (tag + ".model"),
                 )
-                / (tag + ".model"),
-            )
-        self.atoms.calc.close()
+        self.aims_calc.close()
         if RANK == 0:
             # save a simple text file claryfing that the initial dataset generation is done
             # (used if the procedure is restarted and the user wants to converge)

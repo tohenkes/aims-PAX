@@ -1,4 +1,4 @@
-from FHI_AL.procedures.initial_dataset import InitalDatasetProcedure
+from FHI_AL.procedures.initial_dataset import InitalDatasetProcedure, InitialDSFoundational
 from yaml import safe_load
 from mpi4py import MPI
 
@@ -9,11 +9,16 @@ def main():
     with open("./active_learning_settings.yaml", "r") as file:
         al_settings = safe_load(file)
 
-    initial_ds = InitalDatasetProcedure(
-        mace_settings=mace_settings,
-        al_settings=al_settings
-    )
-
+    if al_settings['ACTIVE_LEARNING']["initial_foundational_size"] is None:
+        initial_ds = InitalDatasetProcedure(
+            mace_settings=mace_settings,
+            al_settings=al_settings
+        )
+    else:
+        initial_ds = InitialDSFoundational(
+            mace_settings=mace_settings,
+            al_settings=al_settings
+        )
     MPI.COMM_WORLD.Barrier()
     
     #check if initial_ds_done.txt exists

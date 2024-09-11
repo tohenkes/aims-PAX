@@ -76,11 +76,11 @@ class PrepareALProcedure:
         self.handle_mace_settings(mace_settings)
         self.handle_aims_settings(path_to_control)
         np.random.seed(self.mace_settings["GENERAL"]["seed"])
+        self.create_folders()
+        
         #TODO: will break when using multiple settings for different trajectories and 
         # it should be adapted to the way the initial dataset procecure treats md settings
         self.md_settings = al_settings["MD"]
-        
-        self.create_folders()
         
         #TODO: this would change with multiple species
         self.z = Z_from_geometry_in()
@@ -106,7 +106,7 @@ class PrepareALProcedure:
 
         if RANK == 0:
             self.ensemble = ensemble_from_folder(
-                path_to_models="./model",
+                path_to_models=self.model_dir,
                 device=self.device,
             )
 
@@ -256,7 +256,7 @@ class PrepareALProcedure:
     def handle_al_settings(self, al_settings):
         
         self.al = al_settings['ACTIVE_LEARNING']
-        self.al_misc = al_settings.get('MISC', {})
+        self.misc = al_settings.get('MISC', {})
         
         self.max_MD_steps = self.al["max_MD_steps"]
         self.max_epochs_worker = self.al["max_epochs_worker"]
@@ -278,8 +278,9 @@ class PrepareALProcedure:
         self.analysis = self.al.get("analysis", False)
         self.seeds_tags_dict = self.al.get("seeds_tags_dict", None)
         self.margin = self.al.get("margin", 0.001)
-        
-        self.save_data_len_interval = self.al_misc.get("save_data_len_interval", 10)
+        self.restart = os.path.exists("restart")
+        self.create_restart = self.misc.get("create_restart", False)
+        self.save_data_len_interval = self.misc.get("save_data_len_interval", 10)
     
     def handle_aims_settings(
         self,
@@ -310,6 +311,8 @@ class PrepareALProcedure:
         )
         if self.analysis:
             os.makedirs("analysis", exist_ok=True)
+        if self.create_restart:
+            os.makedirs("restart", exist_ok=True)
 
     def setup_aims_calc(
             self,
