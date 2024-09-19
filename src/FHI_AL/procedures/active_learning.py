@@ -27,6 +27,7 @@ from FHI_AL.tools.utilities import (
     list_files_in_directory,
     get_atomic_energies_from_ensemble,
     create_ztable,
+    get_atomic_energies_from_pt,
     AIMSControlParser,
 )
 from FHI_AL.tools.train_epoch_mace import train_epoch, validate_epoch_ensemble
@@ -43,6 +44,7 @@ WORLD_COMM = MPI.COMM_WORLD
 WORLD_SIZE = WORLD_COMM.Get_size()
 RANK = WORLD_COMM.Get_rank()
 
+#TODO: refactor this. too much in one class. maybe restart class etc.
 class PrepareALProcedure:
     """
     Class to prepare the active learning procedure. It handles all the input files,
@@ -78,6 +80,7 @@ class PrepareALProcedure:
         np.random.seed(self.mace_settings["GENERAL"]["seed"])
         self.create_folders()
         
+        
         #TODO: will break when using multiple settings for different trajectories and 
         # it should be adapted to the way the initial dataset procecure treats md settings
         self.md_settings = al_settings["MD"]
@@ -97,58 +100,27 @@ class PrepareALProcedure:
                 )
             except:
                 logging.error(
-    f"Could not load seeds_tags_dict.npz. Either specify it in the active "
-    f"learning settings or put it as seeds_tags_dict.npz in {self.dataset_dir}."
-            )
+                    f"Could not load seeds_tags_dict.npz. Either specify it in the active "
+                    f"learning settings or put it as seeds_tags_dict.npz in {self.dataset_dir}."
+                )
 
         # TODO: remove hardcode
         self.use_scheduler = False
-
+        self.handle_atomic_energies()
+        
         if RANK == 0:
             self.ensemble = ensemble_from_folder(
                 path_to_models=self.model_dir,
                 device=self.device,
             )
 
-            if self.atomic_energies_dict is not None:
-                # if they have been explicitly specified the model should not update them
-                # anymore
-                self.update_atomic_energies = False
-                self.ensemble_atomic_energies_dict = {}
-                self.ensemble_atomic_energies = {}
-                for tag in self.ensemble.keys():
-                    self.ensemble_atomic_energies_dict[tag] = self.atomic_energies_dict
-                    self.ensemble_atomic_energies[tag] = np.array(
-                        [
-                            self.ensemble_atomic_energies_dict[tag][z]
-                            for z in self.atomic_energies_dict.keys()
-                        ]
-                    )
-            else:
-                try:
-                    if RANK == 0:
-                        logging.info("Loading atomic energies from existing ensemble.")
-                    (
-                        self.ensemble_atomic_energies, self.ensemble_atomic_energies_dict
-                    ) = get_atomic_energies_from_ensemble(
-                        ensemble=self.ensemble,
-                        z=self.z,
-                    )
-                except:
-                    if RANK == 0:
-                        logging.info('Could not load atomic energies '
-                                     'from ensemble members.')
-                self.update_atomic_energies = True
-
             self.training_setups = ensemble_training_setups(
                 ensemble=self.ensemble,
                 mace_settings=self.mace_settings,
+                restart=self.restart,
+                checkpoints_dir=self.checkpoints_dir,
             )
-            
 
-        # TODO: make option to directly load the dataset from the
-        # initial dataset object instead of reading from disk
-        if RANK == 0:
             logging.info("Loading initial datasets.")
             self.ensemble_ase_sets = load_ensemble_sets_from_folder(
                 ensemble=self.ensemble,
@@ -173,48 +145,85 @@ class PrepareALProcedure:
         MPI.COMM_WORLD.Barrier()
         
         # this initializes the FHI aims process
-        self.aims_calculator = self.setup_aims_calc()
+        self.aims_calculator = self.setup_aims_calc(
+            atoms=read(path_to_geometry)
+        )
         
-        self.trajectories = {
-            trajectory: read(path_to_geometry) for trajectory in range(self.num_trajectories)
-        }
-        self.trajectory_training = {
-            trajectory: "running"
-            for trajectory in range(self.num_trajectories)
-        }
-        self.trajectory_MD_steps = {
-            trajectory: 0 for trajectory in range(self.num_trajectories)
-        }
-        self.trajectory_epochs = {
-            trajectory: 0 for trajectory in range(self.num_trajectories)
-        }
-        if self.analysis:
-            # this saves the intervals between points that cross the uncertainty threshold
-            self.t_intervals = {
-                trajectory: [] for trajectory in range(self.num_trajectories)
+        if self.restart:
+            self.handle_al_restart()
+
+        else:
+            #TODO: tidy up and put in a separate function/class?
+            self.trajectories = {
+                trajectory: read(path_to_geometry) for trajectory in range(self.num_trajectories)
             }
-            # this saves uncertainty and true errors for each trajectory
-            self.sanity_checks = {
-                trajectory: {
-                    "atom_wise_uncertainty": [],
-                    "uncertainty_via_max": [],
-                    "uncertainty_via_avg": [],
-                    "max_error": [],
-                    "mean_error": [],
-                    "atom_wise_error": [],
-                    "threshold": [],
-                    } for trajectory in range(self.num_trajectories)
+            self.trajectory_status = {
+                trajectory: "running"
+                for trajectory in range(self.num_trajectories)
             }
-            # this saves the validation losses for each trajectory
-            self.collect_losses = {
-                "epoch": [],
-                "avg_losses": [],
-                "ensemble_losses": [],
+            self.trajectory_MD_steps = {
+                trajectory: 0 for trajectory in range(self.num_trajectories)
+            }
+            self.trajectory_epochs = {
+                trajectory: 0 for trajectory in range(self.num_trajectories)
+            }
+
+            self.ensemble_reset_opt = {
+                tag: False for tag in self.seeds_tags_dict.keys()
+            }
+            self.ensemble_no_improvement = {
+                tag: 0 for tag in self.seeds_tags_dict.keys()
+            }
+            self.ensemble_best_valid = {
+                tag: np.inf for tag in self.seeds_tags_dict.keys()
             }
             
-            self.collect_thresholds = {
-                trajectory: [] for trajectory in range(self.num_trajectories)
-            }
+            self.current_valid_error = np.inf
+            self.threshold = np.inf
+            self.total_points_added = 0  # counts how many points have been added to the training set to decide when to add a point to the validation set
+            self.train_points_added = 0
+            self.valid_points_added = 0
+            self.num_MD_limits_reached = 0
+            self.num_workers_training = 0  # maybe useful later on to give CPU some to work if all workers are training
+            self.num_workers_waiting = 0
+            self.total_epoch = 0
+            self.check = 0
+            self.uncertainties = []  # for moving average
+            
+        #TODO: put this somewhere else:        
+        if self.analysis:
+            if self.restart:
+                self.t_intervals = self.al_restart_dict['t_intervals']
+                self.sanity_checks = self.al_restart_dict['sanity_checks']
+                self.collect_losses = self.al_restart_dict['collect_losses']
+                self.collect_thresholds = self.al_restart_dict['collect_thresholds']
+            else:
+                # this saves the intervals between points that cross the uncertainty threshold
+                self.t_intervals = {
+                    trajectory: [] for trajectory in range(self.num_trajectories)
+                }
+                # this saves uncertainty and true errors for each trajectory
+                self.sanity_checks = {
+                    trajectory: {
+                        "atom_wise_uncertainty": [],
+                        "uncertainty_via_max": [],
+                        "uncertainty_via_avg": [],
+                        "max_error": [],
+                        "mean_error": [],
+                        "atom_wise_error": [],
+                        "threshold": [],
+                        } for trajectory in range(self.num_trajectories)
+                }
+                # this saves the validation losses for each trajectory
+                self.collect_losses = {
+                    "epoch": [],
+                    "avg_losses": [],
+                    "ensemble_losses": [],
+                }
+                
+                self.collect_thresholds = {
+                    trajectory: [] for trajectory in range(self.num_trajectories)
+                }
             
 
         if RANK == 0:
@@ -229,14 +238,6 @@ class PrepareALProcedure:
                     atoms=self.trajectories[trajectory], md_settings=self.md_settings
                 ) for trajectory in range(self.num_trajectories)
             }
-            # this saves the state of the trajectories
-
-
-        self.uncertainties = []  # for moving average
-        
-        
-
-        
             
     def handle_mace_settings(self, mace_settings: dict):
         self.mace_settings = mace_settings
@@ -246,6 +247,7 @@ class PrepareALProcedure:
         self.set_valid_batch_size = self.mace_settings["TRAINING"][
             "valid_batch_size"
         ]
+        self.checkpoints_dir = self.mace_settings["GENERAL"]["checkpoints_dir"] + "/al"
         self.scaling = self.mace_settings["TRAINING"]["scaling"]
         self.device = self.mace_settings["MISC"]["device"]
         self.model_dir = self.mace_settings["GENERAL"]["model_dir"]
@@ -278,9 +280,39 @@ class PrepareALProcedure:
         self.analysis = self.al.get("analysis", False)
         self.seeds_tags_dict = self.al.get("seeds_tags_dict", None)
         self.margin = self.al.get("margin", 0.001)
-        self.restart = os.path.exists("restart")
+        
+        self.restart = os.path.exists("restart/al/al_restart.npy")
         self.create_restart = self.misc.get("create_restart", False)
-        self.save_data_len_interval = self.misc.get("save_data_len_interval", 10)
+        #TODO: put this somewhere else
+        if self.create_restart:
+            self.al_restart_dict = {
+                'trajectories': None,
+                'trajectory_status': None,
+                'trajectory_MD_steps': None,
+                'trajectory_epochs': None,
+                'ensemble_reset_opt': None,
+                'ensemble_no_improvement': None,
+                'ensemble_best_valid': None,
+                'current_valid_error': None,
+                'threshold': None,
+                'total_points_added': None,
+                'train_points_added': None,
+                'valid_points_added': None,
+                'num_MD_limits_reached': None,
+                'num_workers_training': None,
+                'num_workers_waiting': None,
+                'total_epoch': None,
+                'check': None,
+                'uncertainties': None
+            }
+            self.save_restart = False # is set to true in training when checkpoint is saved
+            
+            if self.analysis:
+                self.al_restart_dict['t_intervals'] = None
+                self.al_restart_dict['sanity_checks'] = None
+                self.al_restart_dict['collect_losses'] = None
+                self.al_restart_dict['collect_thresholds'] = None
+        
     
     def handle_aims_settings(
         self,
@@ -298,7 +330,109 @@ class PrepareALProcedure:
         self.aims_settings = self.control_parser(path_to_control)
         self.aims_settings['compute_forces'] = True
         self.aims_settings['species_dir'] = self.species_dir
+        
+    def handle_atomic_energies(
+            self,
+        ):
+            self.update_atomic_energies = False
+
+            if self.atomic_energies_dict is None:
+                if self.restart:
+                    if RANK == 0:
+                        logging.info("Loading atomic energies from checkpoint.")
+                    (
+                        self.ensemble_atomic_energies,
+                        self.ensemble_atomic_energies_dict
+                    ) = get_atomic_energies_from_pt(
+                        path_to_checkpoints=self.checkpoints_dir,
+                        z=self.z,
+                        seeds_tags_dict=self.seeds_tags_dict,
+                    )
+                else:
+                    if RANK == 0:
+                        logging.info("Loading atomic energies from existing ensemble.")
+                    (
+                        self.ensemble_atomic_energies,
+                        self.ensemble_atomic_energies_dict
+                    ) = get_atomic_energies_from_ensemble(
+                        ensemble=self.ensemble,
+                        z=self.z,
+                    )
+                self.update_atomic_energies = True
+
+            else:
+                if RANK == 0:
+                    logging.info("Using specified atomic eneriges.")
+                self.ensemble_atomic_energies_dict = {
+                    tag: self.atomic_energies_dict for tag in self.seeds_tags_dict.keys()
+                }
+
+                self.ensemble_atomic_energies = {tag: np.array(
+                    [
+                        self.ensemble_atomic_energies_dict[tag][z]
+                        for z in self.ensemble_atomic_energies_dict[tag].keys()
+                    ]
+                ) for tag in self.seeds_tags_dict.keys()}
+
+            if RANK == 0:
+                logging.info(f'{self.ensemble_atomic_energies_dict[list(self.seeds_tags_dict.keys())[0]]}')
     
+    def handle_al_restart(self):
+        try:
+            self.al_restart_dict = np.load(
+                "restart/al/al_restart.npy",
+                allow_pickle=True).item()
+        except:
+            logging.error("Could not load al_restart.npy.")
+        
+        if RANK == 0:
+            logging.info("Restarting active learning procedure from checkpoint.")
+        
+        self.trajectories = self.al_restart_dict['trajectories']
+        self.trajectory_status = self.al_restart_dict['trajectory_status']
+        self.trajectory_MD_steps = self.al_restart_dict['trajectory_MD_steps']
+        self.trajectory_epochs = self.al_restart_dict['trajectory_epochs']
+        self.ensemble_reset_opt = self.al_restart_dict['ensemble_reset_opt']
+        self.ensemble_no_improvement = self.al_restart_dict['ensemble_no_improvement']
+        self.ensemble_best_valid = self.al_restart_dict['ensemble_best_valid']
+        self.current_valid_error = self.al_restart_dict['current_valid_error']
+        self.threshold = self.al_restart_dict['threshold']
+        self.total_points_added = self.al_restart_dict['total_points_added']
+        self.train_points_added = self.al_restart_dict['train_points_added']
+        self.valid_points_added = self.al_restart_dict['valid_points_added']
+        self.num_MD_limits_reached = self.al_restart_dict['num_MD_limits_reached']
+        self.num_workers_training = self.al_restart_dict['num_workers_training']
+        self.num_workers_waiting = self.al_restart_dict['num_workers_waiting']
+        self.total_epoch = self.al_restart_dict['total_epoch']
+        self.check = self.al_restart_dict['check']
+        self.uncertainties = self.al_restart_dict['uncertainties']
+    
+    def update_al_restart_dict(self):
+        self.al_restart_dict['trajectories'] = self.trajectories
+        self.al_restart_dict['trajectory_status'] = self.trajectory_status
+        self.al_restart_dict['trajectory_MD_steps'] = self.trajectory_MD_steps
+        self.al_restart_dict['trajectory_epochs'] = self.trajectory_epochs
+        self.al_restart_dict['ensemble_reset_opt'] = self.ensemble_reset_opt
+        self.al_restart_dict['ensemble_no_improvement'] = self.ensemble_no_improvement
+        self.al_restart_dict['ensemble_best_valid'] = self.ensemble_best_valid
+        self.al_restart_dict['current_valid_error'] = self.current_valid_error
+        self.al_restart_dict['threshold'] = self.threshold
+        self.al_restart_dict['total_points_added'] = self.total_points_added
+        self.al_restart_dict['train_points_added'] = self.train_points_added
+        self.al_restart_dict['valid_points_added'] = self.valid_points_added
+        self.al_restart_dict['num_MD_limits_reached'] = self.num_MD_limits_reached
+        self.al_restart_dict['num_workers_training'] = self.num_workers_training
+        self.al_restart_dict['num_workers_waiting'] = self.num_workers_waiting
+        self.al_restart_dict['total_epoch'] = self.total_epoch
+        self.al_restart_dict['check'] = self.check
+        self.al_restart_dict['uncertainties'] = self.uncertainties
+        
+        if self.analysis:
+            self.al_restart_dict['t_intervals'] = self.t_intervals
+            self.al_restart_dict['sanity_checks'] = self.sanity_checks
+            self.al_restart_dict['collect_losses'] = self.collect_losses
+            self.al_restart_dict['collect_thresholds'] = self.collect_thresholds            
+        
     def create_folders(self):
         """
         Create the folders for the final datasets.
@@ -312,11 +446,11 @@ class PrepareALProcedure:
         if self.analysis:
             os.makedirs("analysis", exist_ok=True)
         if self.create_restart:
-            os.makedirs("restart", exist_ok=True)
+            os.makedirs("restart/al", exist_ok=True)
 
     def setup_aims_calc(
             self,
-            path_to_geometry: str = "./geometry.in"
+            atoms: ase.Atoms,
             ):
         """
         Creates and returns the AIMS calculator for a given atoms object.
@@ -335,7 +469,7 @@ class PrepareALProcedure:
             self.ASI_path,
             init_via_ase,
             MPI.COMM_WORLD,
-            read(path_to_geometry) # TODO: must be changed when we have multiple species and then we need multiaims
+            atoms # TODO: must be changed when we have multiple species and then we need multiaims
             )
         return calculator
 
@@ -447,8 +581,8 @@ class ALProcedure(PrepareALProcedure):
         # as we have to wait for enough training points to be acquired
         # if calculation is finished:
 
-        if self.point_added % self.valid_ratio == 0:
-            self.trajectory_training[idx] = "running"
+        if self.valid_points_added < self.valid_ratio * self.total_points_added:
+            self.trajectory_status[idx] = "running"
             self.num_workers_waiting -= 1
             if RANK == 0:
                 logging.info(
@@ -460,9 +594,10 @@ class ALProcedure(PrepareALProcedure):
                 for tag in self.ensemble_ase_sets.keys():
                     self.ensemble_ase_sets[tag]["valid"] += [self.point]
                     self.ensemble_mace_sets[tag]["valid"] += self.mace_point
+            self.valid_points_added += 1
 
         else:
-            self.trajectory_training[idx] = "training"
+            self.trajectory_status[idx] = "training"
             self.num_workers_training += 1
             self.num_workers_waiting -= 1
             if RANK == 0:
@@ -486,7 +621,8 @@ class ALProcedure(PrepareALProcedure):
                 logging.info(
                     f"Size of the training and validation set: {self.train_dataset_len}, {len(self.ensemble_ase_sets[tag]['valid'])}."
                 )
-        self.point_added += 1
+            self.train_points_added += 1
+        self.total_points_added += 1
 
     def training_task(
             self,
@@ -531,8 +667,8 @@ class ALProcedure(PrepareALProcedure):
             # we train only for some epochs before we move to the next worker which may be running MD
             # all workers train on the same models with the respective training settings for
             # each ensemble member
-
-            for _ in range(self.intermediate_epochs):
+            
+            while self.trajectory_epochs[idx] < self.intermediate_epochs:
                 for tag, model in self.ensemble.items():
 
                     if self.ensemble_reset_opt[tag]:
@@ -542,6 +678,7 @@ class ALProcedure(PrepareALProcedure):
                                         settings=self.mace_settings,
                                         model=self.ensemble[tag],
                                         tag=tag,
+                                        checkpoints_dir=self.checkpoints_dir,
                                         )
                         self.ensemble_reset_opt[tag] = False
 
@@ -564,10 +701,6 @@ class ALProcedure(PrepareALProcedure):
                         output_args=self.training_setups[tag]["output_args"],
                         ema=self.training_setups[tag]["ema"],
                     )
-                self.total_epoch += 1
-                
-
-                    
                 if (
                     self.trajectory_epochs[idx] % self.valid_skip == 0
                     or self.trajectory_epochs[idx] == self.max_epochs_worker - 1
@@ -600,20 +733,37 @@ class ALProcedure(PrepareALProcedure):
                             )
                             self.ensemble_reset_opt[tag] = True
                             self.ensemble_no_improvement[tag] = 0
-                        
-                    
-                    save_checkpoint(
-                        checkpoint_handler=self.training_setups[tag][
-                            "checkpoint_handler"
-                        ],
-                        training_setup=self.training_setups[tag],
-                        model=model,
-                        epoch=self.trajectory_epochs[idx],
-                        keep_last=True,
-                    )
-                # to here, can be made into a class
-                #############
+                                         
+                        save_checkpoint(
+                            checkpoint_handler=self.training_setups[tag][
+                                "checkpoint_handler"
+                            ],
+                            training_setup=self.training_setups[tag],
+                            model=model,
+                            epoch=self.trajectory_epochs[idx],
+                            keep_last=False,
+                        )
+
+                        save_datasets(
+                            ensemble=self.ensemble,
+                            ensemble_ase_sets=self.ensemble_ase_sets,
+                            path=self.dataset_dir / "final",
+                        )
+                        if self.create_restart:
+                            self.save_restart = True
+
                 self.trajectory_epochs[idx] += 1
+                self.total_epoch += 1
+                
+                if self.save_restart and self.create_restart:
+                    self.update_al_restart_dict()
+                    np.save(
+                        "restart/al/al_restart.npy",
+                        self.al_restart_dict
+                        )
+                    self.save_restart = False
+                    
+                    
         # update calculator
         MPI.COMM_WORLD.Barrier()
         self.current_valid_error = MPI.COMM_WORLD.bcast(self.current_valid_error, root=0)
@@ -631,8 +781,8 @@ class ALProcedure(PrepareALProcedure):
         self.trajectory_epochs[idx] = MPI.COMM_WORLD.bcast(self.trajectory_epochs[idx], root=0)
         MPI.COMM_WORLD.Barrier()
 
-        if self.trajectory_epochs[idx] == self.max_epochs_worker:
-            self.trajectory_training[idx] = "running"
+        if self.trajectory_epochs[idx] >= self.max_epochs_worker:
+            self.trajectory_status[idx] = "running"
             self.num_workers_training -= 1
             self.trajectory_epochs[idx] = 0
             if RANK == 0:
@@ -658,14 +808,14 @@ class ALProcedure(PrepareALProcedure):
         # kill the worker if the maximum number of MD steps is reached
         if (
             current_MD_step > self.max_MD_steps
-            and self.trajectory_training[idx] == "running"
+            and self.trajectory_status[idx] == "running"
         ):
             if RANK == 0:
                 logging.info(
                     f"Trajectory worker {idx} reached maximum MD steps and is killed."
                 )
             self.num_MD_limits_reached += 1
-            self.trajectory_training[idx] = "killed"
+            self.trajectory_status[idx] = "killed"
             return "killed"
 
         else:
@@ -677,12 +827,16 @@ class ALProcedure(PrepareALProcedure):
             # MD engine we can adress this.
             if RANK == 0:
                 self.md_drivers[idx].step()
-
+            self.trajectory_MD_steps[idx] += 1
             #MPI.COMM_WORLD.Barrier()
             #self.trajectories[idx] = MPI.COMM_WORLD.bcast(self.trajectories[idx], root=0)
             #MPI.COMM_WORLD.Barrier()
 
-            self.trajectory_MD_steps[idx] += 1
+            # somewhat arbitrary; i just want to save checkpoints if the MD phase
+            # is super long
+            if current_MD_step % (self.max_MD_steps // 10) == 0:
+                self.update_al_restart_dict()
+
             if current_MD_step % self.skip_step == 0:
                 if RANK == 0:
                     logging.info(
@@ -693,6 +847,9 @@ class ALProcedure(PrepareALProcedure):
                     prediction = self.trajectories[idx].calc.results["forces_comm"]
                 
                     uncertainty = max_sd_2(prediction)
+
+                    #TODO: put this in a function
+
                     # compute moving average of uncertainty
                     self.uncertainties.append(uncertainty)
                     # TODO: Remove hardcode, make a function out of this
@@ -743,10 +900,8 @@ class ALProcedure(PrepareALProcedure):
                             seed=None,
                             r_max=self.r_max,
                         )
-                    # it sends the job and does not wait for the result but
-                    # continues with the next worker. only if the job is done
-                    # the worker is set to training mode
-                    self.trajectory_training[idx] = "waiting"
+
+                    self.trajectory_status[idx] = "waiting"
                     self.num_workers_waiting += 1
                     
                     MPI.COMM_WORLD.Barrier()
@@ -757,56 +912,58 @@ class ALProcedure(PrepareALProcedure):
                         logging.info(
                             f"Trajectory worker {idx} is waiting for job to finish."
                         )
-
-            if (
-                current_MD_step % self.sanity_skip == 0
-            ):  
-                # TODO:
-                # should not be static but increase with time, based on how many uninterrupted
-                #  MD steps have been taken or if all workes are running and currently
-                # we are not doing anything with this. Maybe check correlation between real error
-                # and uncertainty?
-                if RANK == 0:
-                    logging.info(f"Trajectory worker {idx} doing a sanity check.")
-                
-                if current_MD_step % self.skip_step == 0:
-                    sanity_prediction = prediction
-                else:
-                    if RANK == 0:
-                        sanity_prediction = ensemble_prediction(
-                            models=list(self.ensemble.values()),
-                            atoms_list=[self.point],
-                            device=self.device,
-                            dtype=self.mace_settings["GENERAL"]["default_dtype"],
-                        )
-                    MPI.COMM_WORLD.Barrier()
-                    sanity_prediction = MPI.COMM_WORLD.bcast(sanity_prediction, root=0)
-                    MPI.COMM_WORLD.Barrier()
+            if self.analysis:
+                if (
+                    current_MD_step % self.sanity_skip == 0
+                ):  
+                    #TODO: Put in a function
                     
-                #TODO: sometimes already calculated above so we should not calculate it again
-                MPI.COMM_WORLD.Barrier()
-                self.aims_calculator.calculate(self.point, properties=["energy","forces"])
-                MPI.COMM_WORLD.Barrier()
-                (
-                    atom_wise_uncertainty,
-                    uncertainty_via_max,
-                    uncertainty_via_avg,
-                    atom_wise_error,
-                    max_error,
-                    mean_error
-                ) = self.sanity_check(
-                    sanity_prediction=sanity_prediction,
-                    true_forces = self.aims_calculator.results['forces']
-                )
-                self.sanity_checks[idx]['atom_wise_uncertainty'].append(atom_wise_uncertainty)
-                self.sanity_checks[idx]['uncertainty_via_max'].append(uncertainty_via_max)
-                self.sanity_checks[idx]['uncertainty_via_avg'].append(uncertainty_via_avg)
-                self.sanity_checks[idx]['atom_wise_error'].append(atom_wise_error)
-                self.sanity_checks[idx]['max_error'].append(max_error)
-                self.sanity_checks[idx]['mean_error'].append(mean_error)
-                self.sanity_checks[idx]['threshold'].append(self.threshold)
-                
-                self.check += 1
+                    # TODO:
+                    # should not be static but increase with time, based on how many uninterrupted
+                    #  MD steps have been taken or if all workes are running and currently
+                    # we are not doing anything with this. Maybe check correlation between real error
+                    # and uncertainty?
+                    if RANK == 0:
+                        logging.info(f"Trajectory worker {idx} doing a sanity check.")
+                    
+                    if current_MD_step % self.skip_step == 0:
+                        sanity_prediction = prediction
+                    else:
+                        if RANK == 0:
+                            sanity_prediction = ensemble_prediction(
+                                models=list(self.ensemble.values()),
+                                atoms_list=[self.point],
+                                device=self.device,
+                                dtype=self.mace_settings["GENERAL"]["default_dtype"],
+                            )
+                        MPI.COMM_WORLD.Barrier()
+                        sanity_prediction = MPI.COMM_WORLD.bcast(sanity_prediction, root=0)
+                        MPI.COMM_WORLD.Barrier()
+                        
+                    #TODO: sometimes already calculated above so we should not calculate it again
+                    MPI.COMM_WORLD.Barrier()
+                    self.aims_calculator.calculate(self.point, properties=["energy","forces"])
+                    MPI.COMM_WORLD.Barrier()
+                    (
+                        atom_wise_uncertainty,
+                        uncertainty_via_max,
+                        uncertainty_via_avg,
+                        atom_wise_error,
+                        max_error,
+                        mean_error
+                    ) = self.sanity_check(
+                        sanity_prediction=sanity_prediction,
+                        true_forces = self.aims_calculator.results['forces']
+                    )
+                    self.sanity_checks[idx]['atom_wise_uncertainty'].append(atom_wise_uncertainty)
+                    self.sanity_checks[idx]['uncertainty_via_max'].append(uncertainty_via_max)
+                    self.sanity_checks[idx]['uncertainty_via_avg'].append(uncertainty_via_avg)
+                    self.sanity_checks[idx]['atom_wise_error'].append(atom_wise_error)
+                    self.sanity_checks[idx]['max_error'].append(max_error)
+                    self.sanity_checks[idx]['mean_error'].append(mean_error)
+                    self.sanity_checks[idx]['threshold'].append(self.threshold)
+                    
+                    self.check += 1
 
     def run(self):
         """
@@ -816,45 +973,28 @@ class ALProcedure(PrepareALProcedure):
 
         if RANK == 0:
             logging.info("Starting active learning procedure.")
-            self.ensemble_reset_opt = {
-                tag: False for tag in self.ensemble.keys()
-            }
-            self.ensemble_no_improvement = {
-                tag: 0 for tag in self.ensemble.keys()
-            }
-            self.ensemble_best_valid = {
-                tag: np.inf for tag in self.ensemble.keys()
-            }
-            
-        self.current_valid_error = np.inf
-        self.threshold = np.inf
-        self.point_added = 0  # counts how many points have been added to the training set to decide when to add a point to the validation set
-        self.num_MD_limits_reached = 0
-        self.num_workers_training = 0  # maybe useful lateron to give CPU some to work if all workers are training
-        self.num_workers_waiting = 0
-        self.total_epoch = 0
-        self.check = 0
+
 
         MPI.COMM_WORLD.Barrier()
         
         while True: 
             for trajectory_idx, _ in enumerate(self.trajectories):
 
-                if self.trajectory_training[trajectory_idx] == "waiting":
+                if self.trajectory_status[trajectory_idx] == "waiting":
 
                     set_limit = self.waiting_task(trajectory_idx)
                     if set_limit: # stops the process if the maximum dataset size is reached
                         break
 
                 if (
-                    self.trajectory_training[trajectory_idx] == "training"
+                    self.trajectory_status[trajectory_idx] == "training"
                 ):  # and training_job: # the idea is to let a worker train only if new points
                     # have been added. e.g. it can happen that one worker is
                     # beyond its MD limit but there is no new point that has been added
 
                     self.training_task(trajectory_idx)
 
-                if self.trajectory_training[trajectory_idx] == "running":
+                if self.trajectory_status[trajectory_idx] == "running":
 
                     self.running_task(trajectory_idx)
 
@@ -892,13 +1032,7 @@ class ALProcedure(PrepareALProcedure):
                     )
                 break
 
-            if RANK == 0:
-                if self.train_dataset_len % self.save_data_len_interval == 0:
-                    save_datasets(
-                        ensemble=self.ensemble,
-                        ensemble_ase_sets=self.ensemble_ase_sets,
-                        path=self.dataset_dir / "final",
-                    )
+                #TODO: put them all into one dict
                 if self.analysis:
                     np.savez(
                         "analysis/sanity_checks.npz",

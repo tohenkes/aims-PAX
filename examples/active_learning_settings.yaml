@@ -2,8 +2,7 @@ ACTIVE_LEARNING:
   desired_acc: 0.000042
   lambda: 10.
   n_samples: 5
-  initial_valid_ratio: 0.2
-  valid_ratio: 3
+  valid_ratio: 0.3 # e.g. 0.3 means 30% of the data is used for validation
   converge_initial: False
   scheduler_initial: True
   max_initial_epochs: 30
@@ -18,12 +17,13 @@ ACTIVE_LEARNING:
   ensemble_size: 5
   c_x: -0.1
   dataset_dir: "./data"
-  skip_step_initial: 10 # step to skip in sampling initial MD
+  skip_step_initial: 1 # step to skip in sampling initial MD
   skip_step_mlff: 5 # step to skip in sampling MLFF MD
   num_trajectories: 3 # number of trajectories to from sample in parallel
   species_dir: "/project/home/p200243/tcp_software/aims_master_090824/FHIaims/species_defaults/defaults_2020/light"
   aims_lib_path: "/project/home/p200243/tcp_software/aims_master_090824/libaims.240717.scalapack.mpi.so"
   analysis: True
+  initial_sampling: mace-mp0
   initial_foundational_size: "small"
   
 MD:
@@ -35,6 +35,5 @@ MD:
   seed: 42
 
 MISC:
-  save_dataset_len_interval: 10
   create_restart: True
   

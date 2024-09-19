@@ -19,6 +19,7 @@ def setup_mace_training(
     tag: str,
     restart: bool = False,
     convergence: bool = False,
+    checkpoints_dir: str = None
 )-> dict:
     """
     Setup the MACE training according to the settings and return it.
@@ -38,6 +39,9 @@ def setup_mace_training(
     general_settings = settings["GENERAL"]
     training_settings = settings["TRAINING"]
     misc_settings = settings["MISC"]    
+
+    if checkpoints_dir is None:
+        checkpoints_dir = general_settings["checkpoints_dir"]
 
     training_setup = {}
     loss_fn: torch.nn.Module
@@ -134,7 +138,7 @@ def setup_mace_training(
     
     if not convergence:
         checkpoint_handler = tools.CheckpointHandler(
-            directory=general_settings["checkpoints_dir"],
+            directory=checkpoints_dir,
             tag=tag,
             keep=misc_settings["keep_checkpoints"],
             swa_start=training_settings.get('start_swa'),
@@ -152,7 +156,7 @@ def setup_mace_training(
         training_setup['checkpoint_handler'] = checkpoint_handler
     else:
         checkpoint_handler_convergence = tools.CheckpointHandler(
-            directory=general_settings["checkpoints_dir"]+'/convergence',
+            directory=checkpoints_dir+'/convergence',
             tag=tag+"_convergence",
             keep=misc_settings["keep_checkpoints"],
             swa_start=training_settings.get('start_swa'),
@@ -160,7 +164,7 @@ def setup_mace_training(
 
         
         if restart and os.path.exists(
-            general_settings["checkpoints_dir"]+'/convergence'
+            checkpoints_dir+'/convergence'
         ):
             epoch = checkpoint_handler_convergence.load_latest(
                 state=tools.CheckpointState(

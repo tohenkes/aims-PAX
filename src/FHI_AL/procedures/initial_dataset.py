@@ -24,7 +24,7 @@ from FHI_AL.tools.utilities import (
 )
 from FHI_AL.tools.train_epoch_mace import train_epoch, validate_epoch_ensemble
 import ase
-from ase.io import read, write
+from ase.io import read
 import logging
 import random
 from mpi4py import MPI
@@ -36,7 +36,6 @@ from ase import units
 WORLD_COMM = MPI.COMM_WORLD
 WORLD_SIZE = WORLD_COMM.Get_size()
 RANK = WORLD_COMM.Get_rank()
-
 
 class PrepareInitialDatasetProcedure:
     """
@@ -87,18 +86,22 @@ class PrepareInitialDatasetProcedure:
         if self.restart:
             if RANK == 0:
                 logging.info('Restarting initial dataset acquisition from checkpoint.')
-            self.atoms = read("restart/last_geometry.in")
-            self.last_velocities = np.load("restart/last_velocities.npz")["arr_0"]
-            self.atoms.set_velocities(self.last_velocities)
+            self.init_ds_restart_dict = np.load(
+                "restart/initial_ds/initial_ds_restart.npy",
+                allow_pickle=True
+                ).item()
+            self.atoms = self.init_ds_restart_dict["last_geometry"]
+            self.step = self.init_ds_restart_dict["step"]
         else:
             self.atoms = read(path_to_geometry)
+            self.step = 0
         
         self.z = Z_from_geometry_in()
         self.n_atoms = len(self.z)
         self.z_table = create_ztable(self.z)
 
         np.random.seed(self.seed)
-        #random.seed(self.seed) # this only influences the shuffling of the sampled geometries
+        random.seed(self.seed) # this influences the shuffling of the sampled geometries
         self.ensemble_seeds = np.random.randint(
             0, 1000, size=self.ensemble_size
         )
@@ -126,7 +129,8 @@ class PrepareInitialDatasetProcedure:
             self.training_setups = ensemble_training_setups(
                 ensemble=self.ensemble,
                 mace_settings=self.mace_settings,
-                restart=self.restart
+                restart=self.restart,
+                checkpoints_dir=self.checkpoints_dir,
             )
             if self.restart:
                 self.epoch = self.training_setups[list(self.ensemble.keys())[0]]["epoch"] + 1
@@ -159,7 +163,7 @@ class PrepareInitialDatasetProcedure:
                 
         if self.analysis:
             if self.restart:
-                self.collect_losses = np.load("restart/last_initial_losses.npz")
+                self.collect_losses = self.init_ds_restart_dict["last_initial_losses"]
             else:
                 self.collect_losses = {
                     "epoch": [],
@@ -183,7 +187,7 @@ class PrepareInitialDatasetProcedure:
         self.set_valid_batch_size = self.mace_settings["TRAINING"][
             "valid_batch_size"
         ]
-        self.checkpoints_dir = self.mace_settings["GENERAL"]["checkpoints_dir"]
+        self.checkpoints_dir = self.mace_settings["GENERAL"]["checkpoints_dir"] + "/initial"
         self.scaling = self.mace_settings["TRAINING"]["scaling"]
         self.dtype = self.mace_settings["GENERAL"]["default_dtype"]
         self.device = self.mace_settings["MISC"]["device"]
@@ -210,18 +214,25 @@ class PrepareInitialDatasetProcedure:
         self.valid_skip = self.al["valid_skip"]
         self.skip_step = self.al["skip_step_initial"]
         self.intermediate_epochs = self.al["intermediate_epochs"]
-        self.initial_valid_ratio = self.al["initial_valid_ratio"]
+        self.valid_ratio = self.al["valid_ratio"]
         self.ASI_path = self.al["aims_lib_path"]
         self.species_dir = self.al["species_dir"]
         self.analysis = self.al.get("analysis", False)
         self.margin = self.al.get("margin", 0.001)
         if not self.al["scheduler_initial"]:
             self.mace_settings["lr_scheduler"] = None
-        self.create_restart = self.misc.get("create_restart", False)
-        self.restart = os.path.exists("restart")
+        
         self.initial_foundational_size = self.al.get("initial_foundational_size", None)
         if self.initial_foundational_size is not None:
             assert self.al["initial_foundational_size"] in ("small", "medium", "large"), "Initial foundational size not recognized."
+        
+        self.restart = os.path.exists("restart/initial_ds/initial_ds_restart.npy")
+        self.create_restart = self.misc.get("create_restart", False)
+        if self.create_restart:
+            self.init_ds_restart_dict = {
+                "last_geometry": None,
+                "last_initial_losses": None,           
+            }
         
         
     def create_folders(self):
@@ -239,7 +250,7 @@ class PrepareInitialDatasetProcedure:
         if self.analysis:
             os.makedirs("analysis", exist_ok=True)
         if self.create_restart:
-            os.makedirs("restart", exist_ok=True)
+            os.makedirs("restart/initial_ds", exist_ok=True)
         
     def setup_aims_calculator(
             self,
@@ -326,6 +337,8 @@ class PrepareInitialDatasetProcedure:
 
         if self.atomic_energies_dict is None:
             if self.restart:
+                if RANK == 0:
+                    logging.info("Loading atomic energies from checkpoint.")
                 (
                     self.ensemble_atomic_energies,
                     self.ensemble_atomic_energies_dict
@@ -335,6 +348,8 @@ class PrepareInitialDatasetProcedure:
                     seeds_tags_dict=self.seeds_tags_dict,
                 )
             else:
+                if RANK == 0:
+                    logging.info("No atomic specified. Initializing with 0 and fit to training data.")
                 self.ensemble_atomic_energies_dict = {
                     tag:{
                     z: 0 for z in np.sort(np.unique(self.z))
@@ -351,6 +366,8 @@ class PrepareInitialDatasetProcedure:
             self.update_atomic_energies = True
 
         else:
+            if RANK == 0:
+                logging.info("Using specified atomic eneriges.")
             self.ensemble_atomic_energies_dict = {
                 tag: self.atomic_energies_dict for tag in self.seeds_tags_dict.keys()
             }
@@ -389,18 +406,17 @@ class PrepareInitialDatasetProcedure:
         for _ in range(self.skip_step):
             dyn.step()
 
-        if RANK == 0:
-            
-            current_energy = np.array(atoms.get_potential_energy())
-            current_forces = np.array(atoms.get_forces())
-            current_point = atoms.copy()
-            # MACE reads energies and forces from the info & arrays dictionary
-            current_point.info['energy'] = current_energy
-            current_point.arrays['forces'] = current_forces 
+        current_energy = np.array(atoms.get_potential_energy())
+        current_forces = np.array(atoms.get_forces())
+        current_point = atoms.copy()
+        # MACE reads energies and forces from the info & arrays dictionary
+        current_point.info['energy'] = current_energy
+        current_point.arrays['forces'] = current_forces 
 
         if self.create_restart:
+            current_point.set_velocities(atoms.get_velocities())
+            current_point.set_masses(atoms.get_masses())
             self.last_point = current_point
-            self.last_velocities = dyn.v
         
         return current_point
     
@@ -443,7 +459,8 @@ class PrepareInitialDatasetProcedure:
                     model=self.ensemble[tag],
                     tag=tag,
                     restart=self.restart,
-                    convergence=True
+                    convergence=True,
+                    checkpoint_dir=self.checkpoints_dir,
                 )
             best_valid_loss = np.inf
             epoch = 0
@@ -534,7 +551,7 @@ class PrepareInitialDatasetProcedure:
                         "Maximum number of epochs reached. Best model based on validation loss saved"
                     )
 
-class InitalDatasetProcedure(PrepareInitialDatasetProcedure):
+class InitialDatasetProcedure(PrepareInitialDatasetProcedure):
     """
     Class to generate the initial dataset for the active learning procedure. Handles the
     molecular dynamics simulations, the sampling of points, the training of the ensemble
@@ -542,6 +559,33 @@ class InitalDatasetProcedure(PrepareInitialDatasetProcedure):
 
     """
     
+    def sample_points(
+            self
+            ):
+        """
+        Dummy function to sample points. This function should be overwritten in the
+        derived classes.
+        """
+        raise NotImplementedError
+    
+    def setup_calcs(
+            self
+            ):
+        """
+        Dummy function to set up the calculators. This function should be overwritten in the
+        derived classes.
+        """
+        raise NotImplementedError
+    
+    def close_aims(
+            self
+            ):
+        """
+        Dummy function to close the AIMS calculators. This function should be overwritten in the
+        derived classes.
+        """
+        raise NotImplementedError
+
     def run(self):
         """
         Main function to run the initial dataset generation procedure.
@@ -552,12 +596,10 @@ class InitalDatasetProcedure(PrepareInitialDatasetProcedure):
         
         # initializing md and FHI aims
         self.dyn = self.setup_md(self.atoms, md_settings=self.md_settings)
-        self.atoms.calc = self.setup_aims_calculator(
-            self.atoms
-            )
+        
+        self.setup_calcs()
         
         current_valid = np.inf
-        step = 0
         # criterion for initial dataset is multiple of the desired accuracy
         # TODO: add maximum initial dataset len criterion
         while (
@@ -566,13 +608,10 @@ class InitalDatasetProcedure(PrepareInitialDatasetProcedure):
         ):
             
             if RANK == 0:
-                logging.info(f"Sampling new points at step {step}.")
+                logging.info(f"Sampling new points at step {self.step}.")
             
-            self.sampled_points = [
-                self.run_MD(
-                    self.atoms, self.dyn
-                    ) for _ in range(self.ensemble_size * self.n_samples)]
-            
+            self.sampled_points = self.sample_points()
+            self.step += 1
             if RANK == 0:
                 random.shuffle(self.sampled_points)
                 # each ensemble member collects their respective points
@@ -589,7 +628,7 @@ class InitalDatasetProcedure(PrepareInitialDatasetProcedure):
                         new_points=member_points,
                         mace_set=self.ensemble_mace_sets[tag],
                         ase_set=self.ensemble_ase_sets[tag],
-                        valid_split=self.initial_valid_ratio,
+                        valid_split=self.valid_ratio,
                         z_table=self.z_table,
                         seed=self.seed,
                         r_max=self.r_max,
@@ -638,7 +677,6 @@ class InitalDatasetProcedure(PrepareInitialDatasetProcedure):
                     #    f"Updated model auxiliaries for '{tag}'."
                     #)
 
-                    step += 1
                 logging.info("Training.")
                 ensemble_valid_losses = {
                         tag: np.inf for tag in self.ensemble.keys()
@@ -717,22 +755,17 @@ class InitalDatasetProcedure(PrepareInitialDatasetProcedure):
                                 initial=True,
                             )
                         if self.create_restart:
-                            write(
-                                f"restart/last_geometry.in",
-                                self.last_point,
-                            )
-                            np.savez(
-                                f"restart/last_velocities.npz",
-                                self.last_velocities
-                            )
+                            self.init_ds_restart_dict["last_geometry"] = self.last_point
+                            self.init_ds_restart_dict["step"] = self.step
                             if self.analysis:
-                                np.savez(
-                                    "restart/last_initial_losses.npz",
-                                    **self.collect_losses
-                                )
+                                self.init_ds_restart_dict["last_initial_losses"] = self.collect_losses
+                            np.save(
+                                "restart/initial_ds/initial_ds_restart.npy",
+                                self.init_ds_restart_dict
+                            )
                         if self.desired_acc * self.lamb >= current_valid:
                             logging.info(
-                                f"Accuracy criterion reached at step {step}."
+                                f"Accuracy criterion reached at step {self.step}."
                             )
                             logging.info(
                                 f"Criterion: {self.desired_acc * self.lamb}; Current accuracy: {current_valid}."
@@ -755,14 +788,6 @@ class InitalDatasetProcedure(PrepareInitialDatasetProcedure):
             current_valid = MPI.COMM_WORLD.bcast(current_valid, root=0)
             self.epoch = MPI.COMM_WORLD.bcast(self.epoch, root=0)
             MPI.COMM_WORLD.Barrier()
-            if RANK == 0:
-                if self.analysis:
-                    np.savez(
-                        "analysis/initial_losses.npz",
-                        **self.collect_losses
-                    )
-        
-        self.atoms.calc.close()
         
         if RANK == 0:
             for tag, model in self.ensemble.items():
@@ -777,9 +802,52 @@ class InitalDatasetProcedure(PrepareInitialDatasetProcedure):
             # (used if the procedure is restarted and the user wants to converge)
             with open("restart/initial_ds_done.txt", "w") as f:
                 f.write("Initial dataset generation is done.")
+        self.close_aims()
         return 0
 
-class InitialDSFoundational(PrepareInitialDatasetProcedure):
+class InitialDatasetAIMD(InitialDatasetProcedure):
+    """
+    Class to generate the initial dataset for the active learning procedure. Handles the
+    molecular dynamics simulations, the sampling of points, the training of the ensemble
+    members and the saving of the datasets.
+
+    """
+    def sample_points(
+            self
+            )-> list:
+        """
+        Samples geometries solely using AIMD.
+                
+        Returns:
+            list: List of ASE Atoms objects.
+        """
+        return [
+                self.run_MD(
+                    atoms=self.atoms,
+                    dyn=self.dyn
+                    ) for _ in range(self.ensemble_size * self.n_samples)
+                ]
+    
+    def setup_calcs(
+            self
+            ):
+        """
+        Sets up the calculators for the initial dataset generation. In this case it sets up the
+        AIMS calculators for AIMD.
+        """
+        self.atoms.calc = self.setup_aims_calculator(
+            self.atoms
+            )
+        
+    def close_aims(
+            self
+            ):
+        """
+        Kills the AIMS calculators.
+        """
+        self.atoms.calc.close()
+
+class InitialDatasetFoundational(InitialDatasetProcedure):
 
     def setup_foundational(self):
         calc = mace_mp(
@@ -797,16 +865,39 @@ class InitialDSFoundational(PrepareInitialDatasetProcedure):
         current_point.info["energy"] = self.aims_calc.results["energy"]
         current_point.arrays["forces"] = self.aims_calc.results["forces"]
         return current_point
-    
-    def run(self):
+
+    def sample_points(
+            self
+            )-> list:
         """
-        Main function to run the initial dataset generation procedure.
-        It samples points and trains the ensemble members until the desired accuracy
-        is reached or the maximum number of epochs is reached.
-        """
+        Samples geometries using foundational model and recalculates the energies and forces with DFT.
         
-        # initializing md and FHI aims
-        self.dyn = self.setup_md(self.atoms, md_settings=self.md_settings)
+        Returns:
+            list: List of ASE Atoms objects.
+        """
+        sampled_points = []
+        for _ in range(self.ensemble_size * self.n_samples):
+            if RANK == 0:
+                current_point = self.run_MD(self.atoms, self.dyn)
+                sampled_points.append(
+                    current_point
+                )
+        MPI.COMM_WORLD.Barrier()
+        sampled_points = MPI.COMM_WORLD.bcast(sampled_points, root=0)
+        MPI.COMM_WORLD.Barrier()
+        if RANK == 0:
+            logging.info(f"Recalculating energies and forces with DFT.")
+        sampled_points = [self.recalc_aims(atoms) for atoms in sampled_points]
+        return sampled_points
+    
+    def setup_calcs(
+            self
+            ):
+        """
+        Sets up the calculators for the initial dataset generation. In this case it sets up the
+        AIMS calculators for recalculating the energies and forces and the foundational model for
+        MD.
+        """
         self.aims_calc = self.setup_aims_calculator(
             self.atoms
             )
@@ -814,237 +905,11 @@ class InitialDSFoundational(PrepareInitialDatasetProcedure):
             logging.info(f"Initial dataset generation with foundational model of size: {self.initial_foundational_size}.")
             self.atoms.calc = self.setup_foundational()
         
-        current_valid = np.inf
-        step = 0
-        # criterion for initial dataset is multiple of the desired accuracy
-        # TODO: add maximum initial dataset len criterion
-        while (
-            self.desired_acc * self.lamb <= current_valid 
-            and self.epoch < self.max_initial_epochs
-        ):
-            
-            if RANK == 0:
-                logging.info(f"Sampling new points at step {step}.")
-            
-            # for doing this in parallel:
-            # immediately after self.skip mace md steps:
-            # 1. broadcast point 
-            # 2. start DFT
-            # 3. continue MD with mace-mp0 in parallel
-            # repeat until self.ensemble * self.n_samples points are sampled
-            # 
-            # here, in serial, i first collect all points and then run dft
-            # so that i have to broadcast the points only once
-
-            self.sampled_points = []
-            for _ in range(self.ensemble_size * self.n_samples):
-                if RANK == 0:
-                    current_point = self.run_MD(self.atoms, self.dyn)
-                    self.sampled_points.append(
-                        current_point
-                    )
-            MPI.COMM_WORLD.Barrier()
-            self.sampled_points = MPI.COMM_WORLD.bcast(self.sampled_points, root=0)
-            MPI.COMM_WORLD.Barrier()
-
-            self.sampled_points = [self.recalc_aims(atoms) for atoms in self.sampled_points]
-
-            if RANK == 0:
-                random.shuffle(self.sampled_points)
-                # each ensemble member collects their respective points
-                for number, (tag, model) in enumerate(self.ensemble.items()):
-
-                    member_points = self.sampled_points[
-                        self.n_samples * number : self.n_samples * (number + 1)
-                    ]
-                    
-                    (
-                        self.ensemble_ase_sets[tag],
-                        self.ensemble_mace_sets[tag],
-                    ) = update_datasets(
-                        new_points=member_points,
-                        mace_set=self.ensemble_mace_sets[tag],
-                        ase_set=self.ensemble_ase_sets[tag],
-                        valid_split=self.initial_valid_ratio,
-                        z_table=self.z_table,
-                        seed=self.seed,
-                        r_max=self.r_max,
-                    )
-                    
-                    batch_size = (
-                        1
-                        if len(self.ensemble_mace_sets[tag]["train"])
-                        < self.set_batch_size
-                        else self.set_batch_size
-                    )
-                    valid_batch_size = (
-                        1
-                        if len(self.ensemble_mace_sets[tag]["valid"])
-                        < self.set_valid_batch_size
-                        else self.set_valid_batch_size
-                    )
-
-                    (
-                        self.ensemble_mace_sets[tag]["train_loader"],
-                        self.ensemble_mace_sets[tag]["valid_loader"],
-                    ) = create_dataloader(
-                        self.ensemble_mace_sets[tag]["train"],
-                        self.ensemble_mace_sets[tag]["valid"],
-                        batch_size,
-                        valid_batch_size,
-                    )
-                    # because we are continously training the model we
-                    # have to update the average number of neighbors, shifts
-                    # and the scaling factor also continously
-                    update_model_auxiliaries(
-                        model=model,
-                        mace_sets=self.ensemble_mace_sets[tag],
-                        atomic_energies=self.ensemble_atomic_energies[tag],
-                        scaling=self.scaling,
-                        update_atomic_energies=self.update_atomic_energies,
-                        z_table=self.z_table,
-                        atomic_energies_dict=self.ensemble_atomic_energies_dict[tag],
-                        dtype=self.dtype,
-                        device=self.device,
-                    )
-                    logging.info(
-                        f"Training set size for '{tag}': {len(self.ensemble_mace_sets[tag]['train'])}; Validation set size: {len(self.ensemble_mace_sets[tag]['valid'])}."
-                    )
-                    #logging.info(
-                    #    f"Updated model auxiliaries for '{tag}'."
-                    #)
-
-                    step += 1
-                logging.info("Training.")
-                ensemble_valid_losses = {
-                        tag: np.inf for tag in self.ensemble.keys()
-                    }
-                for _ in range(self.intermediate_epochs):
-                    # each member gets trained individually
-                    for tag, model in self.ensemble.items():
-
-                        logger = tools.MetricsLogger(
-                            directory=self.mace_settings["GENERAL"]["results_dir"],
-                            tag=tag + "_train",
-                        )
-                        train_epoch(
-                            model=model,
-                            train_loader=self.ensemble_mace_sets[tag][
-                                "train_loader"
-                            ],
-                            loss_fn=self.training_setups[tag]["loss_fn"],
-                            optimizer=self.training_setups[tag]["optimizer"],
-                            lr_scheduler=self.training_setups[tag]["lr_scheduler"],
-                            epoch=self.epoch,
-                            start_epoch=0,
-                            valid_loss=ensemble_valid_losses[tag],
-                            logger=logger,
-                            device=self.training_setups[tag]["device"],
-                            max_grad_norm=self.training_setups[tag][
-                                "max_grad_norm"
-                            ],
-                            output_args=self.training_setups[tag]["output_args"],
-                            ema=self.training_setups[tag]["ema"],
-                        )
-                    # the validation errors are averages over the ensemble members
-                    if (
-                        self.epoch % self.valid_skip == 0
-                        or (self.epoch + 1) % self.valid_skip == 0
-                    ):
-                        (
-                            ensemble_valid_losses,
-                            valid_loss,
-                            metrics,
-                        ) = validate_epoch_ensemble(
-                            ensemble=self.ensemble,
-                            training_setups=self.training_setups,
-                            ensemble_set=self.ensemble_mace_sets,
-                            logger=logger,
-                            log_errors=self.mace_settings["MISC"]["error_table"],
-                            epoch=self.epoch,
-                        )
-                        current_valid = metrics["mae_f"]
-                        
-                        if self.analysis:
-                            self.collect_losses["epoch"].append(
-                                self.epoch
-                            )
-                            self.collect_losses["avg_losses"].append(
-                                valid_loss
-                            )
-                            self.collect_losses["ensemble_losses"].append(
-                                ensemble_valid_losses
-                            )
-                        
-                        for tag, model in self.ensemble.items():
-                            save_checkpoint(
-                                checkpoint_handler=self.training_setups[tag][
-                                    "checkpoint_handler"
-                                ],
-                                training_setup=self.training_setups[tag],
-                                model=model,
-                                epoch=self.epoch,
-                                keep_last=False,
-                            )
-                            save_datasets(
-                                self.ensemble,
-                                self.ensemble_ase_sets,
-                                path=self.dataset_dir / "initial",
-                                initial=True,
-                            )
-                        if self.create_restart:
-                            write(
-                                f"restart/last_geometry.in",
-                                self.last_point,
-                            )
-                            np.savez(
-                                f"restart/last_velocities.npz",
-                                self.last_velocities
-                            )
-                        if self.desired_acc * self.lamb >= current_valid:
-                            logging.info(
-                                f"Accuracy criterion reached at step {step}."
-                            )
-                            logging.info(
-                                f"Criterion: {self.desired_acc * self.lamb}; Current accuracy: {current_valid}."
-                            )
-                                
-                            break
-
-                    self.epoch += 1
-
-
-                if (
-                    self.epoch == self.max_initial_epochs
-                ):  # TODO: change to a different variable (shares with al-algo right now)
-                    logging.info(f"Maximum number of epochs reached.")
-
-            # only one worker is doing the training right now,
-            # so we have to broadcast the criterion so they
-            # don't get stuck in the while loop
-            MPI.COMM_WORLD.Barrier()
-            current_valid = MPI.COMM_WORLD.bcast(current_valid, root=0)
-            self.epoch = MPI.COMM_WORLD.bcast(self.epoch, root=0)
-            MPI.COMM_WORLD.Barrier()
-            if RANK == 0:
-                if self.analysis:
-                    np.savez(
-                        "analysis/initial_losses.npz",
-                        **self.collect_losses
-                    )
-        if RANK == 0:
-            for tag, model in self.ensemble.items():
-                torch.save(
-                    model,
-                    Path(
-                        self.mace_settings["GENERAL"]["model_dir"]
-                    )
-                    / (tag + ".model"),
-                )
+    
+    def close_aims(
+            self
+            ):
+        """
+        Kills the AIMS calculator.
+        """
         self.aims_calc.close()
-        if RANK == 0:
-            # save a simple text file claryfing that the initial dataset generation is done
-            # (used if the procedure is restarted and the user wants to converge)
-            with open("restart/initial_ds_done.txt", "w") as f:
-                f.write("Initial dataset generation is done.")
-        return 0

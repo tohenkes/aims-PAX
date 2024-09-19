@@ -986,6 +986,7 @@ def get_uncert_alpha(
 def ensemble_training_setups(
         ensemble: dict,
         mace_settings: dict,
+        checkpoints_dir: str = None,
         restart: bool = False,
         ) -> dict:
     training_setups = {}
@@ -994,7 +995,8 @@ def ensemble_training_setups(
             settings=mace_settings,
             model=model,
             tag=tag,
-            restart=restart
+            restart=restart,
+            checkpoints_dir=checkpoints_dir,
         )
     return training_setups
 

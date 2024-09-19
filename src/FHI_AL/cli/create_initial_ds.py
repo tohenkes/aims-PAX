@@ -1,4 +1,4 @@
-from FHI_AL.procedures.initial_dataset import InitalDatasetProcedure, InitialDSFoundational
+from FHI_AL.procedures.initial_dataset import InitialDatasetAIMD, InitialDatasetFoundational
 from yaml import safe_load
 from mpi4py import MPI
 
@@ -9,13 +9,13 @@ def main():
     with open("./active_learning_settings.yaml", "r") as file:
         al_settings = safe_load(file)
 
-    if al_settings['ACTIVE_LEARNING']["initial_foundational_size"] is None:
-        initial_ds = InitalDatasetProcedure(
+    if al_settings['ACTIVE_LEARNING']["initial_sampling"].lower() == "aimd":
+        initial_ds = InitialDatasetAIMD(
             mace_settings=mace_settings,
             al_settings=al_settings
         )
-    else:
-        initial_ds = InitialDSFoundational(
+    elif al_settings['ACTIVE_LEARNING']["initial_sampling"].lower() == "mace-mp0":
+        initial_ds = InitialDatasetFoundational(
             mace_settings=mace_settings,
             al_settings=al_settings
         )

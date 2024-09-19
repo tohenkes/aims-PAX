@@ -27,13 +27,15 @@ inside the directory.
 To run the whole thing, one has to specify the settings for AIMS, the MACE model and active learning. 
 
 1. make sure the following files are in the working directory:
-    - control.in, 
-    - geometry.in,
-    - mace_settings.yaml,
-    - and active_learning_settings.yaml 
-2. ``` mpirun -n $CORES FHI_AL ```
+    - ```control.in```, 
+    - ```geometry.in```,
+    - ```mace_settings.yaml```,
+    - ```and active_learning_settings.yaml``` 
+2. ``` mpirun -n $CORES FHI_AL ``` (or using srun on a slurm system)
 
 The settings are explained below and the script automatically runs the all the steps explained above. Both procedures, initial dataset acquisition and active learning, are classes that can be used independently from each other.
+
+To only create an initial dataset you can run ```FHI_AL-initial-ds ``` in the terminal. Equivalently, to only run the active learning procedure (given that the previous step has been done or all the necessary files are present), just run ```FHI_AL-al```.
 
 ## The workflow 
 
@@ -41,24 +43,28 @@ The overall workflow of the procedure and some comments thereupon are written he
 
 **Creating the initial ensemble and dataset.**
 
-In the beginning a set of MACE models is trained on a initial dataset to serve as a starting point for the actual active learning. Each ensemble member gets their own initial training and validation set. For that, *ab initio* MD is run (one trajectory) using FHI AIMS and ASI/ASE. After a set number of samples  is collected the models are trained on this and validated. Afterwards, new points are sampled and this loop is repeated until a desired level of accurcay of the ensemble on the validation datasets is reached.  
-The model parameters are kept and updated throughout and are not reinitialized when new points are added (warm start).  
-In principle the training and sampling can be done in parallel. The major bottleneck is the AIMD but depending on the size of the model, number of epochs and system size the parellelization can provide a significant speedup.  
+In the beginning a set of MACE models is trained on a initial dataset to serve as a starting point for the actual active learning. Each ensemble member gets their own initial training and validation set. For that, *ab initio* MD is run (one trajectory) using FHI AIMS and ASI/ASE. Alternatively, the *foundational* model MACE-MP0 is used to sample strucutres, which are subsequently recomputed using DFT. This is recommended as one ideally wants to have uncorrelated structures and MACE-MP0 is much cheaper to evaluate and gives reasonable structures. After a set number of samples  is collected the models are trained on these and are validated. Afterwards, new points are sampled and this loop is repeated until a desired level of accurcay of the ensemble on the validation datasets is reached.   
+The model parameters are kept and updated throughout and are not reinitialized when new points are added (warm start/finetuning).  
+In principle the training and sampling can be done in parallel. The major bottleneck is the AIMD/DFT but depending on the size of the model, number of epochs and system size the parellelization can provide a significant speedup.  
 Optionally, the model(s) can be converged on the dataset.
 
-*obviously this handdrawn scheme is only temporary*
-![Image](readme_figs/initial_dataset.jpg)
+![Image](readme_figs/parallel_algorithm_flowchart.drawio.png)
 
 **Active Learning**
 
-During the active learning procedure, multiple MD trajectories are launched and run with the MLFF model(s). At a specified interval the uncertainty of the forces are computed. After a warmup (currently 10 uncertainty estimations) the moving average of the uncertainties is calculated. Using this the uncertainty threshold (with c~x) is computed. If the threshold is crossed during MD the DFT energies and forces are calculated for that point. The point is then added to the training or validation set.  
+During the active learning procedure, multiple MD trajectories (or one is) are launched and run with the MLFF model(s). At a specified interval the uncertainty of the forces are computed. After a warmup (currently 10 uncertainty estimations) the moving average of the uncertainties is calculated. Using this the uncertainty threshold (with c~x) is computed. If the threshold is crossed during MD the DFT energies and forces are calculated for that point. The point is then added to the training or validation set.  
 In the former case the MD is halted for the given trajectory and when the program loops back to it the models are trained for some epochs instead before continuing to the next trajectory. This state is kept until a maximum number of epochs is reached and the trajectory is propageted again.  
 Currently, everything waits until FHI AIMS is done. In theory, while FHI AIMS is running, the other trajectories can be propagated or models can be trained simultaneously. 
 Similarly to the creation of the initial dataset, the models are updated throughout the whole process and are not reinitialized. As we are only adding a few points at a time this can lead to models getting stuck on local minima. If this happens, the optimizer state is reinitialized which is supposed to kick the model out of the local minimum. Albeit a bit drastic and resulting in error spikes, this makes the whole procedure work in the first place.  
 For a (fixed) interval, points from the MLFF MD are taken and computed using FHI AIMS. The idea is that we want to check every so often if the uncertainty is too low while the actual error is very high. This is not really implemented yet, as in, it is not really doing anything with the information except saving it. Perhaps one could use a moving average of the actual error here to create a threshold and if it is crossed one adds this point to the training set. This can also be usefull in parallel mode, when all trajectories are in training mode or running the MDs the GPU is occupied and the CPU is idle.
 
-*obviously this handdrawn scheme is only temporary*
-![Image](readme_figs/al.jpg)
+![Image](readme_figs/al_flowchart_example.drawio.png)
+
+One major avenue in the future will be using an ensemble of foundational models and fine tune them using the same scheme. This would remove the necessity of creating an initial dataset but restricts the models architecture to the one of the foundational model. By running 
+
+**Atomic Energies**
+
+It is highly recommended to use the isolated atomic energies of the elements in a given system as the *zero point* energy in MACE. This enables the model have the correct asymptotic behavior when dissocating molecules. The package includes a script that calculates the energies of all the elements found in a the ```geometry.in``` file. For this run ```FHI_AL-atomic-energies```. Make sure to have defined the path to aims, the species directory in the ```active_learning_settings.yaml``` and also that a ```control.in``` file is present. The results are saved in a log file. The energies can then be included in ```mace_settings.yaml```.
 
 ## Settings 
 
@@ -66,7 +72,7 @@ For a (fixed) interval, points from the MLFF MD are taken and computed using FHI
 
 The settings here are the same as for usual FHI aims calculations and are 
 parsed internally in the script. MD settings are not specified here.
-Currently only one chemical species can serve as an input (geometry.in).
+Currently only one chemical species can serve as an input (```geometry.in```).
 
 ### MACE settings 
 
@@ -101,14 +107,14 @@ following subdictionaries and keys:
     - **desired_acc** *(float)*: Force MAE that the ensemble should reach on the validation set. 
     - **lambda** *Rename* *(float)*: lambda * desired_acc determines the Force MAE that the ensemble should reach on the validation set in the initial dataset collection phase.
     - **n_samples** *(int)*: Number of points that are sampled for each ensemble member using *ab initio* MD in the initial dataset collection phase before the models are trained.
-    - **initial_valid_ratio** *(float)*: Ratio of n_samples that is added to the validation set.
+    - **valid_ratio** *(float)*: Ratio of sampled points that is added to the validation set.
     - **converge_initial** *(bool)*: Whether to converge the model(s) on the initial dataset or not.
     - **scheduler_initial** *(bool)*: Whether to use a learning rate scheduler when training the model(s) during the initial dataset collection phase.
     - **max_initial_epochs** *(int)*: Maximum numbers of epochs that are used when training the model(s) during the initial dataset collection phase.
     - **max_epochs_worker** *(int)*: Maximum number of epochs before the trajectory worker changes back to sampling instead of training mode.
     - **max_final_epochs** *(int)*: Maximum numbers of epochs when converging the model(s) on a dataset.
     - **intermediate_epochs** *(int)*: Number of epochs performed by a worker during the active learning phase before switching to the next worker.
-    - **patience** *(int)*: Number of epochs without improvement before the training is stopped (for converging) or the optimizer state is reset (for training during active learning).
+    - **patience** *(int)*: Number of epochs without improvement before the training is stopped (for converging).
     - **max_MD_steps** *(int)*: Maximum number of steps taken using the MLFF during active learning per trajectory.
     - **max_set_size** *(int)*: Maximum size of training set size before procedure is stopped.
     - **valid_skip** *(int)*: How many epochs to skip before evaluating the model(s) on the validation set.
@@ -116,12 +122,15 @@ following subdictionaries and keys:
     - **ensemble_size** *(int)*: Number of models in the ensemble.
     - **c_x** *Rename* *(float)*: Parameter to calculate the uncertainty threshold based on the formula threshold = moving_avg_uncert * (1 - c_x).
     - **dataset_dir** *(str)*: Path to save the generated datasets to (see below).
-    - **skip_step_initial** *(int)*: How many MD steps to skip during *ab initio* sampling for initial dataset.
+    - **skip_step_initial** *(int)*: How many MD steps to skip during *ab initio*/foundational model sampling for initial dataset.
     - **skip_step_mlff** *(int)*: How many MD steps to skip during MLFF sampling for active learning.
     - **num_trajectories** *(int)*: How many trajectories are sampled from during the active learning phase.
     - **species_dir** *(str)*: Path to the directory containing the FHI AIMS species defaults.
     - **aims_lib_path** *(str)*: Path to the compiled FHI AIMS library (*not* executable).
     - **margin** *(float)*: The threshold used to determine whether a change in error is considered an improvement, contributing to metrics such as patience or convergence.
+    - **analysis** *(bool)*: If True the losses and uncertainties are saved throughout the whole process.
+    - **initial_sampling** *(str)*: Choice of method for sampling the initial points when creating the initial training sets. For now the choice are: ```"mace-mp0"``` or ```"aimd"```.
+    - **initial_foundational_size** *(str)*: If one sets ```initial_sampling = "mace-mp0"```, the size (```"small"```,```"medium"```,```"large"```) of the foundational model can be chosen here. It is recommended to use ```"small"```.
 
 For now we have only one MD setting for all trajectories and the selection for settings is limited to Langevin dynamics. Currently these settings are used for *ab initio* and MLFF MD.
 - MD
@@ -131,7 +140,10 @@ For now we have only one MD setting for all trajectories and the selection for s
     - **friction** *(float)*: Friction for Langevin dynamics (in fs^-1).
     - **seed** *(int)*: RNG seed for Langevin dynamics.
 
-## Folders 
+- MISC
+    - **create_restart** *(bool)*: If True then each time a checkpoint for the model training is created and if the ensemble runs MD for a long time without interruption, important parameters are saved in a dictionary. The run can then be restarted using this by just running the respecitve command for the procedure again. 
+
+## Folders & Files
 
 - The script creates some folders and files these are:
     - **checkpoints/**: model checkpoints during training are saved here
@@ -141,15 +153,6 @@ For now we have only one MD setting for all trajectories and the selection for s
     - **initial_dataset.log**: Log file for the creation of the initial dataset. Loss and errors are ensemble averages.
     - **AL.log**: Log file for the actual active learning procedure. Loss and errors are ensemble averages.
 
-## Folders 
-
-- The script creates some folders and files these are:
-    - checkpoints/: model checkpoints during training are saved here
-    - data/: the initial and final datasets are saved here, as well as a dictionary that specifies the seeds for each ensemble member *(TODO: maybe move somewhere else)*
-    - results/ *(TODO: rename)*: losses over time for each individual ensemble member
-    - model/: saves the final model(s) here
-    - initial_dataset.log: Log file for the creation of the initial dataset. Loss and errors are ensemble averages.
-    - AL.log: Log file for the actual active learning procedure. Loss and errors are ensemble averages.
 
 
 # ToDo
@@ -172,10 +175,10 @@ For now we have only one MD setting for all trajectories and the selection for s
 - [ ] unit tests
 - [x] console scripts for initial dataset/active learning separately
 - [ ] implement default settings and create checks when reading the input
-- [ ] make restarting the procedure possible
+- [x] make restarting the procedure possible
 - [x] separate skip_step for initial and al
 - [ ] compile models at the end
-- [ ] foundation model initial geometries
+- [x] foundation model initial geometries
 - [ ] fine-tuning of foundational models
 - [ ] select best performing ensembl member/knowledge distillation
 
