@@ -21,11 +21,10 @@ def main():
         )
     MPI.COMM_WORLD.Barrier()
     
-    #check if initial_ds_done.txt exists
     if not initial_ds.check_initial_ds_done():
         initial_ds.run()
         
-    if al_settings['ACTIVE_LEARNING']["converge_initial"]:
+    if al_settings['ACTIVE_LEARNING'].get("converge_initial", False):
         initial_ds.converge() 
 
     MPI.COMM_WORLD.Barrier()

@@ -3,14 +3,15 @@ ACTIVE_LEARNING:
   lambda: 10.
   n_samples: 5
   valid_ratio: 0.3 # e.g. 0.3 means 30% of the data is used for validation
-  converge_initial: False
+  converge_initial: True
+  converge_al: True
   scheduler_initial: True
-  max_initial_epochs: 30
+  max_initial_epochs: 20
   max_epochs_worker: 10
   max_final_epochs: 200
   intermediate_epochs: 10
   patience: 20
-  max_MD_steps: 1000
+  max_MD_steps: 20
   max_set_size: 300
   valid_skip: 5
   sanity_skip: 10

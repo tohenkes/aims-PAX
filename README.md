@@ -109,6 +109,7 @@ following subdictionaries and keys:
     - **n_samples** *(int)*: Number of points that are sampled for each ensemble member using *ab initio* MD in the initial dataset collection phase before the models are trained.
     - **valid_ratio** *(float)*: Ratio of sampled points that is added to the validation set.
     - **converge_initial** *(bool)*: Whether to converge the model(s) on the initial dataset or not.
+    - **converge_al** *(bool)*: Whether to converge the model(s) on the active learned dataset or not.
     - **scheduler_initial** *(bool)*: Whether to use a learning rate scheduler when training the model(s) during the initial dataset collection phase.
     - **max_initial_epochs** *(int)*: Maximum numbers of epochs that are used when training the model(s) during the initial dataset collection phase.
     - **max_epochs_worker** *(int)*: Maximum number of epochs before the trajectory worker changes back to sampling instead of training mode.
@@ -152,6 +153,7 @@ For now we have only one MD setting for all trajectories and the selection for s
     - **model/**: saves the final model(s) here
     - **initial_dataset.log**: Log file for the creation of the initial dataset. Loss and errors are ensemble averages.
     - **AL.log**: Log file for the actual active learning procedure. Loss and errors are ensemble averages.
+    - **restart/**: Contains dictionaries for restarting the procedures from a checkpoint.
 
 
 

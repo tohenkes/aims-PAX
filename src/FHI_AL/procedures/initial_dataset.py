@@ -231,9 +231,15 @@ class PrepareInitialDatasetProcedure:
         if self.create_restart:
             self.init_ds_restart_dict = {
                 "last_geometry": None,
-                "last_initial_losses": None,           
+                "last_initial_losses": None,
+                "initial_ds_done": False,           
             }
-        
+    
+    def update_restart_dict(self):
+        self.init_ds_restart_dict["last_geometry"] = self.last_point
+        self.init_ds_restart_dict["step"] = self.step
+        if self.analysis:
+            self.init_ds_restart_dict["last_initial_losses"] = self.collect_losses
         
     def create_folders(self):
         """
@@ -383,11 +389,14 @@ class PrepareInitialDatasetProcedure:
             logging.info(f'{self.ensemble_atomic_energies_dict[list(self.seeds_tags_dict.keys())[0]]}')
     
     def check_initial_ds_done(self):
-        check = os.path.exists("./restart/initial_ds_done.txt")
-        if check:
-            if RANK == 0:
+        if self.create_restart:
+            check = self.init_ds_restart_dict.get("initial_ds_done", False)
+            if check:
                 logging.info('Initial dataset generation is already done. Closing')
-        return check
+            return check
+        else:
+            return False
+        
 
     def run_MD(
             self,
@@ -460,7 +469,7 @@ class PrepareInitialDatasetProcedure:
                     tag=tag,
                     restart=self.restart,
                     convergence=True,
-                    checkpoint_dir=self.checkpoints_dir,
+                    checkpoints_dir=self.checkpoints_dir,
                 )
             best_valid_loss = np.inf
             epoch = 0
@@ -517,6 +526,7 @@ class PrepareInitialDatasetProcedure:
                     )
                     if best_valid_loss > valid_loss and (best_valid_loss - valid_loss) > self.margin:
                         best_valid_loss = valid_loss
+                        best_epoch = epoch
                         no_improvement = 0
                         for tag, model in self.ensemble.items():
                             torch.save(
@@ -548,7 +558,7 @@ class PrepareInitialDatasetProcedure:
                     break
                 if j == self.max_final_epochs - 1:
                     logging.info(
-                        "Maximum number of epochs reached. Best model based on validation loss saved"
+                        f"Maximum number of epochs reached. Best model (Epoch {best_epoch}) based on validation loss saved."
                     )
 
 class InitialDatasetProcedure(PrepareInitialDatasetProcedure):
@@ -755,10 +765,7 @@ class InitialDatasetProcedure(PrepareInitialDatasetProcedure):
                                 initial=True,
                             )
                         if self.create_restart:
-                            self.init_ds_restart_dict["last_geometry"] = self.last_point
-                            self.init_ds_restart_dict["step"] = self.step
-                            if self.analysis:
-                                self.init_ds_restart_dict["last_initial_losses"] = self.collect_losses
+                            self.update_restart_dict()
                             np.save(
                                 "restart/initial_ds/initial_ds_restart.npy",
                                 self.init_ds_restart_dict
@@ -798,10 +805,13 @@ class InitialDatasetProcedure(PrepareInitialDatasetProcedure):
                     )
                     / (tag + ".model"),
                 )
-            # save a simple text file claryfing that the initial dataset generation is done
-            # (used if the procedure is restarted and the user wants to converge)
-            with open("restart/initial_ds_done.txt", "w") as f:
-                f.write("Initial dataset generation is done.")
+            if self.restart:
+                self.update_restart_dict()
+                self.init_ds_restart_dict["initial_ds_done"] = True
+                np.save(
+                    "restart/initial_ds/initial_ds_restart.npy",
+                    self.init_ds_restart_dict
+                )
         self.close_aims()
         return 0
 

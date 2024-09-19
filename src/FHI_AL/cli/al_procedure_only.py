@@ -15,8 +15,11 @@ def main():
     )
     MPI.COMM_WORLD.Barrier()
 
-    al.run()
-    al.converge()
+    if not al.check_al_done():
+        al.run()
+    
+    if al_settings['ACTIVE_LEARNING'].get("converge_al", False):
+        al.converge()
 
     MPI.COMM_WORLD.Barrier()
     MPI.Finalize()

@@ -44,6 +44,9 @@ WORLD_COMM = MPI.COMM_WORLD
 WORLD_SIZE = WORLD_COMM.Get_size()
 RANK = WORLD_COMM.Get_rank()
 
+#RESTART DURING CONVERGENCE, SWITCH FORCE AND ENERGY WEIGHT DURING CONVERGENCE
+
+
 #TODO: refactor this. too much in one class. maybe restart class etc.
 class PrepareALProcedure:
     """
@@ -303,7 +306,8 @@ class PrepareALProcedure:
                 'num_workers_waiting': None,
                 'total_epoch': None,
                 'check': None,
-                'uncertainties': None
+                'uncertainties': None,
+                'al_done': False,
             }
             self.save_restart = False # is set to true in training when checkpoint is saved
             
@@ -517,7 +521,16 @@ class PrepareALProcedure:
         MaxwellBoltzmannDistribution(atoms, temperature_K=md_settings['temperature'])
     
         return dyn
-
+    
+    def check_al_done(self):
+        if self.create_restart:
+            check = self.al_restart_dict.get("al_done", False)
+            if check:
+                if RANK == 0:
+                    logging.info('Active learning procedure is already done. Closing')
+            return check
+        else:
+            return False
 
 class ALProcedure(PrepareALProcedure):
     """
@@ -834,7 +847,7 @@ class ALProcedure(PrepareALProcedure):
 
             # somewhat arbitrary; i just want to save checkpoints if the MD phase
             # is super long
-            if current_MD_step % (self.max_MD_steps // 10) == 0:
+            if current_MD_step % 100 == 0:
                 self.update_al_restart_dict()
 
             if current_MD_step % self.skip_step == 0:
@@ -1060,6 +1073,13 @@ class ALProcedure(PrepareALProcedure):
                 ensemble_ase_sets=self.ensemble_ase_sets,
                 path=self.dataset_dir / "final",
             )
+            if self.create_restart:
+                self.update_al_restart_dict()
+                self.al_restart_dict["al_done"] = True
+                np.save(
+                    "restart/al/al_restart.npy",
+                    self.al_restart_dict
+                    )
 
     def converge(self):
         """
@@ -1072,18 +1092,18 @@ class ALProcedure(PrepareALProcedure):
                 train_set = create_mace_dataset(
                     data=self.ensemble_ase_sets[tag]["train"],
                     z_table=self.z_table,
-                    seed=self.seeds[tag],
+                    seed=self.seeds_tags_dict[tag],
                     r_max=self.r_max,
                 )
                 valid_set = create_mace_dataset(
                     data=self.ensemble_ase_sets[tag]["valid"],
                     z_table=self.z_table,
-                    seed=self.seeds[tag],
+                    seed=self.seeds_tags_dict[tag],
                     r_max=self.r_max,
                 )
                 (
-                    self.ensemble_ase_sets[tag]["train_loader"],
-                    self.ensemble_ase_sets[tag]["valid_loader"],
+                    self.ensemble_mace_sets[tag]["train_loader"],
+                    self.ensemble_mace_sets[tag]["valid_loader"],
                 ) = create_dataloader(
                     train_set,
                     valid_set,
@@ -1102,41 +1122,53 @@ class ALProcedure(PrepareALProcedure):
                     dtype=self.dtype,
                     device=self.device,
                 )
-                training_setups = {}
+
             # resetting optimizer and scheduler
+            self.training_setups_convergence = {}
             for tag in self.ensemble.keys():
-                training_setups[tag] = setup_mace_training(
+                self.training_setups_convergence[tag] = setup_mace_training(
                     settings=self.mace_settings,
                     model=self.ensemble[tag],
                     tag=tag,
+                    restart=self.restart,
+                    convergence=True,
+                    checkpoints_dir=self.checkpoints_dir,
                 )
             best_valid_loss = np.inf
             epoch = 0
-
+            if self.restart:
+                epoch = self.training_setups_convergence[list(self.ensemble.keys())[0]]["epoch"]
             no_improvement = 0
             ensemble_valid_losses = {tag: np.inf for tag in self.ensemble.keys()}
             for j in range(self.max_final_epochs):
                 # ensemble_loss = 0
                 for tag, model in self.ensemble.items():
-                    training_setup = training_setups[tag]
                     logger = tools.MetricsLogger(
                         directory=self.mace_settings["GENERAL"]["results_dir"],
                         tag=tag + "_train",
                     )
                     train_epoch(
                         model=model,
-                        train_loader=self.ensemble_ase_sets[tag]["train_loader"],
-                        loss_fn=training_setup["loss_fn"],
-                        optimizer=training_setup["optimizer"],
-                        lr_scheduler=training_setup["lr_scheduler"],
+                        train_loader=self.ensemble_mace_sets[tag]["train_loader"],
+                        loss_fn=self.training_setups_convergence[tag]["loss_fn"],
+                        optimizer=self.training_setups_convergence[tag][
+                            "optimizer"
+                        ],
+                        lr_scheduler=self.training_setups_convergence[tag][
+                            "lr_scheduler"
+                        ],
                         valid_loss=ensemble_valid_losses[tag],
                         epoch=epoch,
-                        start_epoch=0,
+                        start_epoch=epoch,
                         logger=logger,
-                        device=training_setup["device"],
-                        max_grad_norm=training_setup["max_grad_norm"],
-                        output_args=training_setup["output_args"],
-                        ema=training_setup["ema"],
+                        device=self.training_setups_convergence[tag]["device"],
+                        max_grad_norm=self.training_setups_convergence[tag][
+                            "max_grad_norm"
+                        ],
+                        output_args=self.training_setups_convergence[tag][
+                            "output_args"
+                        ],
+                        ema=self.training_setups_convergence[tag]["ema"],
                     )
                     # ensemble_loss += loss
                 # ensemble_loss /= len(ensemble)
@@ -1148,7 +1180,7 @@ class ALProcedure(PrepareALProcedure):
                         _,
                     ) = validate_epoch_ensemble(
                         ensemble=self.ensemble,
-                        training_setups=training_setups,
+                        training_setups=self.training_setups_convergence,
                         ensemble_set=self.ensemble_mace_sets,
                         logger=logger,
                         log_errors=self.mace_settings["MISC"]["error_table"],
@@ -1166,13 +1198,13 @@ class ALProcedure(PrepareALProcedure):
                                 / (tag + ".model"),
                             )
                             save_checkpoint(
-                                checkpoint_handler=training_setups[tag][
-                                    "checkpoint_handler_convergence"
+                                checkpoint_handler=self.training_setups_convergence[tag][
+                                    "checkpoint_handler"
                                 ],
-                                training_setup=training_setups[tag],
+                                training_setup=self.training_setups_convergence[tag],
                                 model=model,
                                 epoch=epoch,
-                                keep_last=True,
+                                keep_last=False,
                             )
                     else:
                         no_improvement += 1

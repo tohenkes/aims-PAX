@@ -27,7 +27,7 @@ def main():
     if not initial_ds.check_initial_ds_done():
         initial_ds.run()
         
-    if al_settings['ACTIVE_LEARNING']["converge_initial"]:
+    if al_settings['ACTIVE_LEARNING'].get("converge_initial", False):
         initial_ds.converge() 
 
     MPI.COMM_WORLD.Barrier()
@@ -37,8 +37,10 @@ def main():
     )
     MPI.COMM_WORLD.Barrier()
 
-    al.run()
-    al.converge()
+    if not al.check_al_done():
+        al.run()
+    if al_settings['ACTIVE_LEARNING'].get("converge_al", False):
+        al.converge()
 
     MPI.COMM_WORLD.Barrier()
     MPI.Finalize()
