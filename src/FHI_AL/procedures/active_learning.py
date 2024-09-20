@@ -1044,25 +1044,6 @@ class ALProcedure(PrepareALProcedure):
                         "Desired accuracy reached. Training until convergence."
                     )
                 break
-
-                #TODO: put them all into one dict
-                if self.analysis:
-                    np.savez(
-                        "analysis/sanity_checks.npz",
-                        self.sanity_checks
-                    )
-                    np.savez(
-                        "analysis/t_intervals.npz",
-                        self.t_intervals
-                    )
-                    np.savez(
-                        "analysis/al_losses.npz",
-                        **self.collect_losses
-                    )
-                    np.savez(
-                        "analysis/thresholds.npz",
-                        self.collect_thresholds
-                    )
        
         
         # turn keys which are ints into strings
@@ -1073,6 +1054,26 @@ class ALProcedure(PrepareALProcedure):
                 ensemble_ase_sets=self.ensemble_ase_sets,
                 path=self.dataset_dir / "final",
             )
+            
+            #TODO: put them all into one dict
+            if self.analysis:
+                np.savez(
+                    "analysis/sanity_checks.npz",
+                    self.sanity_checks
+                )
+                np.savez(
+                    "analysis/t_intervals.npz",
+                    self.t_intervals
+                )
+                np.savez(
+                    "analysis/al_losses.npz",
+                    **self.collect_losses
+                )
+                np.savez(
+                    "analysis/thresholds.npz",
+                    self.collect_thresholds
+                )
+            
             if self.create_restart:
                 self.update_al_restart_dict()
                 self.al_restart_dict["al_done"] = True

@@ -392,7 +392,8 @@ class PrepareInitialDatasetProcedure:
         if self.create_restart:
             check = self.init_ds_restart_dict.get("initial_ds_done", False)
             if check:
-                logging.info('Initial dataset generation is already done. Closing')
+                if RANK==0:
+                    logging.info('Initial dataset generation is already done. Closing')
             return check
         else:
             return False
@@ -805,7 +806,7 @@ class InitialDatasetProcedure(PrepareInitialDatasetProcedure):
                     )
                     / (tag + ".model"),
                 )
-            if self.restart:
+            if self.create_restart:
                 self.update_restart_dict()
                 self.init_ds_restart_dict["initial_ds_done"] = True
                 np.save(
