@@ -76,6 +76,7 @@ class PrepareInitialDatasetProcedure:
         )
         if RANK == 0:
             logging.info('Initializing initial dataset procedure.')
+            logging.info(f"Procedure runs on {WORLD_SIZE} workers.")
             
         self.control_parser = AIMSControlParser()
         self.handle_mace_settings(mace_settings)
@@ -339,54 +340,59 @@ class PrepareInitialDatasetProcedure:
     def handle_atomic_energies(
         self,
     ):
+        
+        self.ensemble_atomic_energies = None
+        self.ensemble_atomic_energies_dict = None
         self.update_atomic_energies = False
-
-        if self.atomic_energies_dict is None:
-            if self.restart:
-                if RANK == 0:
-                    logging.info("Loading atomic energies from checkpoint.")
-                (
-                    self.ensemble_atomic_energies,
-                    self.ensemble_atomic_energies_dict
-                ) = get_atomic_energies_from_pt(
-                    path_to_checkpoints=self.checkpoints_dir,
-                    z=self.z,
-                    seeds_tags_dict=self.seeds_tags_dict,
-                )
-            else:
-                if RANK == 0:
-                    logging.info("No atomic specified. Initializing with 0 and fit to training data.")
-                self.ensemble_atomic_energies_dict = {
-                    tag:{
-                    z: 0 for z in np.sort(np.unique(self.z))
-                    } for tag in self.seeds_tags_dict.keys()
-                    }
-                self.ensemble_atomic_energies = {tag: np.array(
-                        [
-                            self.ensemble_atomic_energies_dict[tag][z]
-                            for z in self.ensemble_atomic_energies_dict[tag].keys()
-                        ]
-                    )
-                for tag in self.seeds_tags_dict.keys()}
-                
-            self.update_atomic_energies = True
-
-        else:
-            if RANK == 0:
-                logging.info("Using specified atomic eneriges.")
-            self.ensemble_atomic_energies_dict = {
-                tag: self.atomic_energies_dict for tag in self.seeds_tags_dict.keys()
-            }
-
-            self.ensemble_atomic_energies = {tag: np.array(
-                [
-                    self.ensemble_atomic_energies_dict[tag][z]
-                    for z in self.ensemble_atomic_energies_dict[tag].keys()
-                ]
-            ) for tag in self.seeds_tags_dict.keys()}
-
         if RANK == 0:
+            if self.atomic_energies_dict is None:
+                if self.restart:
+                    
+                    logging.info("Loading atomic energies from checkpoint.")
+                    (
+                        self.ensemble_atomic_energies,
+                        self.ensemble_atomic_energies_dict
+                    ) = get_atomic_energies_from_pt(
+                        path_to_checkpoints=self.checkpoints_dir,
+                        z=self.z,
+                        seeds_tags_dict=self.seeds_tags_dict,
+                    )
+                else:
+                    
+                    logging.info("No atomic specified. Initializing with 0 and fit to training data.")
+                    self.ensemble_atomic_energies_dict = {
+                        tag:{
+                        z: 0 for z in np.sort(np.unique(self.z))
+                        } for tag in self.seeds_tags_dict.keys()
+                        }
+                    self.ensemble_atomic_energies = {tag: np.array(
+                            [
+                                self.ensemble_atomic_energies_dict[tag][z]
+                                for z in self.ensemble_atomic_energies_dict[tag].keys()
+                            ]
+                        )
+                    for tag in self.seeds_tags_dict.keys()}
+                    
+                self.update_atomic_energies = True
+
+            else:
+
+                logging.info("Using specified atomic eneriges.")
+                self.ensemble_atomic_energies_dict = {
+                    tag: self.atomic_energies_dict for tag in self.seeds_tags_dict.keys()
+                }
+
+                self.ensemble_atomic_energies = {tag: np.array(
+                    [
+                        self.ensemble_atomic_energies_dict[tag][z]
+                        for z in self.ensemble_atomic_energies_dict[tag].keys()
+                    ]
+                ) for tag in self.seeds_tags_dict.keys()}
+
+
             logging.info(f'{self.ensemble_atomic_energies_dict[list(self.seeds_tags_dict.keys())[0]]}')
+
+        
     
     def check_initial_ds_done(self):
         if self.create_restart:
