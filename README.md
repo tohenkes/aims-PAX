@@ -183,5 +183,6 @@ For now we have only one MD setting for all trajectories and the selection for s
 - [x] foundation model initial geometries
 - [ ] fine-tuning of foundational models
 - [ ] select best performing ensembl member/knowledge distillation
+- [ ] Start multiple trajectories from different starting geometries
 
 
