@@ -161,6 +161,7 @@ For now we have only one MD setting for all trajectories and the selection for s
 
 - [x] energy error bug fix
 - [x] parallelism for FHI aims in AL procedure
+- [ ] spin polarization for E0 calculations
 - [ ] energy, force weight swap in loss fn during convergence
 - [x] make it work with gpu
 - [x] analysis (save sanity checks, t_intervals, threshold evolution, uncertainties, loss over time)
