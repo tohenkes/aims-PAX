@@ -169,6 +169,7 @@ For now we have only one MD setting for all trajectories and the selection for s
 - [ ] scf failsafe
 - [ ] initial dataset train and MD in parallel
 - [ ] AL train and MD in parallel
+- [ ] multi GPU?
 - [ ] multiple species at once
 - [ ] add support for stress
 - [ ] combine mace_settings and active_learning_settings into control.in (?)
