@@ -161,6 +161,7 @@ For now we have only one MD setting for all trajectories and the selection for s
 
 - [x] energy error bug fix
 - [x] parallelism for FHI aims in AL procedure
+- [ ] copy original MACE input file
 - [ ] spin polarization for E0 calculations
 - [ ] energy, force weight swap in loss fn during convergence
 - [x] make it work with gpu
@@ -184,7 +185,7 @@ For now we have only one MD setting for all trajectories and the selection for s
 - [ ] compile models at the end
 - [x] foundation model initial geometries
 - [ ] fine-tuning of foundational models
-- [ ] select best performing ensembl member/knowledge distillation
+- [ ] select best performing ensemble member/knowledge distillation
 - [ ] Start multiple trajectories from different starting geometries
 
 
