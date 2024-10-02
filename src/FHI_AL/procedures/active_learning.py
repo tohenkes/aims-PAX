@@ -125,11 +125,18 @@ class PrepareALProcedure:
                 checkpoints_dir=self.checkpoints_dir,
             )
 
-            logging.info("Loading initial datasets.")
-            self.ensemble_ase_sets = load_ensemble_sets_from_folder(
-                ensemble=self.ensemble,
-                path_to_folder=Path(self.al["dataset_dir"] + "/initial"),
-            )
+            if not self.restart:
+                logging.info("Loading initial datasets.")
+                self.ensemble_ase_sets = load_ensemble_sets_from_folder(
+                    ensemble=self.ensemble,
+                    path_to_folder=Path(self.al["dataset_dir"] + "/initial"),
+                )
+            else:
+                logging.info("Loading datasets from checkpoint.")
+                self.ensemble_ase_sets = load_ensemble_sets_from_folder(
+                    ensemble=self.ensemble,
+                    path_to_folder=Path(self.al["dataset_dir"] + "/final"),
+                )
             self.ensemble_mace_sets = ase_to_mace_ensemble_sets(
                 ensemble_ase_sets=self.ensemble_ase_sets,
                 z_table=self.z_table,
@@ -200,39 +207,33 @@ class PrepareALProcedure:
             self.uncertainties = []  # for moving average
             
         #TODO: put this somewhere else:        
-        if self.analysis:
-            if self.restart:
-                self.t_intervals = self.al_restart_dict['t_intervals']
-                self.sanity_checks = self.al_restart_dict['sanity_checks']
-                self.collect_losses = self.al_restart_dict['collect_losses']
-                self.collect_thresholds = self.al_restart_dict['collect_thresholds']
-            else:
-                # this saves the intervals between points that cross the uncertainty threshold
-                self.t_intervals = {
-                    trajectory: [] for trajectory in range(self.num_trajectories)
-                }
-                # this saves uncertainty and true errors for each trajectory
-                self.sanity_checks = {
-                    trajectory: {
-                        "atom_wise_uncertainty": [],
-                        "uncertainty_via_max": [],
-                        "uncertainty_via_avg": [],
-                        "max_error": [],
-                        "mean_error": [],
-                        "atom_wise_error": [],
-                        "threshold": [],
-                        } for trajectory in range(self.num_trajectories)
-                }
-                # this saves the validation losses for each trajectory
-                self.collect_losses = {
-                    "epoch": [],
-                    "avg_losses": [],
-                    "ensemble_losses": [],
-                }
-                
-                self.collect_thresholds = {
-                    trajectory: [] for trajectory in range(self.num_trajectories)
-                }
+        if self.analysis and not self.restart:
+            # this saves the intervals between points that cross the uncertainty threshold
+            self.t_intervals = {
+                trajectory: [] for trajectory in range(self.num_trajectories)
+            }
+            # this saves uncertainty and true errors for each trajectory
+            self.sanity_checks = {
+                trajectory: {
+                    "atom_wise_uncertainty": [],
+                    "uncertainty_via_max": [],
+                    "uncertainty_via_avg": [],
+                    "max_error": [],
+                    "mean_error": [],
+                    "atom_wise_error": [],
+                    "threshold": [],
+                    } for trajectory in range(self.num_trajectories)
+            }
+            # this saves the validation losses for each trajectory
+            self.collect_losses = {
+                "epoch": [],
+                "avg_losses": [],
+                "ensemble_losses": [],
+            }
+            
+            self.collect_thresholds = {
+                trajectory: [] for trajectory in range(self.num_trajectories)
+            }
             
 
         if RANK == 0:
@@ -385,36 +386,88 @@ class PrepareALProcedure:
                 logging.info(f'{self.ensemble_atomic_energies_dict[list(self.seeds_tags_dict.keys())[0]]}')
     
     def handle_al_restart(self):
-        try:
-            self.al_restart_dict = np.load(
-                "restart/al/al_restart.npy",
-                allow_pickle=True).item()
-        except:
-            logging.error("Could not load al_restart.npy.")
-        
+
+        self.trajectories = None
+        self.trajectory_intermediate_epochs = None
+        self.ensemble_reset_opt = None
+        self.ensemble_no_improvement = None
+        self.ensemble_best_valid = None
+        self.threshold = None
+        self.trajectory_status = None
+        self.trajectory_MD_steps = None
+        self.trajectory_total_epochs = None
+        self.current_valid_error = None
+        self.total_points_added = None
+        self.train_points_added = None
+        self.valid_points_added = None
+        self.num_MD_limits_reached = None
+        self.num_workers_training = None
+        self.num_workers_waiting = None
+        self.total_epoch = None
+        self.check = None
+        self.uncertainties = None
+        if self.analysis:
+            self.t_intervals = None
+            self.sanity_checks = None
+            self.collect_losses = None
+            self.collect_thresholds = None
+
         if RANK == 0:
             logging.info("Restarting active learning procedure from checkpoint.")
-        
-        self.trajectories = self.al_restart_dict['trajectories']
-        self.trajectory_status = self.al_restart_dict['trajectory_status']
-        self.trajectory_MD_steps = self.al_restart_dict['trajectory_MD_steps']
-        self.trajectory_total_epochs = self.al_restart_dict['trajectory_total_epochs']
-        self.trajectory_intermediate_epochs = self.al_restart_dict['trajectory_intermediate_epochs']
-        self.ensemble_reset_opt = self.al_restart_dict['ensemble_reset_opt']
-        self.ensemble_no_improvement = self.al_restart_dict['ensemble_no_improvement']
-        self.ensemble_best_valid = self.al_restart_dict['ensemble_best_valid']
-        self.current_valid_error = self.al_restart_dict['current_valid_error']
-        self.threshold = self.al_restart_dict['threshold']
-        self.total_points_added = self.al_restart_dict['total_points_added']
-        self.train_points_added = self.al_restart_dict['train_points_added']
-        self.valid_points_added = self.al_restart_dict['valid_points_added']
-        self.num_MD_limits_reached = self.al_restart_dict['num_MD_limits_reached']
-        self.num_workers_training = self.al_restart_dict['num_workers_training']
-        self.num_workers_waiting = self.al_restart_dict['num_workers_waiting']
-        self.total_epoch = self.al_restart_dict['total_epoch']
-        self.check = self.al_restart_dict['check']
-        self.uncertainties = self.al_restart_dict['uncertainties']
-    
+            self.al_restart_dict = np.load(
+                "restart/al/al_restart.npy",
+                allow_pickle=True
+            ).item()
+
+            self.trajectories = self.al_restart_dict['trajectories']
+            self.trajectory_intermediate_epochs = self.al_restart_dict['trajectory_intermediate_epochs']
+            self.ensemble_reset_opt = self.al_restart_dict['ensemble_reset_opt']
+            self.ensemble_no_improvement = self.al_restart_dict['ensemble_no_improvement']
+            self.ensemble_best_valid = self.al_restart_dict['ensemble_best_valid']
+            self.threshold = self.al_restart_dict['threshold']
+            self.trajectory_status = self.al_restart_dict['trajectory_status']
+            
+            self.trajectory_MD_steps = self.al_restart_dict['trajectory_MD_steps']
+            self.trajectory_total_epochs = self.al_restart_dict['trajectory_total_epochs']
+            self.current_valid_error = self.al_restart_dict['current_valid_error']
+            self.total_points_added = self.al_restart_dict['total_points_added']
+            self.train_points_added = self.al_restart_dict['train_points_added']
+            self.valid_points_added = self.al_restart_dict['valid_points_added']
+            self.num_MD_limits_reached = self.al_restart_dict['num_MD_limits_reached']
+            self.num_workers_training = self.al_restart_dict['num_workers_training']
+            self.num_workers_waiting = self.al_restart_dict['num_workers_waiting']
+            self.total_epoch = self.al_restart_dict['total_epoch']
+            self.check = self.al_restart_dict['check']
+            self.uncertainties = self.al_restart_dict['uncertainties']
+            if self.analysis:
+                self.t_intervals = self.al_restart_dict['t_intervals']
+                self.sanity_checks = self.al_restart_dict['sanity_checks']
+                self.collect_losses = self.al_restart_dict['collect_losses']
+                self.collect_thresholds = self.al_restart_dict['collect_thresholds']
+
+        MPI.COMM_WORLD.Barrier()
+        self.trajectory_status = MPI.COMM_WORLD.bcast(self.trajectory_status, root=0)
+        self.trajectory_MD_steps = MPI.COMM_WORLD.bcast(self.trajectory_MD_steps, root=0)
+        self.trajectory_total_epochs = MPI.COMM_WORLD.bcast(self.trajectory_total_epochs, root=0)
+        self.current_valid_error = MPI.COMM_WORLD.bcast(self.current_valid_error, root=0)
+        self.total_points_added = MPI.COMM_WORLD.bcast(self.total_points_added, root=0)
+        self.train_points_added = MPI.COMM_WORLD.bcast(self.train_points_added, root=0)
+        self.valid_points_added = MPI.COMM_WORLD.bcast(self.valid_points_added, root=0)
+        self.num_MD_limits_reached = MPI.COMM_WORLD.bcast(self.num_MD_limits_reached, root=0)
+        self.num_workers_training = MPI.COMM_WORLD.bcast(self.num_workers_training, root=0)
+        self.num_workers_waiting = MPI.COMM_WORLD.bcast(self.num_workers_waiting, root=0)
+        self.total_epoch = MPI.COMM_WORLD.bcast(self.total_epoch, root=0)
+        self.check = MPI.COMM_WORLD.bcast(self.check, root=0)
+        self.uncertainties = MPI.COMM_WORLD.bcast(self.uncertainties, root=0)
+        if self.analysis:
+            self.t_intervals = MPI.COMM_WORLD.bcast(self.t_intervals, root=0)
+            self.sanity_checks = MPI.COMM_WORLD.bcast(self.sanity_checks, root=0)
+            self.collect_losses = MPI.COMM_WORLD.bcast(self.collect_losses, root=0)
+            self.collect_thresholds = MPI.COMM_WORLD.bcast(self.collect_thresholds, root=0)
+        MPI.COMM_WORLD.Barrier()
+
+
+
     def update_al_restart_dict(self):
         self.al_restart_dict['trajectories'] = self.trajectories
         self.al_restart_dict['trajectory_status'] = self.trajectory_status
@@ -854,8 +907,9 @@ class ALProcedure(PrepareALProcedure):
 
             # somewhat arbitrary; i just want to save checkpoints if the MD phase
             # is super long
-            if current_MD_step % 100 == 0:
-                self.update_al_restart_dict()
+            if RANK == 0:
+                if current_MD_step % 100 == 0:
+                    self.update_al_restart_dict()
 
 
             if RANK == 0:  
@@ -889,6 +943,7 @@ class ALProcedure(PrepareALProcedure):
                 uncertainty = None
                 prediction = None
                 self.point = None
+                self.threshold = None
                 
             MPI.COMM_WORLD.Barrier()
             self.threshold = MPI.COMM_WORLD.bcast(self.threshold, root=0)
@@ -1004,7 +1059,7 @@ class ALProcedure(PrepareALProcedure):
         MPI.COMM_WORLD.Barrier()
         
         while True: 
-            for trajectory_idx, _ in enumerate(self.trajectories):
+            for trajectory_idx in range(self.num_trajectories):
 
                 if self.trajectory_status[trajectory_idx] == "waiting":
 
