@@ -32,6 +32,7 @@ from asi4py.asecalc import ASI_ASE_calculator
 from ase.md.velocitydistribution import MaxwellBoltzmannDistribution
 from ase.md.langevin import Langevin
 from ase import units
+from contextlib import nullcontext
 
 WORLD_COMM = MPI.COMM_WORLD
 WORLD_SIZE = WORLD_COMM.Get_size()
@@ -536,11 +537,17 @@ class PrepareInitialDatasetProcedure:
                         best_epoch = epoch
                         no_improvement = 0
                         for tag, model in self.ensemble.items():
-                            torch.save(
-                                model,
-                                Path(self.mace_settings["GENERAL"]["model_dir"])
-                                / (tag + ".model"),
+                            param_context = (
+                                self.training_setups_convergence[tag]['ema'].average_parameters()
+                                if self.training_setups_convergence[tag]['ema'] is not None
+                                else nullcontext()
                             )
+                            with param_context:
+                                torch.save(
+                                    model,
+                                    Path(self.mace_settings["GENERAL"]["model_dir"])
+                                    / (tag + ".model"),
+                                )
                             save_checkpoint(
                                 checkpoint_handler=self.training_setups_convergence[
                                     tag
@@ -805,13 +812,19 @@ class InitialDatasetProcedure(PrepareInitialDatasetProcedure):
         
         if RANK == 0:
             for tag, model in self.ensemble.items():
-                torch.save(
-                    model,
-                    Path(
-                        self.mace_settings["GENERAL"]["model_dir"]
-                    )
-                    / (tag + ".model"),
+                param_context = (
+                    self.training_setups[tag]['ema'].average_parameters()
+                    if self.training_setups[tag]['ema'] is not None
+                    else nullcontext()
                 )
+                with param_context:
+                    torch.save(
+                        model,
+                        Path(
+                            self.mace_settings["GENERAL"]["model_dir"]
+                        )
+                        / (tag + ".model"),
+                    )
             if self.create_restart:
                 self.update_restart_dict()
                 self.init_ds_restart_dict["initial_ds_done"] = True

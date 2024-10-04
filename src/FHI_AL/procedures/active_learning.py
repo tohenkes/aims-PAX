@@ -28,6 +28,7 @@ from FHI_AL.tools.utilities import (
     get_atomic_energies_from_ensemble,
     create_ztable,
     get_atomic_energies_from_pt,
+    select_best_member,
     AIMSControlParser,
 )
 from FHI_AL.tools.train_epoch_mace import train_epoch, validate_epoch_ensemble
@@ -39,6 +40,7 @@ from asi4py.asecalc import ASI_ASE_calculator
 from ase.md.velocitydistribution import MaxwellBoltzmannDistribution
 from ase.md.langevin import Langevin
 from ase import units
+from contextlib import nullcontext
 
 WORLD_COMM = MPI.COMM_WORLD
 WORLD_SIZE = WORLD_COMM.Get_size()
@@ -290,6 +292,7 @@ class PrepareALProcedure:
         self.analysis = self.al.get("analysis", False)
         self.seeds_tags_dict = self.al.get("seeds_tags_dict", None)
         self.margin = self.al.get("margin", 0.001)
+        self.converge_best = self.al.get("converge_best", True)
         
         self.restart = os.path.exists("restart/al/al_restart.npy")
         self.create_restart = self.misc.get("create_restart", False)
@@ -315,6 +318,7 @@ class PrepareALProcedure:
                 'check': None,
                 'uncertainties': None,
                 'al_done': False,
+                'best_member': None,
             }
             self.save_restart = False # is set to true in training when checkpoint is saved
             
@@ -406,6 +410,7 @@ class PrepareALProcedure:
         self.total_epoch = None
         self.check = None
         self.uncertainties = None
+        self.converge_best = None
         if self.analysis:
             self.t_intervals = None
             self.sanity_checks = None
@@ -439,6 +444,7 @@ class PrepareALProcedure:
             self.total_epoch = self.al_restart_dict['total_epoch']
             self.check = self.al_restart_dict['check']
             self.uncertainties = self.al_restart_dict['uncertainties']
+            self.converge_best = self.al_restart_dict['converge_best']
             if self.analysis:
                 self.t_intervals = self.al_restart_dict['t_intervals']
                 self.sanity_checks = self.al_restart_dict['sanity_checks']
@@ -459,6 +465,7 @@ class PrepareALProcedure:
         self.total_epoch = MPI.COMM_WORLD.bcast(self.total_epoch, root=0)
         self.check = MPI.COMM_WORLD.bcast(self.check, root=0)
         self.uncertainties = MPI.COMM_WORLD.bcast(self.uncertainties, root=0)
+        self.converge_best = MPI.COMM_WORLD.bcast(self.converge_best, root=0)
         if self.analysis:
             self.t_intervals = MPI.COMM_WORLD.bcast(self.t_intervals, root=0)
             self.sanity_checks = MPI.COMM_WORLD.bcast(self.sanity_checks, root=0)
@@ -488,6 +495,7 @@ class PrepareALProcedure:
         self.al_restart_dict['total_epoch'] = self.total_epoch
         self.al_restart_dict['check'] = self.check
         self.al_restart_dict['uncertainties'] = self.uncertainties
+        self.al_restart_dict['converge_best'] = self.converge_best
         
         if self.analysis:
             self.al_restart_dict['t_intervals'] = self.t_intervals
@@ -784,6 +792,7 @@ class ALProcedure(PrepareALProcedure):
                         log_errors=self.mace_settings["MISC"]["error_table"],
                         epoch=self.trajectory_total_epochs[idx],
                     )
+                    self.best_member = select_best_member(ensemble_valid_loss)
                     if self.analysis:
                         self.collect_losses["epoch"].append(self.total_epoch)
                         self.collect_losses['avg_losses'].append(valid_loss)
@@ -1094,14 +1103,14 @@ class ALProcedure(PrepareALProcedure):
             if self.num_MD_limits_reached == self.num_trajectories:
                 if RANK == 0:
                     logging.info(
-                        "All trajectories reached maximum MD steps. Training until convergence."
+                        "All trajectories reached maximum MD steps."
                     )
                 break
             
             if self.train_dataset_len >= self.max_set_size:
                 if RANK == 0:
                     logging.info(
-                        "Maximum size of training set reached. Training until convergence."
+                        "Maximum size of training set reached."
                     )
                 break
             
@@ -1109,7 +1118,7 @@ class ALProcedure(PrepareALProcedure):
             if self.current_valid_error < self.desired_accuracy:
                 if RANK == 0:
                     logging.info(
-                        "Desired accuracy reached. Training until convergence."
+                        "Desired accuracy reached."
                     )
                 break
        
@@ -1117,6 +1126,7 @@ class ALProcedure(PrepareALProcedure):
         # turn keys which are ints into strings
         # save the datasets and the intervals for analysis
         if RANK == 0:
+            logging.info(f"Active learning procedure finished. The best ensemble member based on validation loss is {self.best_member}.")
             save_datasets(
                 ensemble=self.ensemble,
                 ensemble_ase_sets=self.ensemble_ase_sets,
@@ -1156,8 +1166,14 @@ class ALProcedure(PrepareALProcedure):
         until the validation loss does not improve anymore.
         """
         if RANK == 0:
-            logging.info("Converging ensemble on acquired dataset.")
-            for _, (tag, model) in enumerate(self.ensemble.items()):
+            if self.converge_best:
+                logging.info(f"Converging best model ({self.best_member}) on acquired dataset.")
+                ensemble = {self.best_member: self.ensemble[self.best_member]}
+            else:
+                ensemble = self.ensemble
+                logging.info("Converging ensemble on acquired dataset.")
+                
+            for _, (tag, model) in enumerate(ensemble.items()):
                 train_set = create_mace_dataset(
                     data=self.ensemble_ase_sets[tag]["train"],
                     z_table=self.z_table,
@@ -1194,10 +1210,10 @@ class ALProcedure(PrepareALProcedure):
 
             # resetting optimizer and scheduler
             self.training_setups_convergence = {}
-            for tag in self.ensemble.keys():
+            for tag in ensemble.keys():
                 self.training_setups_convergence[tag] = setup_mace_training(
                     settings=self.mace_settings,
-                    model=self.ensemble[tag],
+                    model=ensemble[tag],
                     tag=tag,
                     restart=self.restart,
                     convergence=True,
@@ -1206,12 +1222,12 @@ class ALProcedure(PrepareALProcedure):
             best_valid_loss = np.inf
             epoch = 0
             if self.restart:
-                epoch = self.training_setups_convergence[list(self.ensemble.keys())[0]]["epoch"]
+                epoch = self.training_setups_convergence[list(ensemble.keys())[0]]["epoch"]
             no_improvement = 0
-            ensemble_valid_losses = {tag: np.inf for tag in self.ensemble.keys()}
+            ensemble_valid_losses = {tag: np.inf for tag in ensemble.keys()}
             for j in range(self.max_final_epochs):
                 # ensemble_loss = 0
-                for tag, model in self.ensemble.items():
+                for tag, model in ensemble.items():
                     logger = tools.MetricsLogger(
                         directory=self.mace_settings["GENERAL"]["results_dir"],
                         tag=tag + "_train",
@@ -1248,7 +1264,7 @@ class ALProcedure(PrepareALProcedure):
                         valid_loss,
                         _,
                     ) = validate_epoch_ensemble(
-                        ensemble=self.ensemble,
+                        ensemble=ensemble,
                         training_setups=self.training_setups_convergence,
                         ensemble_set=self.ensemble_mace_sets,
                         logger=logger,
@@ -1260,12 +1276,18 @@ class ALProcedure(PrepareALProcedure):
                         best_valid_loss = valid_loss
                         best_epoch = epoch
                         no_improvement = 0
-                        for tag, model in self.ensemble.items():
-                            torch.save(
-                                model,
-                                Path(self.mace_settings["GENERAL"]["model_dir"])
-                                / (tag + ".model"),
+                        for tag, model in ensemble.items():
+                            param_context = (
+                                self.training_setups_convergence[tag]['ema'].average_parameters()
+                                if self.training_setups_convergence[tag]['ema'] is not None
+                                else nullcontext()
                             )
+                            with param_context:
+                                torch.save(
+                                    model,
+                                    Path(self.mace_settings["GENERAL"]["model_dir"])
+                                    / (tag + ".model"),
+                                )
                             save_checkpoint(
                                 checkpoint_handler=self.training_setups_convergence[tag][
                                     "checkpoint_handler"
@@ -1281,7 +1303,7 @@ class ALProcedure(PrepareALProcedure):
                 epoch += 1
                 if no_improvement > self.patience:
                     logging.info(
-                        f"No improvements for {self.patience} epochs. Training converged. Best model (Epoch {best_epoch}) based on validation loss saved."
+                        f"No improvements for {self.patience} epochs. Training converged. Best model(s) (Epoch {best_epoch}) based on validation loss saved."
                     )
                     break
                 if j == self.max_final_epochs - 1:
@@ -1304,6 +1326,8 @@ class StandardMACEEnsembleProcedure:
         train_set_dir: str = "data/final/training",
         valid_set_dir: str = "data/final/validation",
         ) -> None:
+
+        raise NotImplementedError("This is not done yet.")
         self.handle_mace_settings(mace_settings)
         logging.basicConfig(
             filename="standard_ensemble.log",

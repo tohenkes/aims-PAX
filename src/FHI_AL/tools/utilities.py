@@ -10,15 +10,27 @@ from ase.io import write
 from mace import data as mace_data
 from mace import tools, modules
 from mace.tools import AtomicNumberTable, torch_geometric, torch_tools, utils
+from mace.tools.train import evaluate
 from mace.data.utils import compute_average_E0s
 from ase.io import read
 from FHI_AL.tools.setup_MACE import setup_mace
 from FHI_AL.tools.setup_MACE_training import setup_mace_training
 from dataclasses import dataclass
+from mace.tools.utils import (
+    MetricsLogger,
+    compute_mae,
+    compute_q95,
+    compute_rel_mae,
+    compute_rel_rmse,
+    compute_rmse,
+)
 import ase.data
 import ase.io
 import dataclasses
+from torchmetrics import Metric
+from typing import Any, Dict, List, Optional, Tuple, Union
 from mace.tools import AtomicNumberTable
+import time
 
 #TODO: this file combines a lot of stuff and should be split up and
         # refactored into classes
@@ -937,11 +949,266 @@ def ensemble_prediction_v2(
     return all_forces
 
 
-#def split_to_member_sets(
-#    
-#):
-#    member_sets = {}
-#    return member_sets
+class MACEEval(Metric):
+    def __init__(self):
+        super().__init__()
+        self.add_state("num_data", default=torch.tensor(0.0), dist_reduce_fx="sum")
+        self.add_state("E_computed", default=torch.tensor(0.0), dist_reduce_fx="sum")
+        self.add_state("delta_es", default=[], dist_reduce_fx="cat")
+        self.add_state("delta_es_per_atom", default=[], dist_reduce_fx="cat")
+        self.add_state("Fs_computed", default=torch.tensor(0.0), dist_reduce_fx="sum")
+        self.add_state("fs", default=[], dist_reduce_fx="cat")
+        self.add_state("delta_fs", default=[], dist_reduce_fx="cat")
+        self.add_state(
+            "stress_computed", default=torch.tensor(0.0), dist_reduce_fx="sum"
+        )
+        self.add_state("delta_stress", default=[], dist_reduce_fx="cat")
+        self.add_state("delta_stress_per_atom", default=[], dist_reduce_fx="cat")
+        self.add_state(
+            "virials_computed", default=torch.tensor(0.0), dist_reduce_fx="sum"
+        )
+        self.add_state("delta_virials", default=[], dist_reduce_fx="cat")
+        self.add_state("delta_virials_per_atom", default=[], dist_reduce_fx="cat")
+        self.add_state("Mus_computed", default=torch.tensor(0.0), dist_reduce_fx="sum")
+        self.add_state("mus", default=[], dist_reduce_fx="cat")
+        self.add_state("delta_mus", default=[], dist_reduce_fx="cat")
+        self.add_state("delta_mus_per_atom", default=[], dist_reduce_fx="cat")
+
+    def update(self, batch, output):  # pylint: disable=arguments-differ
+        self.num_data += batch.num_graphs
+
+        if output.get("energy") is not None and batch.energy is not None:
+            self.E_computed += 1.0
+            self.delta_es.append(batch.energy - output["energy"])
+            self.delta_es_per_atom.append(
+                (batch.energy - output["energy"]) / (batch.ptr[1:] - batch.ptr[:-1])
+            )
+        if output.get("forces") is not None and batch.forces is not None:
+            self.Fs_computed += 1.0
+            self.fs.append(batch.forces)
+            self.delta_fs.append(batch.forces - output["forces"])
+        if output.get("stress") is not None and batch.stress is not None:
+            self.stress_computed += 1.0
+            self.delta_stress.append(batch.stress - output["stress"])
+            self.delta_stress_per_atom.append(
+                (batch.stress - output["stress"])
+                / (batch.ptr[1:] - batch.ptr[:-1]).view(-1, 1, 1)
+            )
+        if output.get("virials") is not None and batch.virials is not None:
+            self.virials_computed += 1.0
+            self.delta_virials.append(batch.virials - output["virials"])
+            self.delta_virials_per_atom.append(
+                (batch.virials - output["virials"])
+                / (batch.ptr[1:] - batch.ptr[:-1]).view(-1, 1, 1)
+            )
+        if output.get("dipole") is not None and batch.dipole is not None:
+            self.Mus_computed += 1.0
+            self.mus.append(batch.dipole)
+            self.delta_mus.append(batch.dipole - output["dipole"])
+            self.delta_mus_per_atom.append(
+                (batch.dipole - output["dipole"])
+                / (batch.ptr[1:] - batch.ptr[:-1]).unsqueeze(-1)
+            )
+
+    def convert(self, delta: Union[torch.Tensor, List[torch.Tensor]]) -> np.ndarray:
+        if isinstance(delta, list):
+            delta = torch.cat(delta)
+        return torch_tools.to_numpy(delta)
+
+    def compute(self):
+        aux = {}
+        if self.E_computed:
+            delta_es = self.convert(self.delta_es)
+            delta_es_per_atom = self.convert(self.delta_es_per_atom)
+            aux["mae_e"] = compute_mae(delta_es)
+            aux["mae_e_per_atom"] = compute_mae(delta_es_per_atom)
+            aux["rmse_e"] = compute_rmse(delta_es)
+            aux["rmse_e_per_atom"] = compute_rmse(delta_es_per_atom)
+            aux["q95_e"] = compute_q95(delta_es)
+        if self.Fs_computed:
+            fs = self.convert(self.fs)
+            delta_fs = self.convert(self.delta_fs)
+            aux["mae_f"] = compute_mae(delta_fs)
+            aux["rel_mae_f"] = compute_rel_mae(delta_fs, fs)
+            aux["rmse_f"] = compute_rmse(delta_fs)
+            aux["rel_rmse_f"] = compute_rel_rmse(delta_fs, fs)
+            aux["q95_f"] = compute_q95(delta_fs)
+        if self.stress_computed:
+            delta_stress = self.convert(self.delta_stress)
+            delta_stress_per_atom = self.convert(self.delta_stress_per_atom)
+            aux["mae_stress"] = compute_mae(delta_stress)
+            aux["rmse_stress"] = compute_rmse(delta_stress)
+            aux["rmse_stress_per_atom"] = compute_rmse(delta_stress_per_atom)
+            aux["q95_stress"] = compute_q95(delta_stress)
+        if self.virials_computed:
+            delta_virials = self.convert(self.delta_virials)
+            delta_virials_per_atom = self.convert(self.delta_virials_per_atom)
+            aux["mae_virials"] = compute_mae(delta_virials)
+            aux["rmse_virials"] = compute_rmse(delta_virials)
+            aux["rmse_virials_per_atom"] = compute_rmse(delta_virials_per_atom)
+            aux["q95_virials"] = compute_q95(delta_virials)
+        if self.Mus_computed:
+            mus = self.convert(self.mus)
+            delta_mus = self.convert(self.delta_mus)
+            delta_mus_per_atom = self.convert(self.delta_mus_per_atom)
+            aux["mae_mu"] = compute_mae(delta_mus)
+            aux["mae_mu_per_atom"] = compute_mae(delta_mus_per_atom)
+            aux["rel_mae_mu"] = compute_rel_mae(delta_mus, mus)
+            aux["rmse_mu"] = compute_rmse(delta_mus)
+            aux["rmse_mu_per_atom"] = compute_rmse(delta_mus_per_atom)
+            aux["rel_rmse_mu"] = compute_rel_rmse(delta_mus, mus)
+            aux["q95_mu"] = compute_q95(delta_mus)
+
+        return aux
+
+def test_model(
+    model,
+    data_loader,
+    output_args: dict,
+    device: str,
+
+):
+    for param in model.parameters():
+        param.requires_grad = False
+
+    metrics = MACEEval().to(device)
+    start_time = time.time()
+    for batch in data_loader:
+        batch = batch.to(device)
+        batch_dict = batch.to_dict()
+        output = model(
+            batch_dict,
+            training=False,
+            compute_force=output_args["forces"],
+            compute_virials=output_args["virials"],
+            compute_stress=output_args["stress"],
+        )
+        aux = metrics(batch, output)
+    aux = metrics.compute()
+    aux["time"] = time.time() - start_time
+    metrics.reset()
+
+    for param in model.parameters():
+        param.requires_grad = True
+    
+    return aux
+
+def test_ensemble(
+    ensemble: dict,
+    atoms_list: list,
+    batch_size: int,
+    output_args: dict,
+    device: str,
+    logger: MetricsLogger = None,
+    log_errors: str = "PerAtomMAE",
+) -> Tuple[dict, dict]:
+    
+    
+    configs = [mace_data.config_from_atoms(atoms) for atoms in atoms_list]
+
+    z_table = utils.AtomicNumberTable([int(z) for z in ensemble[list(ensemble.keys())[0]].atomic_numbers])
+
+    data_loader = torch_geometric.dataloader.DataLoader(
+        dataset=[
+            mace_data.AtomicData.from_config(
+                config, z_table=z_table, cutoff=float(ensemble[list(ensemble.keys())[0]].r_max)
+            )
+            for config in configs
+        ],
+        batch_size=batch_size,
+        shuffle=False,
+        drop_last=False,
+    )
+    ensemble_metrics = {}
+    for tag, model in ensemble.items():
+        metrics = test_model(
+            model=model,
+            data_loader=data_loader,
+            output_args=output_args,
+            device=device,
+        )
+        ensemble_metrics[tag] = metrics
+
+    avg_ensemble_metrics = {}
+    for key in ensemble_metrics[list(ensemble_metrics.keys())[0]].keys():
+        if key not in ["mode", "epoch"]:
+            avg_ensemble_metrics[key] = np.mean([m[key] for m in ensemble_metrics.values()])
+
+    if logger is not None:
+        logger.log(avg_ensemble_metrics)
+        if log_errors == "PerAtomRMSE":
+            error_e = avg_ensemble_metrics["rmse_e_per_atom"] * 1e3
+            error_f = avg_ensemble_metrics["rmse_f"] * 1e3
+            logging.info(
+                f"RMSE_E_per_atom={error_e:.1f} meV, RMSE_F={error_f:.1f} meV / A"
+            )
+        elif (
+            log_errors == "PerAtomRMSEstressvirials"
+            and avg_ensemble_metrics["rmse_stress_per_atom"] is not None
+        ):
+            error_e = avg_ensemble_metrics["rmse_e_per_atom"] * 1e3
+            error_f = avg_ensemble_metrics["rmse_f"] * 1e3
+            error_stress = avg_ensemble_metrics["rmse_stress_per_atom"] * 1e3
+            logging.info(
+                f"RMSE_E_per_atom={error_e:.1f} meV, RMSE_F={error_f:.1f} meV / A, RMSE_stress_per_atom={error_stress:.1f} meV / A^3"
+            )
+        elif (
+            log_errors == "PerAtomRMSEstressvirials"
+            and avg_ensemble_metrics["rmse_virials_per_atom"] is not None
+        ):
+            error_e = avg_ensemble_metrics["rmse_e_per_atom"] * 1e3
+            error_f = avg_ensemble_metrics["rmse_f"] * 1e3
+            error_virials = avg_ensemble_metrics["rmse_virials_per_atom"] * 1e3
+            logging.info(
+                f"RMSE_E_per_atom={error_e:.1f} meV, RMSE_F={error_f:.1f} meV / A, RMSE_virials_per_atom={error_virials:.1f} meV"
+            )
+        elif log_errors == "TotalRMSE":
+            error_e = avg_ensemble_metrics["rmse_e"] * 1e3
+            error_f = avg_ensemble_metrics["rmse_f"] * 1e3
+            logging.info(
+                f"RMSE_E={error_e:.1f} meV, RMSE_F={error_f:.1f} meV / A"
+            )
+        elif log_errors == "PerAtomMAE":
+            error_e = avg_ensemble_metrics["mae_e_per_atom"] * 1e3
+            error_f = avg_ensemble_metrics["mae_f"] * 1e3
+            logging.info(
+                f"MAE_E_per_atom={error_e:.1f} meV, MAE_F={error_f:.1f} meV / A"
+            )
+        elif log_errors == "TotalMAE":
+            error_e = avg_ensemble_metrics["mae_e"] * 1e3
+            error_f = avg_ensemble_metrics["mae_f"] * 1e3
+            logging.info(
+                f"MAE_E={error_e:.1f} meV, MAE_F={error_f:.1f} meV / A"
+            )
+        elif log_errors == "DipoleRMSE":
+            error_mu = avg_ensemble_metrics["rmse_mu_per_atom"] * 1e3
+            logging.info(
+                f"RMSE_MU_per_atom={error_mu:.2f} mDebye"
+            )
+        elif log_errors == "EnergyDipoleRMSE":
+            error_e = avg_ensemble_metrics["rmse_e_per_atom"] * 1e3
+            error_f = avg_ensemble_metrics["rmse_f"] * 1e3
+            error_mu = avg_ensemble_metrics["rmse_mu_per_atom"] * 1e3
+            logging.info(
+                f"RMSE_E_per_atom={error_e:.1f} meV, RMSE_F={error_f:.1f} meV / A, RMSE_Mu_per_atom={error_mu:.2f} mDebye"
+            )
+
+    return (avg_ensemble_metrics, ensemble_metrics)
+
+def select_best_member(
+        ensemble_valid_loss: dict,
+):
+    """
+    Selects the best member of an ensemble based on the validation loss.
+
+    Args:
+        ensemble_valid_loss (dict): Dictionary of validation losses for each ensemble member.
+
+    Returns:
+        str: Tag of the best ensemble member.
+    """
+    return min(ensemble_valid_loss, key=ensemble_valid_loss.get)
+    
 
 def E_uncert(
         prediction: np.array,
@@ -980,8 +1247,7 @@ def get_uncert_alpha(
         float: Distribution shift coefficient.
     """
     
-    return np.mean((reference-ensemble_avg)**2 / uncertainty **2)
-    
+    return np.mean((reference-ensemble_avg)**2 / uncertainty **2)  
 
 def ensemble_training_setups(
         ensemble: dict,
@@ -1244,7 +1510,6 @@ def compute_average_E0s(
             atomic_energies_dict[z] = 0.0
     return atomic_energies_dict
 
-
 #TODO: split this up and update doc string
 def update_model_auxiliaries(
     model: modules.MACE,
@@ -1300,8 +1565,7 @@ def update_model_auxiliaries(
     model.scale_shift = modules.blocks.ScaleShiftBlock(
         scale=std, shift=mean
     )
-
-                    
+                
 def save_checkpoint(
     checkpoint_handler: tools.CheckpointHandler,
     training_setup: dict,
@@ -1467,7 +1731,6 @@ def list_latest_file(
         return latest_file
     else:
         raise FileNotFoundError(f"No files found in {directory}!")
-
 
 class AIMSControlParser:
     def __init__(self) -> None:
@@ -1647,7 +1910,6 @@ class AIMSControlParser:
                         if key == 'many_body_dispersion':
                             aims_settings[match.group(1)] = ''
         return aims_settings
-
 
 dtype_mapping = {
     'float32': torch.float32,

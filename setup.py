@@ -30,6 +30,7 @@ setup(
             'FHI_AL-al=FHI_AL.cli.al_procedure_only:main',
             "FHI_AL-scratch=FHI_AL.cli.scratch_train:main",
             "FHI_AL-atomic-energies=FHI_AL.cli.get_atomic_energies:main",
+            "FHI_AL-test_ensemble=FHI_AL.cli.test_ensemble:main",
         ],
     },
 )

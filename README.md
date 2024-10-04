@@ -132,6 +132,7 @@ following subdictionaries and keys:
     - **analysis** *(bool)*: If True the losses and uncertainties are saved throughout the whole process.
     - **initial_sampling** *(str)*: Choice of method for sampling the initial points when creating the initial training sets. For now the choice are: ```"mace-mp0"``` or ```"aimd"```.
     - **initial_foundational_size** *(str)*: If one sets ```initial_sampling = "mace-mp0"```, the size (```"small"```,```"medium"```,```"large"```) of the foundational model can be chosen here. It is recommended to use ```"small"```.
+    - **converge_best** *(bool)*: Whether to converge to whole ensemble (```False```) or only the best performing (based on validation loss) member (```True```) on the acquired dataset (only applies to convergence after AL procedure).
 
 For now we have only one MD setting for all trajectories and the selection for settings is limited to Langevin dynamics. Currently these settings are used for *ab initio* and MLFF MD.
 - MD
@@ -185,7 +186,7 @@ For now we have only one MD setting for all trajectories and the selection for s
 - [ ] compile models at the end
 - [x] foundation model initial geometries
 - [ ] fine-tuning of foundational models
-- [ ] select best performing ensemble member/knowledge distillation
+- [x] select best performing ensemble member
 - [ ] Start multiple trajectories from different starting geometries
 
 
