@@ -1779,6 +1779,7 @@ class AIMSControlParser:
             'use_local_index': re.compile(r'^\s*(use_local_index)\s+(\S+)', re.IGNORECASE),
             'use_logsbt': re.compile(r'^\s*(use_logsbt)\s+(\S+)', re.IGNORECASE),
             'vdw_correction_hirshfeld': re.compile(r'^\s*(vdw_correction_hirshfeld)\s+(\S+)', re.IGNORECASE),
+            'postprocess_anyway': re.compile(r'^\s*(postprocess_anyway)\s+(\S+)', re.IGNORECASE), # TODO: ATTENTION THIS ONE IF FUCKING MISSING IN ASE AHHHHHH
         }
 
         self.float_patterns = {
@@ -1799,13 +1800,13 @@ class AIMSControlParser:
         }
 
         self.exp_patterns = {
-            'basis_threshold': re.compile(r'^\s*(basis_threshold)\s+([-+]?\d*\.?\d+([eE][-+]?\d+)?)', re.IGNORECASE),
-            'occupation_thr': re.compile(r'^\s*(occupation_thr)\s+([-+]?\d*\.?\d+([eE][-+]?\d+)?)', re.IGNORECASE),
-            'sc_accuracy_eev': re.compile(r'^\s*(sc_accuracy_eev)\s+([-+]?\d*\.?\d+([eE][-+]?\d+)?)', re.IGNORECASE),
-            'sc_accuracy_etot': re.compile(r'^\s*(sc_accuracy_etot)\s+([-+]?\d*\.?\d+([eE][-+]?\d+)?)', re.IGNORECASE),
-            'sc_accuracy_forces': re.compile(r'^\s*(sc_accuracy_forces)\s+([-+]?\d*\.?\d+([eE][-+]?\d+)?)', re.IGNORECASE),
-            'sc_accuracy_rho': re.compile(r'^\s*(sc_accuracy_rho)\s+([-+]?\d*\.?\d+([eE][-+]?\d+)?)', re.IGNORECASE),
-            'sc_accuracy_stress': re.compile(r'^\s*(sc_accuracy_stress)\s+([-+]?\d*\.?\d+([eE][-+]?\d+)?)', re.IGNORECASE),
+            'basis_threshold': re.compile(r'^\s*(basis_threshold)\s+([-+]?\d*\.?\d*([eEdD][-+]?\d+)?)', re.IGNORECASE),
+            'occupation_thr': re.compile(r'^\s*(occupation_thr)\s+([-+]?\d*\.?\d*([eEdD][-+]?\d+)?)', re.IGNORECASE),
+            'sc_accuracy_eev': re.compile(r'^\s*(sc_accuracy_eev)\s+([-+]?\d*\.?\d*([eEdD][-+]?\d+)?)', re.IGNORECASE),
+            'sc_accuracy_etot': re.compile(r'^\s*(sc_accuracy_etot)\s+([-+]?\d*\.?\d*([eEdD][-+]?\d+)?)', re.IGNORECASE),
+            'sc_accuracy_forces': re.compile(r'^\s*(sc_accuracy_forces)\s+([-+]?\d*\.?\d*([eEdD][-+]?\d+)?)', re.IGNORECASE),
+            'sc_accuracy_rho': re.compile(r'^\s*(sc_accuracy_rho)\s+([-+]?\d*\.?\d*([eEdD][-+]?\d+)?)', re.IGNORECASE),
+            'sc_accuracy_stress': re.compile(r'^\s*(sc_accuracy_stress)\s+([-+]?\d*\.?\d*([eEdD][-+]?\d+)?)', re.IGNORECASE),
         }
 
         self.int_patterns = {
@@ -1837,7 +1838,29 @@ class AIMSControlParser:
         }
 
         self.special_patterns = {
-            'many_body_dispersion': re.compile(r'^\s*(many_body_dispersion)\s', re.IGNORECASE)
+            #'many_body_dispersion': re.compile(r'^\s*(many_body_dispersion)\s', re.IGNORECASE)
+            'many_body_dispersion': re.compile(r"""
+                ^\s*                                               
+                (many_body_dispersion)\b                              
+                (?:                                                
+                    \s+beta=(?P<beta>-?\d+(\.\d+)?)                
+                    |\s+k_grid=(?P<k_grid>\d+:\d+:\d+)             
+                    |\s+freq_grid=(?P<freq_grid>\d+)               
+                    |\s+self_consistent=(?P<self_consistent>\.true\.|\.false\.) 
+                    |\s+vdw_params_kind=(?P<vdw_params_kind>[^\s]+)
+                )*                                                 
+            """, re.IGNORECASE | re.VERBOSE),                         
+            'many_body_dispersion_nl': re.compile(r"""
+                ^\s*                                               
+                (many_body_dispersion_nl)\b                               
+                (?:                                                
+                    \s+beta=(?P<beta>-?\d+(\.\d+)?)                
+                    |\s+k_grid=(?P<k_grid>\d+:\d+:\d+)             
+                    |\s+freq_grid=(?P<freq_grid>\d+)               
+                    |\s+self_consistent=(?P<self_consistent>\.true\.|\.false\.) 
+                    |\s+vdw_params_kind=(?P<vdw_params_kind>[^\s]+)
+                )*                                                 
+            """, re.IGNORECASE | re.VERBOSE)
         }
 
     def f90_bool_to_py_bool(
@@ -1879,7 +1902,8 @@ class AIMSControlParser:
                 for key, pattern in self.exp_patterns.items():
                     match = pattern.match(line)
                     if match:
-                        aims_settings[match.group(1)] = float(match.group(2))
+                        matched_value = match.group(2).replace('d', 'e').replace('D', 'E')
+                        aims_settings[match.group(1)] = float(matched_value)
                         
                 for key, pattern in self.int_patterns.items():
                     match = pattern.match(line)
@@ -1907,8 +1931,27 @@ class AIMSControlParser:
                 for key, pattern in self.special_patterns.items():
                     match = pattern.match(line)
                     if match:
-                        if key == 'many_body_dispersion':
-                            aims_settings[match.group(1)] = ''
+                        if key == 'many_body_dispersion': 
+                            if any(match.groupdict().values()):
+                                # If parameters are found, store them in a dictionary
+                                aims_settings[key] = ''
+                                for param, value in match.groupdict().items():
+                                    if value is not None:
+                                        aims_settings[key] += f'{param}={value} '
+                            else:
+                                # If no parameters are found, store an empty string
+                                aims_settings[key] = ''
+                                
+                        if key == 'many_body_dispersion_nl': 
+                            if any(match.groupdict().values()):
+                                # If parameters are found, store them in a dictionary
+                                aims_settings[key] = ''
+                                for param, value in match.groupdict().items():
+                                    if value is not None:
+                                        aims_settings[key] += f'{param}={value} '
+                            else:
+                                # If no parameters are found, store an empty string
+                                aims_settings[key] = ''
         return aims_settings
 
 dtype_mapping = {

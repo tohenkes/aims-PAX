@@ -46,7 +46,6 @@ WORLD_COMM = MPI.COMM_WORLD
 WORLD_SIZE = WORLD_COMM.Get_size()
 RANK = WORLD_COMM.Get_rank()
 
-#RESTART DURING CONVERGENCE, SWITCH FORCE AND ENERGY WEIGHT DURING CONVERGENCE
 
 
 #TODO: refactor this. too much in one class. maybe restart class etc.
@@ -293,9 +292,11 @@ class PrepareALProcedure:
         self.seeds_tags_dict = self.al.get("seeds_tags_dict", None)
         self.margin = self.al.get("margin", 0.001)
         self.converge_best = self.al.get("converge_best", True)
+        self.mol_idxs = self.al.get("mol_idxs", None)
         
         self.restart = os.path.exists("restart/al/al_restart.npy")
         self.create_restart = self.misc.get("create_restart", False)
+
         #TODO: put this somewhere else
         if self.create_restart:
             self.al_restart_dict = {
@@ -327,8 +328,7 @@ class PrepareALProcedure:
                 self.al_restart_dict['sanity_checks'] = None
                 self.al_restart_dict['collect_losses'] = None
                 self.al_restart_dict['collect_thresholds'] = None
-        
-    
+          
     def handle_aims_settings(
         self,
         path_to_control: str
@@ -473,8 +473,6 @@ class PrepareALProcedure:
             self.collect_thresholds = MPI.COMM_WORLD.bcast(self.collect_thresholds, root=0)
         MPI.COMM_WORLD.Barrier()
 
-
-
     def update_al_restart_dict(self):
         self.al_restart_dict['trajectories'] = self.trajectories
         self.al_restart_dict['trajectory_status'] = self.trajectory_status
@@ -587,6 +585,12 @@ class PrepareALProcedure:
         MaxwellBoltzmannDistribution(atoms, temperature_K=md_settings['temperature'])
     
         return dyn
+    
+    def setup_uncertainty(
+            self
+            ):
+        
+        return
     
     def check_al_done(self):
         if self.create_restart:
@@ -727,8 +731,9 @@ class ALProcedure(PrepareALProcedure):
                     self.set_batch_size,
                     self.set_valid_batch_size,
                 )
-                # because the dataset size is dynamically changing we have to update the average number of neighbors
-                # and shifts and the scaling factor for the models
+                # because the dataset size is dynamically changing 
+                # we have to update the average number of neighbors,
+                # shifts and the scaling factor for the models
                 # usually they converge pretty fast
                 update_model_auxiliaries(
                     model=model,

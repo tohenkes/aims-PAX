@@ -277,7 +277,6 @@ class PrepareInitialDatasetProcedure:
             ase.Atoms: Atoms object with the calculator attached.
         """
         aims_settings = self.aims_settings.copy()
-
         def init_via_ase(asi):
             
             from ase.calculators.aims import Aims
@@ -760,6 +759,10 @@ class InitialDatasetProcedure(PrepareInitialDatasetProcedure):
                             )
                             self.collect_losses["ensemble_losses"].append(
                                 ensemble_valid_losses
+                            )
+                            np.savez(
+                                "analysis/initial_losses.npz",
+                                **self.collect_losses
                             )
                         
                         for tag, model in self.ensemble.items():
