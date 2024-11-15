@@ -3,9 +3,13 @@ from ase.io import read
 import argparse
 import numpy as np
 from prettytable import PrettyTable
+import logging
 
 def main():
 
+    # setup logger to save to 'test_ensemble.log'
+    logging.basicConfig(filename='test_ensemble.log', level=logging.INFO)
+    logging.info('Starting test.')
     parser = argparse.ArgumentParser(description='Test ensemble of models')
     parser.add_argument(
         '--models',
@@ -84,13 +88,13 @@ def main():
 
 
     table = PrettyTable()
-    table.field_names = ['Model', 'MAE E [meV]', 'RMSE E [meV]', 'MAE F [meV/A]', 'RMSE F [meV/A]']
+    table.field_names = ['Model', 'MAE E [meV/Atom]', 'RMSE E [meV/Atom]', 'MAE F [meV/(A*atom)]', 'RMSE F [meV/(A*atom)]']
     for i in ensemble.keys():
         table.add_row(
             [
                 i,
-                f"{ensemble_metrics[i]['mae_e'] * 10e2:.1f}",
-                f"{ensemble_metrics[i]['rmse_e'] * 10e2:.1f}",
+                f"{ensemble_metrics[i]['mae_e_per_atom'] * 10e2:.1f}",
+                f"{ensemble_metrics[i]['rmse_e_per_atom'] * 10e2:.1f}",
                 f"{ensemble_metrics[i]['mae_f'] * 10e2:.1f}",
                 f"{ensemble_metrics[i]['rmse_f'] * 10e2:.1f}"
             ]
@@ -98,8 +102,8 @@ def main():
     table.add_row(
         [
             'Average',
-            f"{avg_ensemble_metrics['mae_e'] * 10e2:.1f}",
-            f"{avg_ensemble_metrics['rmse_e'] * 10e2:.1f}",
+            f"{avg_ensemble_metrics['mae_e_per_atom'] * 10e2:.1f}",
+            f"{avg_ensemble_metrics['rmse_e_per_atom'] * 10e2:.1f}",
             f"{avg_ensemble_metrics['mae_f'] * 10e2:.1f}",
             f"{avg_ensemble_metrics['rmse_f'] * 10e2:.1f}"
         ]

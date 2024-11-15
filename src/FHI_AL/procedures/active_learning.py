@@ -5,6 +5,11 @@ import torch
 import numpy as np
 from mace import tools
 from FHI_AL.tools.custom_MACECalculator import MACECalculator
+from FHI_AL.tools.uncertainty import (
+    HandleUncertainty,
+    MolForceUncertainty,
+    get_threshold
+)
 from FHI_AL.tools.utilities import (
     create_dataloader,
     ensemble_training_setups,
@@ -18,7 +23,6 @@ from FHI_AL.tools.utilities import (
     create_mace_dataset,
     ensemble_prediction,
     ensemble_prediction_v2,
-    setup_mace_training,
     max_sd_2,
     avg_sd,
     atom_wise_sd,
@@ -30,10 +34,15 @@ from FHI_AL.tools.utilities import (
     get_atomic_energies_from_pt,
     select_best_member,
     AIMSControlParser,
+    ModifyMD
 )
+from FHI_AL.tools.setup_MACE_training import (
+    setup_mace_training,
+    reset_optimizer
+    )
 from FHI_AL.tools.train_epoch_mace import train_epoch, validate_epoch_ensemble
 import ase
-from ase.io import read
+from ase.io import read, write
 import logging
 from mpi4py import MPI
 from asi4py.asecalc import ASI_ASE_calculator
@@ -79,16 +88,18 @@ class PrepareALProcedure:
             logging.info(f"Procedure runs on {WORLD_SIZE} workers.")
         
         self.control_parser = AIMSControlParser()
+        self.md_settings = al_settings["MD"]
         self.handle_al_settings(al_settings)
         self.handle_mace_settings(mace_settings)
         self.handle_aims_settings(path_to_control)
+        self.setup_uncertainty()
         np.random.seed(self.mace_settings["GENERAL"]["seed"])
         self.create_folders()
         
         
         #TODO: will break when using multiple settings for different trajectories and 
         # it should be adapted to the way the initial dataset procecure treats md settings
-        self.md_settings = al_settings["MD"]
+        self.setup_md_modify()
         
         #TODO: this would change with multiple species
         self.z = Z_from_geometry_in()
@@ -218,13 +229,23 @@ class PrepareALProcedure:
                 trajectory: {
                     "atom_wise_uncertainty": [],
                     "uncertainty_via_max": [],
-                    "uncertainty_via_avg": [],
+                    "uncertainty_via_mean": [],
                     "max_error": [],
                     "mean_error": [],
                     "atom_wise_error": [],
                     "threshold": [],
                     } for trajectory in range(self.num_trajectories)
             }
+            if self.mol_idxs is not None:
+                for trajectory in range(self.num_trajectories):
+                    self.sanity_checks[trajectory].update({
+                        "total_uncertainty": [],
+                        "mol_forces_uncertainty": [],
+                        "mol_wise_error": [],
+                        "max_mol_error": [],
+                        "mean_mol_error": [],
+                    })
+                self.uncertainty_checks = []
             # this saves the validation losses for each trajectory
             self.collect_losses = {
                 "epoch": [],
@@ -246,7 +267,9 @@ class PrepareALProcedure:
             # just make a dictionary of different md settings and pass them here
             self.md_drivers = {
                 trajectory: self.setup_md_al(
-                    atoms=self.trajectories[trajectory], md_settings=self.md_settings
+                    atoms=self.trajectories[trajectory],
+                    md_settings=self.md_settings,
+                    idx=trajectory
                 ) for trajectory in range(self.num_trajectories)
             }
             
@@ -292,7 +315,8 @@ class PrepareALProcedure:
         self.seeds_tags_dict = self.al.get("seeds_tags_dict", None)
         self.margin = self.al.get("margin", 0.001)
         self.converge_best = self.al.get("converge_best", True)
-        self.mol_idxs = self.al.get("mol_idxs", None)
+        self.mol_idxs = np.load(self.al['mol_idxs'],allow_pickle=True)['arr_0'].tolist() if self.al.get("mol_idxs", None) is not None else None
+        self.uncertainty_type = self.al.get("uncertainty_type", "max_atomic_sd")
         
         self.restart = os.path.exists("restart/al/al_restart.npy")
         self.create_restart = self.misc.get("create_restart", False)
@@ -323,12 +347,19 @@ class PrepareALProcedure:
             }
             self.save_restart = False # is set to true in training when checkpoint is saved
             
-            if self.analysis:
-                self.al_restart_dict['t_intervals'] = None
-                self.al_restart_dict['sanity_checks'] = None
-                self.al_restart_dict['collect_losses'] = None
-                self.al_restart_dict['collect_thresholds'] = None
-          
+            if self.md_settings['stat_ensemble'].lower() == 'nvt':
+                self.al_restart_dict.update({
+                    'current_temperatures': None,
+                })
+            
+            if self.analysis:#
+                self.al_restart_dict.update({
+                    't_intervals': None,
+                    'sanity_checks': None,
+                    'collect_losses': None,
+                    'collect_thresholds': None
+                })
+                
     def handle_aims_settings(
         self,
         path_to_control: str
@@ -375,7 +406,7 @@ class PrepareALProcedure:
                     self.update_atomic_energies = True
 
                 else:
-                    logging.info("Using specified atomic eneriges.")
+                    logging.info("Using specified atomic energies.")
                     self.ensemble_atomic_energies_dict = {
                         tag: self.atomic_energies_dict for tag in self.seeds_tags_dict.keys()
                     }
@@ -391,31 +422,27 @@ class PrepareALProcedure:
     
     def handle_al_restart(self):
 
-        self.trajectories = None
-        self.trajectory_intermediate_epochs = None
-        self.ensemble_reset_opt = None
-        self.ensemble_no_improvement = None
-        self.ensemble_best_valid = None
-        self.threshold = None
-        self.trajectory_status = None
-        self.trajectory_MD_steps = None
-        self.trajectory_total_epochs = None
-        self.current_valid_error = None
-        self.total_points_added = None
-        self.train_points_added = None
-        self.valid_points_added = None
-        self.num_MD_limits_reached = None
-        self.num_workers_training = None
-        self.num_workers_waiting = None
-        self.total_epoch = None
-        self.check = None
-        self.uncertainties = None
-        self.converge_best = None
+        attributes = [
+            'trajectories', 'trajectory_intermediate_epochs', 'ensemble_reset_opt',
+            'ensemble_no_improvement', 'ensemble_best_valid', 'threshold',
+            'trajectory_status', 'trajectory_MD_steps', 'trajectory_total_epochs',
+            'current_valid_error', 'total_points_added', 'train_points_added',
+            'valid_points_added', 'num_MD_limits_reached', 'num_workers_training',
+            'num_workers_waiting', 'total_epoch', 'check', 'uncertainties', 'converge_best'
+        ]
+        if self.md_settings['stat_ensemble'].lower() == 'nvt':
+            attributes.append('current_temperatures')
+            
+        for attr in attributes:
+            setattr(self, attr, None)
+        
         if self.analysis:
-            self.t_intervals = None
-            self.sanity_checks = None
-            self.collect_losses = None
-            self.collect_thresholds = None
+            analysis_attributes = [
+            't_intervals', 'sanity_checks', 'collect_losses',
+            'collect_thresholds', 'uncertainty_checks'
+            ]
+            for attr in analysis_attributes:
+                setattr(self, attr, None)
 
         if RANK == 0:
             logging.info("Restarting active learning procedure from checkpoint.")
@@ -423,33 +450,30 @@ class PrepareALProcedure:
                 "restart/al/al_restart.npy",
                 allow_pickle=True
             ).item()
+            restart_keys = [
+                'trajectories', 'trajectory_intermediate_epochs', 'ensemble_reset_opt',
+                'ensemble_no_improvement', 'ensemble_best_valid', 'threshold',
+                'trajectory_status', 'trajectory_MD_steps', 'trajectory_total_epochs',
+                'current_valid_error', 'total_points_added', 'train_points_added',
+                'valid_points_added', 'num_MD_limits_reached', 'num_workers_training',
+                'num_workers_waiting', 'total_epoch', 'check', 'uncertainties', 'converge_best'
+            ]
+            if self.md_settings['stat_ensemble'].lower() == 'nvt':
+                restart_keys.append('current_temperatures')
 
-            self.trajectories = self.al_restart_dict['trajectories']
-            self.trajectory_intermediate_epochs = self.al_restart_dict['trajectory_intermediate_epochs']
-            self.ensemble_reset_opt = self.al_restart_dict['ensemble_reset_opt']
-            self.ensemble_no_improvement = self.al_restart_dict['ensemble_no_improvement']
-            self.ensemble_best_valid = self.al_restart_dict['ensemble_best_valid']
-            self.threshold = self.al_restart_dict['threshold']
-            self.trajectory_status = self.al_restart_dict['trajectory_status']
-            
-            self.trajectory_MD_steps = self.al_restart_dict['trajectory_MD_steps']
-            self.trajectory_total_epochs = self.al_restart_dict['trajectory_total_epochs']
-            self.current_valid_error = self.al_restart_dict['current_valid_error']
-            self.total_points_added = self.al_restart_dict['total_points_added']
-            self.train_points_added = self.al_restart_dict['train_points_added']
-            self.valid_points_added = self.al_restart_dict['valid_points_added']
-            self.num_MD_limits_reached = self.al_restart_dict['num_MD_limits_reached']
-            self.num_workers_training = self.al_restart_dict['num_workers_training']
-            self.num_workers_waiting = self.al_restart_dict['num_workers_waiting']
-            self.total_epoch = self.al_restart_dict['total_epoch']
-            self.check = self.al_restart_dict['check']
-            self.uncertainties = self.al_restart_dict['uncertainties']
-            self.converge_best = self.al_restart_dict['converge_best']
+            for key in restart_keys:
+                setattr(self, key, self.al_restart_dict[key])
+
             if self.analysis:
-                self.t_intervals = self.al_restart_dict['t_intervals']
-                self.sanity_checks = self.al_restart_dict['sanity_checks']
-                self.collect_losses = self.al_restart_dict['collect_losses']
-                self.collect_thresholds = self.al_restart_dict['collect_thresholds']
+                restart_analysis_keys = [
+                    't_intervals', 'sanity_checks', 'collect_losses',
+                    'collect_thresholds', 'uncertainty_checks'
+                ]
+                for key in restart_analysis_keys:
+                    setattr(self, key, self.al_restart_dict[key])
+
+                if self.mol_idxs is not None:
+                    self.uncertainty_checks = []
 
         MPI.COMM_WORLD.Barrier()
         self.trajectory_status = MPI.COMM_WORLD.bcast(self.trajectory_status, root=0)
@@ -466,40 +490,62 @@ class PrepareALProcedure:
         self.check = MPI.COMM_WORLD.bcast(self.check, root=0)
         self.uncertainties = MPI.COMM_WORLD.bcast(self.uncertainties, root=0)
         self.converge_best = MPI.COMM_WORLD.bcast(self.converge_best, root=0)
+        
+        if self.md_settings['stat_ensemble'].lower() == 'nvt':
+            self.current_temperatures = MPI.COMM_WORLD.bcast(self.current_temperatures, root=0)
+            
         if self.analysis:
             self.t_intervals = MPI.COMM_WORLD.bcast(self.t_intervals, root=0)
             self.sanity_checks = MPI.COMM_WORLD.bcast(self.sanity_checks, root=0)
             self.collect_losses = MPI.COMM_WORLD.bcast(self.collect_losses, root=0)
             self.collect_thresholds = MPI.COMM_WORLD.bcast(self.collect_thresholds, root=0)
+            if self.mol_idxs is not None:
+                self.uncertainty_checks = MPI.COMM_WORLD.bcast(self.uncertainty_checks, root=0)
         MPI.COMM_WORLD.Barrier()
 
     def update_al_restart_dict(self):
-        self.al_restart_dict['trajectories'] = self.trajectories
-        self.al_restart_dict['trajectory_status'] = self.trajectory_status
-        self.al_restart_dict['trajectory_MD_steps'] = self.trajectory_MD_steps
-        self.al_restart_dict['trajectory_total_epochs'] = self.trajectory_total_epochs
-        self.al_restart_dict['trajectory_intermediate_epochs'] = self.trajectory_intermediate_epochs
-        self.al_restart_dict['ensemble_reset_opt'] = self.ensemble_reset_opt
-        self.al_restart_dict['ensemble_no_improvement'] = self.ensemble_no_improvement
-        self.al_restart_dict['ensemble_best_valid'] = self.ensemble_best_valid
-        self.al_restart_dict['current_valid_error'] = self.current_valid_error
-        self.al_restart_dict['threshold'] = self.threshold
-        self.al_restart_dict['total_points_added'] = self.total_points_added
-        self.al_restart_dict['train_points_added'] = self.train_points_added
-        self.al_restart_dict['valid_points_added'] = self.valid_points_added
-        self.al_restart_dict['num_MD_limits_reached'] = self.num_MD_limits_reached
-        self.al_restart_dict['num_workers_training'] = self.num_workers_training
-        self.al_restart_dict['num_workers_waiting'] = self.num_workers_waiting
-        self.al_restart_dict['total_epoch'] = self.total_epoch
-        self.al_restart_dict['check'] = self.check
-        self.al_restart_dict['uncertainties'] = self.uncertainties
-        self.al_restart_dict['converge_best'] = self.converge_best
+        self.al_restart_dict.update({
+            'trajectories': self.trajectories,
+            'trajectory_status': self.trajectory_status,
+            'trajectory_MD_steps': self.trajectory_MD_steps,
+            'trajectory_total_epochs': self.trajectory_total_epochs,
+            'trajectory_intermediate_epochs': self.trajectory_intermediate_epochs,
+            'ensemble_reset_opt': self.ensemble_reset_opt,
+            'ensemble_no_improvement': self.ensemble_no_improvement,
+            'ensemble_best_valid': self.ensemble_best_valid,
+            'current_valid_error': self.current_valid_error,
+            'threshold': self.threshold,
+            'total_points_added': self.total_points_added,
+            'train_points_added': self.train_points_added,
+            'valid_points_added': self.valid_points_added,
+            'num_MD_limits_reached': self.num_MD_limits_reached,
+            'num_workers_training': self.num_workers_training,
+            'num_workers_waiting': self.num_workers_waiting,
+            'total_epoch': self.total_epoch,
+            'check': self.check,
+            'uncertainties': self.uncertainties,
+            'converge_best': self.converge_best
+        })
+        
+        if self.md_settings['stat_ensemble'].lower() == 'nvt':
+            self.al_restart_dict.update({
+                'current_temperatures': {
+                    trajectory: (self.md_drivers[trajectory].temp / units.kB) for trajectory in self.trajectories.keys()
+                }
+            })
+            
         
         if self.analysis:
-            self.al_restart_dict['t_intervals'] = self.t_intervals
-            self.al_restart_dict['sanity_checks'] = self.sanity_checks
-            self.al_restart_dict['collect_losses'] = self.collect_losses
-            self.al_restart_dict['collect_thresholds'] = self.collect_thresholds            
+            self.al_restart_dict.update({
+                't_intervals': self.t_intervals,
+                'sanity_checks': self.sanity_checks,
+                'collect_losses': self.collect_losses,
+                'collect_thresholds': self.collect_thresholds
+            })
+            if self.mol_idxs is not None:
+                self.al_restart_dict.update({
+                    'uncertainty_checks': self.uncertainty_checks
+                })
         
     def create_folders(self):
         """
@@ -558,7 +604,8 @@ class PrepareALProcedure:
     def setup_md_al(
             self,
             atoms: ase.Atoms,
-            md_settings: dict
+            md_settings: dict,
+            idx: None
             ):
         """
         Sets up the ASE molecular dynamics object for the atoms object using
@@ -573,24 +620,62 @@ class PrepareALProcedure:
         """
         #TODO: make this more flexible
         if md_settings["stat_ensemble"].lower() == 'nvt':
+            if not self.restart:
+                try:
+                    self.current_temperatures[idx] = md_settings['temperature']
+                except AttributeError:
+                    self.current_temperatures = {idx: md_settings['temperature']}
+            
             if md_settings['thermostat'].lower() == 'langevin':
                 dyn = Langevin(
                     atoms,
                     timestep=md_settings['timestep'] * units.fs,
                     friction=md_settings['friction'] / units.fs,
-                    temperature_K=md_settings['temperature'],
+                    temperature_K=self.current_temperatures[idx],
                     rng=np.random.RandomState(md_settings['seed'])
                 )
+                
         # make this optional and have the possibility for different initial temperature
-        MaxwellBoltzmannDistribution(atoms, temperature_K=md_settings['temperature'])
+        if not self.restart:
+            MaxwellBoltzmannDistribution(
+                atoms,
+                temperature_K=self.current_temperatures[idx]
+                )
     
         return dyn
     
+    def setup_md_modify(
+        self,
+    ):
+        # TODO: make possible to have differrent modfiers for different trajectories
+        self.md_mod_settings = self.md_settings.get("MODIFY", None)
+        if self.md_mod_settings is not None:
+            self.md_mod_metric = self.md_mod_settings.get("metric", None)
+            assert self.md_mod_metric is not None, "No metric specified for MD modification."
+            
+            if  self.md_mod_metric == 'train_size':
+                self.get_md_mod_metric = lambda: self.train_dataset_len
+            
+            self.md_modifier = ModifyMD(
+                settings=self.md_mod_settings
+            )
+            self.mod_md = True
+        else:
+            self.mod_md = False
+            
     def setup_uncertainty(
             self
             ):
-        
-        return
+
+            if self.mol_idxs is not None:
+                self.get_uncertainty = MolForceUncertainty(
+                    mol_idxs=self.mol_idxs,
+                    uncertainty_type=self.uncertainty_type
+                )
+            else:
+                self.get_uncertainty = HandleUncertainty(
+                    uncertainty_type=self.uncertainty_type
+                )
     
     def check_al_done(self):
         if self.create_restart:
@@ -610,6 +695,7 @@ class ALProcedure(PrepareALProcedure):
     """
     def sanity_check(
     #TODO: put this somewhere else and its ugly
+    #TODO: update docstring
             self,
             sanity_prediction: np.ndarray,
             true_forces: np.ndarray
@@ -625,26 +711,58 @@ class ALProcedure(PrepareALProcedure):
         Returns:
             tuple[np.ndarray, np.ndarray]: force uncertainty, true force error
         """
-        uncertainty_via_max = max_sd_2(sanity_prediction)
-        uncertainty_via_avg = avg_sd(sanity_prediction)
-        atom_wise_uncertainty = atom_wise_sd(sanity_prediction)
+        
+        check_results = {}
+        atom_wise_uncertainty = self.get_uncertainty.ensemble_sd(sanity_prediction)
+        uncertainty_via_max = self.get_uncertainty.max_atomic_sd(sanity_prediction)
+        uncertainty_via_mean = self.get_uncertainty.mean_atomic_sd(sanity_prediction)
+        
         mean_sanity_prediction = sanity_prediction.mean(0).squeeze()
-        difference = true_forces - mean_sanity_prediction
-        diff_sq = difference**2
-        diff_sq_mean = np.mean(diff_sq, axis=-1)
+
+        diff_sq_mean = np.mean(
+            (true_forces - mean_sanity_prediction)**2,
+            axis=-1)
         
         max_error = np.max(np.sqrt(diff_sq_mean), axis=-1)
         mean_error = np.mean(np.sqrt(diff_sq_mean), axis=-1)
-        atom_wise_error = atom_wise_f_error(mean_sanity_prediction, true_forces)
-
-        return (
-            atom_wise_uncertainty,
-            uncertainty_via_max,
-            uncertainty_via_avg,
-            atom_wise_error,
-            max_error,
-            mean_error
+        atom_wise_error = np.sqrt(diff_sq_mean)
+        
+        check_results['atom_wise_uncertainty'] = atom_wise_uncertainty
+        check_results['uncertainty_via_max'] = uncertainty_via_max
+        check_results['uncertainty_via_mean'] = uncertainty_via_mean
+        check_results['atom_wise_error'] = atom_wise_error
+        check_results['max_error'] = max_error
+        check_results['mean_error'] = mean_error
+        
+        if self.mol_idxs is not None:
+            total_certainty = self.get_uncertainty(sanity_prediction)
+            mol_forces_uncertainty = self.get_uncertainty.get_intermol_uncertainty(
+                sanity_prediction
             )
+            mol_forces_prediction = self.get_uncertainty.compute_mol_forces(
+                sanity_prediction,
+                self.mol_idxs
+                ).mean(0).squeeze()
+            mol_forces_true =  self.get_uncertainty.compute_mol_forces(
+                true_forces.reshape(1, *true_forces.shape),
+                self.mol_idxs
+                ).squeeze()
+            mol_diff_sq_mean = np.mean(
+                (mol_forces_true - mol_forces_prediction)**2,
+                axis=-1)
+            max_mol_error = np.max(np.sqrt(mol_diff_sq_mean), axis=-1)
+            mean_mol_error = np.mean(np.sqrt(mol_diff_sq_mean), axis=-1)
+            mol_wise_error = np.sqrt(mol_diff_sq_mean)
+            
+            check_results['total_uncertainty'] = total_certainty
+            check_results['mol_forces_uncertainty'] = mol_forces_uncertainty
+            check_results['mol_wise_error'] = mol_wise_error
+            check_results['max_mol_error'] = max_mol_error
+            check_results['mean_mol_error'] = mean_mol_error
+        
+        return check_results
+            
+
 
     def waiting_task(
             self,
@@ -721,15 +839,28 @@ class ALProcedure(PrepareALProcedure):
         """
         if RANK == 0:
             for _, (tag, model) in enumerate(self.ensemble.items()):
-
+                
+                batch_size = (
+                        1
+                        if len(self.ensemble_mace_sets[tag]["train"])
+                        < self.set_batch_size
+                        else self.set_batch_size
+                    )
+                valid_batch_size = (
+                        1
+                        if len(self.ensemble_mace_sets[tag]["valid"])
+                        < self.set_valid_batch_size
+                        else self.set_valid_batch_size
+                    )
+                
                 (
                     self.ensemble_mace_sets[tag]["train_loader"],
                     self.ensemble_mace_sets[tag]["valid_loader"],
                 ) = create_dataloader(
                     self.ensemble_mace_sets[tag]["train"],
                     self.ensemble_mace_sets[tag]["valid"],
-                    self.set_batch_size,
-                    self.set_valid_batch_size,
+                    batch_size,
+                    valid_batch_size,
                 )
                 # because the dataset size is dynamically changing 
                 # we have to update the average number of neighbors,
@@ -756,14 +887,12 @@ class ALProcedure(PrepareALProcedure):
                 for tag, model in self.ensemble.items():
 
                     if self.ensemble_reset_opt[tag]:
-                        #TODO: reduce this to resetting the optimizer; reset EMA also????
-                        logging.info(f'Resetting training setup for model {tag}.')
-                        self.training_setups[tag] = setup_mace_training(
-                                        settings=self.mace_settings,
-                                        model=self.ensemble[tag],
-                                        tag=tag,
-                                        checkpoints_dir=self.checkpoints_dir,
-                                        )
+                        logging.info(f'Resetting optimizer for model {tag}.')
+                        self.training_setups[tag] = reset_optimizer(
+                            model=self.ensemble[tag],
+                            training_setup=self.training_setups[tag],
+                            training_settings=self.mace_settings["TRAINING"],
+                        )
                         self.ensemble_reset_opt[tag] = False
 
                     logger = tools.MetricsLogger(
@@ -911,9 +1040,21 @@ class ALProcedure(PrepareALProcedure):
             # currently the mace forces are used even if the uncertainty is too high
             # but ase is weird and i don't want to change it so whatever. when we have our own 
             # MD engine we can adress this.
+            
+            if self.mod_md:
+                if RANK == 0:
+                    modified = self.md_modifier(
+                        driver=self.md_drivers[idx],
+                        metric=self.get_md_mod_metric(),
+                        idx=idx
+                    )
+                    if modified and self.create_restart:
+                        self.update_al_restart_dict()
+                        
             for _ in range(self.skip_step):
                 if RANK == 0:
                     self.md_drivers[idx].step()
+                    #write(f"md{idx}.xyz", self.trajectories[idx],append=True)
                 self.trajectory_MD_steps[idx] += 1
             #MPI.COMM_WORLD.Barrier()
             #self.trajectories[idx] = MPI.COMM_WORLD.bcast(self.trajectories[idx], root=0)
@@ -933,20 +1074,17 @@ class ALProcedure(PrepareALProcedure):
                 
                 self.point = self.trajectories[idx].copy()
                 prediction = self.trajectories[idx].calc.results["forces_comm"]
-            
-                uncertainty = max_sd_2(prediction)
+                uncertainty = self.get_uncertainty(prediction)
 
-                #TODO: put this in a function
-
-                # compute moving average of uncertainty
                 self.uncertainties.append(uncertainty)
-                # TODO: Remove hardcode, make a function out of this
-                # limit the history to 400
-                if len(self.uncertainties) > 400:
-                    self.uncertainties = self.uncertainties[-400:]
-                if len(self.uncertainties) > 10:
-                    mov_avg_uncert = np.mean(self.uncertainties)
-                    self.threshold = mov_avg_uncert * (1.0 + self.c_x)
+                    
+                if len(self.uncertainties) > 10: #TODO: remove hardcode
+                    
+                    self.threshold = get_threshold(
+                        uncertainties=self.uncertainties,
+                        c_x = self.c_x,
+                        max_len = 400 #TODO: remove hardcode
+                    )
                     
                     if self.analysis:
                         self.collect_thresholds[
@@ -967,14 +1105,18 @@ class ALProcedure(PrepareALProcedure):
             MPI.COMM_WORLD.Barrier()
     
             
-            if uncertainty > self.threshold:
+            if (uncertainty > self.threshold).any():
                 if RANK == 0:
                     logging.info(
-                        f"Uncertainty of point is beyond threshold {np.round(self.threshold,3)} at worker {idx}: {round(uncertainty.item(),3)}."
+                        f"Uncertainty of point is beyond threshold {np.round(self.threshold,3)} at worker {idx}: {np.round(uncertainty,3)}."
                     )
                 # for analysis
                 if self.analysis:
-                    self.t_intervals[idx].append(current_MD_step)
+                    self.t_intervals[idx].append(current_MD_step)           
+                    if self.mol_idxs is not None:
+                        self.uncertainty_checks.append(
+                            uncertainty > self.threshold
+                            )
                 # at the moment the process waits for the calculation to finish
                 # ideally it should calculate in the background and the other
                 # workers sample/train in the meantime
@@ -1039,24 +1181,16 @@ class ALProcedure(PrepareALProcedure):
                     MPI.COMM_WORLD.Barrier()
                     self.aims_calculator.calculate(self.point, properties=["energy","forces"])
                     MPI.COMM_WORLD.Barrier()
-                    (
-                        atom_wise_uncertainty,
-                        uncertainty_via_max,
-                        uncertainty_via_avg,
-                        atom_wise_error,
-                        max_error,
-                        mean_error
-                    ) = self.sanity_check(
+                    
+                    check_results = self.sanity_check(
                         sanity_prediction=sanity_prediction,
                         true_forces = self.aims_calculator.results['forces']
                     )
-                    self.sanity_checks[idx]['atom_wise_uncertainty'].append(atom_wise_uncertainty)
-                    self.sanity_checks[idx]['uncertainty_via_max'].append(uncertainty_via_max)
-                    self.sanity_checks[idx]['uncertainty_via_avg'].append(uncertainty_via_avg)
-                    self.sanity_checks[idx]['atom_wise_error'].append(atom_wise_error)
-                    self.sanity_checks[idx]['max_error'].append(max_error)
-                    self.sanity_checks[idx]['mean_error'].append(mean_error)
-                    self.sanity_checks[idx]['threshold'].append(self.threshold)
+                    for key in check_results.keys():
+                        self.sanity_checks[idx][key].append(check_results[key])
+
+                    
+                    self.collect_thresholds[idx].append(self.threshold)
                     
                     self.check += 1
 
@@ -1156,6 +1290,11 @@ class ALProcedure(PrepareALProcedure):
                     "analysis/thresholds.npz",
                     self.collect_thresholds
                 )
+                if self.mol_idxs is not None:
+                    np.savez(
+                        "analysis/uncertainty_checks.npz",
+                        self.uncertainty_checks
+                    )
             
             if self.create_restart:
                 self.update_al_restart_dict()

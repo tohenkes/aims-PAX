@@ -12,7 +12,6 @@ from mace import tools, modules
 from mace.tools import AtomicNumberTable, torch_geometric, torch_tools, utils
 from mace.tools.train import evaluate
 from mace.data.utils import compute_average_E0s
-from ase.io import read
 from FHI_AL.tools.setup_MACE import setup_mace
 from FHI_AL.tools.setup_MACE_training import setup_mace_training
 from dataclasses import dataclass
@@ -26,6 +25,8 @@ from mace.tools.utils import (
 )
 import ase.data
 import ase.io
+from ase.io import read
+from ase import units
 import dataclasses
 from torchmetrics import Metric
 from typing import Any, Dict, List, Optional, Tuple, Union
@@ -948,6 +949,9 @@ def ensemble_prediction_v2(
         return all_energies, all_forces
     return all_forces
 
+def compute_max_error(delta: np.ndarray) -> float:
+    return np.max(np.abs(delta)).item()
+    
 
 class MACEEval(Metric):
     def __init__(self):
@@ -1024,6 +1028,8 @@ class MACEEval(Metric):
             aux["mae_e_per_atom"] = compute_mae(delta_es_per_atom)
             aux["rmse_e"] = compute_rmse(delta_es)
             aux["rmse_e_per_atom"] = compute_rmse(delta_es_per_atom)
+            aux["max_e"] = compute_max_error(delta_es)
+            aux["max_e_per_atom"] = compute_max_error(delta_es_per_atom)
             aux["q95_e"] = compute_q95(delta_es)
         if self.Fs_computed:
             fs = self.convert(self.fs)
@@ -1032,6 +1038,7 @@ class MACEEval(Metric):
             aux["rel_mae_f"] = compute_rel_mae(delta_fs, fs)
             aux["rmse_f"] = compute_rmse(delta_fs)
             aux["rel_rmse_f"] = compute_rel_rmse(delta_fs, fs)
+            aux["max_f"] = compute_max_error(delta_fs)
             aux["q95_f"] = compute_q95(delta_fs)
         if self.stress_computed:
             delta_stress = self.convert(self.delta_stress)
@@ -1731,6 +1738,39 @@ def list_latest_file(
         return latest_file
     else:
         raise FileNotFoundError(f"No files found in {directory}!")
+
+class ModifyMD:
+    def __init__(
+        self,
+        settings: dict
+        ):
+        
+        self.settings = settings
+        if self.settings['type'] == "temp":
+            self.temp_step = settings["temp_step"]
+            self.mod_interval = settings["mod_interval"]
+            
+    def change_temp(
+        self,
+        driver
+        ):
+        driver.temp += units.kB * self.temp_step
+    
+    def __call__(
+        self,
+        driver,
+        metric,
+        idx = None
+        ) -> Any:
+        if self.settings['type'] == "temp":
+            if metric % self.mod_interval == 0 and metric != 0:
+                self.change_temp(driver)
+                if idx is not None:
+                    logging.info(f'Modyfing trajectory {idx}.')
+                logging.info(f"Changed temperature by {self.temp_step} to {round(driver.temp / units.kB,1)} K.")
+                return True
+            else:
+                return False
 
 class AIMSControlParser:
     def __init__(self) -> None:

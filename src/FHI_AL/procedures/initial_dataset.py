@@ -114,7 +114,6 @@ class PrepareInitialDatasetProcedure:
 
         )
 
-
         self.handle_atomic_energies()
         self.epoch = 0
         

@@ -23,6 +23,7 @@ class ReCalculator:
         path_to_control: str = "./control.in",
         aims_path: str = None,
         start_idx: int = 0,
+        end_idx: int = None,
         save_interval: int = 10
         ):
         
@@ -66,7 +67,10 @@ class ReCalculator:
                     logging.error("No ASI_path provided or found in active_learning_settings.yaml.")
         
         self.handle_aims_settings(path_to_control)
-        self.data = read(path_to_data, index=f'{start_idx}:')
+        idx_str = f'{start_idx}:' if end_idx is None else f'{start_idx}:{end_idx}'
+        self.data = read(path_to_data, index=idx_str)
+        logging.info(f'Found cell: {self.data[0].get_cell()}')
+        #TODO: This only works for single species. Need to generalize for multiple species
         self.calc = self.setup_calculator(self.data[0])
 
 

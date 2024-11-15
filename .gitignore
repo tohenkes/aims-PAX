@@ -5,7 +5,6 @@
 *.extxyz
 *.pt
 *.model
-*.npz
 *.out
 *.db
 *.ipynb
