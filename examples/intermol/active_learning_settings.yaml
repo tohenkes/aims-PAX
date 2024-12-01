@@ -36,10 +36,16 @@ MD:
   friction: 0.001
   seed: 42
   MODIFY:
+  # NOT WORKING YET!!!!!
     type: 'temp'
     metric: 'train_size'
     temp_step: 50
-    mod_interval: 10
+    mod_interval: 
+      - 2
+      - 4
+      - 5
+      - 8
+      - 20
 
 
 

@@ -157,13 +157,8 @@ def get_threshold(
         c_x: float = 0.,
         max_len: int = 400
 ):
-    uncertainties = np.array(uncertainties)
-    
-    if len(uncertainties) > max_len:
-        uncertainties = uncertainties[:max_len]
-    
+    uncertainties = np.array(uncertainties)[-max_len:]
     avg_uncertainty = np.mean(uncertainties, axis=0)
     threshold = avg_uncertainty * (1.0 + c_x)    
-    
     return threshold
     

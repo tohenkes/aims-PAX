@@ -1717,6 +1717,25 @@ def list_files_in_directory(
     
     return file_paths
 
+def atoms_full_copy(
+    atoms: ase.Atoms
+    ):
+    atoms_copy = ase.Atoms(
+        symbols=atoms.get_chemical_symbols(),
+        positions=atoms.get_positions(),
+        cell=atoms.get_cell(),
+        pbc=atoms.get_pbc(),
+        tags=atoms.get_tags(),
+        momenta=atoms.get_momenta(),
+        masses=atoms.get_masses(),
+        magmoms=atoms.get_initial_magnetic_moments(),
+        charges=atoms.get_initial_charges(),
+        constraint=atoms.constraints,
+        calculator=atoms.get_calculator(),
+        info=atoms.info,
+        )
+    return atoms_copy
+
 def list_latest_file(
     directory: str
     )-> str:
@@ -1763,7 +1782,7 @@ class ModifyMD:
         idx = None
         ) -> Any:
         if self.settings['type'] == "temp":
-            if metric % self.mod_interval == 0 and metric != 0:
+            if metric in self.mod_interval:
                 self.change_temp(driver)
                 if idx is not None:
                     logging.info(f'Modyfing trajectory {idx}.')
@@ -1819,7 +1838,7 @@ class AIMSControlParser:
             'use_local_index': re.compile(r'^\s*(use_local_index)\s+(\S+)', re.IGNORECASE),
             'use_logsbt': re.compile(r'^\s*(use_logsbt)\s+(\S+)', re.IGNORECASE),
             'vdw_correction_hirshfeld': re.compile(r'^\s*(vdw_correction_hirshfeld)\s+(\S+)', re.IGNORECASE),
-            'postprocess_anyway': re.compile(r'^\s*(postprocess_anyway)\s+(\S+)', re.IGNORECASE), # TODO: ATTENTION THIS ONE IF FUCKING MISSING IN ASE AHHHHHH
+            'postprocess_anyway': re.compile(r'^\s*(postprocess_anyway)\s+(\S+)', re.IGNORECASE), 
         }
 
         self.float_patterns = {
