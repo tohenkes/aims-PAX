@@ -43,8 +43,8 @@ The overall workflow of the procedure and some comments thereupon are written he
 
 **Creating the initial ensemble and dataset.**
 
-In the beginning a set of MACE models is trained on a initial dataset to serve as a starting point for the actual active learning. Each ensemble member gets their own initial training and validation set. For that, *ab initio* MD is run (one trajectory) using FHI AIMS and ASI/ASE. Alternatively, the *foundational* model MACE-MP0 is used to sample strucutres, which are subsequently recomputed using DFT. This is recommended as one ideally wants to have uncorrelated structures and MACE-MP0 is much cheaper to evaluate and gives reasonable structures. After a set number of samples  is collected the models are trained on these and are validated. Afterwards, new points are sampled and this loop is repeated until a desired level of accurcay of the ensemble on the validation datasets is reached.   
-The model parameters are kept and updated throughout and are not reinitialized when new points are added (warm start/finetuning).  
+In the beginning a set of MACE models is trained on a initial dataset to serve as a starting point for the actual active learning. Each ensemble member gets their own initial training and validation set. For that, *ab initio* MD is run (one trajectory) using FHI AIMS and ASI/ASE. Alternatively, the *foundational* model MACE-MP0 is used to sample strucutres, which are subsequently recomputed using DFT. This is recommended as one ideally wants to have uncorrelated structures and MACE-MP0 is much cheaper to evaluate and gives reasonable structures. After a set number of samples  is collected the models are trained on these and are validated. Afterwards, new points are sampled and this loop is repeated until a desired level of accurcay (or a different criterion like max number of epochs etc.) of the ensemble on the validation datasets is reached.   
+The model parameters are kept and updated throughout and are not reinitialized when new points are added (warm start/finetuning/continual learning).  
 In principle the training and sampling can be done in parallel. The major bottleneck is the AIMD/DFT but depending on the size of the model, number of epochs and system size the parellelization can provide a significant speedup.  
 Optionally, the model(s) can be converged on the dataset.
 
@@ -55,16 +55,18 @@ Optionally, the model(s) can be converged on the dataset.
 During the active learning procedure, multiple MD trajectories (or one is) are launched and run with the MLFF model(s). At a specified interval the uncertainty of the forces are computed. After a warmup (currently 10 uncertainty estimations) the moving average of the uncertainties is calculated. Using this the uncertainty threshold (with c~x) is computed. If the threshold is crossed during MD the DFT energies and forces are calculated for that point. The point is then added to the training or validation set.  
 In the former case the MD is halted for the given trajectory and when the program loops back to it the models are trained for some epochs instead before continuing to the next trajectory. This state is kept until a maximum number of epochs is reached and the trajectory is propageted again.  
 Currently, everything waits until FHI AIMS is done. In theory, while FHI AIMS is running, the other trajectories can be propagated or models can be trained simultaneously. 
-Similarly to the creation of the initial dataset, the models are updated throughout the whole process and are not reinitialized. As we are only adding a few points at a time this can lead to models getting stuck on local minima. If this happens, the optimizer state is reinitialized which is supposed to kick the model out of the local minimum. Albeit a bit drastic and resulting in error spikes, this makes the whole procedure work in the first place.  
-For a (fixed) interval, points from the MLFF MD are taken and computed using FHI AIMS. The idea is that we want to check every so often if the uncertainty is too low while the actual error is very high. This is not really implemented yet, as in, it is not really doing anything with the information except saving it. Perhaps one could use a moving average of the actual error here to create a threshold and if it is crossed one adds this point to the training set. This can also be usefull in parallel mode, when all trajectories are in training mode or running the MDs the GPU is occupied and the CPU is idle.
+Similarly to the creation of the initial dataset, the models are updated throughout the whole process and are not reinitialized. As we are only adding a few points at a time this can lead to models getting stuck on a local minimum. If this happens, the optimizer state is reinitialized, which is supposed to kick the model out of the local minimum. Albeit a bit drastic and resulting in error spikes, this makes the whole procedure work in the first place.  
+For an (fixed) interval, points from the MLFF MD are taken and computed using FHI AIMS if the ```analysis``` keyword is set to ```True```. The idea is that we want to check every so often if the uncertainty is too low while the actual error is very high. This is not really implemented yet, as in, it is not really doing anything with the information except saving it. Perhaps one could use a moving average of the actual error here to create a threshold and if it is crossed one adds this point to the training set. This can also be usefull in parallel mode, when all trajectories are in training mode or running the MDs the GPU is occupied and the CPU is idle.
 
 ![Image](readme_figs/al_flowchart_example.drawio.png)
 
-One major avenue in the future will be using an ensemble of foundational models and fine tune them using the same scheme. This would remove the necessity of creating an initial dataset but restricts the models architecture to the one of the foundational model. By running 
+One major avenue in the future will be using an ensemble of foundational models and fine tune them using the same scheme. This would remove the necessity of creating an initial dataset but restricts the models architecture to the one of the foundational model.
 
 **Atomic Energies**
 
-It is highly recommended to use the isolated atomic energies of the elements in a given system as the *zero point* energy in MACE. This enables the model have the correct asymptotic behavior when dissocating molecules. The package includes a script that calculates the energies of all the elements found in a the ```geometry.in``` file. For this run ```FHI_AL-atomic-energies```. Make sure to have defined the path to aims, the species directory in the ```active_learning_settings.yaml``` and also that a ```control.in``` file is present. The results are saved in a log file. The energies can then be included in ```mace_settings.yaml```.
+```THIS IS NOT IMPLEMENTED PROPERLY, RIGHT NOW!!!```
+
+It is recommended to use the isolated atomic energies of the elements in a given system as the *zero point* energy in MACE. This enables the model have the correct asymptotic behavior when dissocating molecules. The package includes a script that calculates the energies of all the elements found in a the ```geometry.in``` file. For this run ```FHI_AL-atomic-energies```. Make sure to have defined the path to aims, the species directory in the ```active_learning_settings.yaml``` and also that a ```control.in``` file is present. The results are saved in a log file. The energies can then be included in ```mace_settings.yaml```.
 
 ## Settings 
 
@@ -72,12 +74,12 @@ It is highly recommended to use the isolated atomic energies of the elements in 
 
 The settings here are the same as for usual FHI aims calculations and are 
 parsed internally in the script. MD settings are not specified here.
-Currently only one chemical species can serve as an input (```geometry.in```).
+Currently only one system and geometry can serve as an input (```geometry.in```).
 
 ### MACE settings 
 
-The settings for the MACE model(s) are specified in the YAML file called
-'mace_settings.yaml'. Inside the workflow, a dictionary is created with the 
+The settings for the MACE model(s) are specified in the YAML file called 'mace_settings.yaml'. Some settings are not used but I haven't come around to change this. In the future, we'll use the settings stuff from the original mace code.
+Inside the workflow, a dictionary is created with the 
 following subdictionaries and keys:
 - GENERAL:
     - **name_exp** *(str)*: This is the name given to the experiment and subsequently to the models and datasets.
@@ -110,6 +112,7 @@ following subdictionaries and keys:
     - **valid_ratio** *(float)*: Ratio of sampled points that is added to the validation set.
     - **converge_initial** *(bool)*: Whether to converge the model(s) on the initial dataset or not.
     - **converge_al** *(bool)*: Whether to converge the model(s) on the active learned dataset or not.
+    - **converge_best** *(bool)*: Whether to pick the best performing model (force MAE on validation) from an ensemble and only converging this one.
     - **scheduler_initial** *(bool)*: Whether to use a learning rate scheduler when training the model(s) during the initial dataset collection phase.
     - **max_initial_epochs** *(int)*: Maximum numbers of epochs that are used when training the model(s) during the initial dataset collection phase.
     - **max_epochs_worker** *(int)*: Maximum number of epochs before the trajectory worker changes back to sampling instead of training mode.
@@ -159,7 +162,9 @@ For now we have only one MD setting for all trajectories and the selection for s
 
 
 # ToDo
-
+- [ ] change epoch saved in AL for ckpt
+- [ ] update mace calculator
+- [x] Change training setup reset to optimizer reset only
 - [x] energy error bug fix
 - [x] parallelism for FHI aims in AL procedure
 - [ ] copy original MACE input file
@@ -168,13 +173,12 @@ For now we have only one MD setting for all trajectories and the selection for s
 - [x] make it work with gpu
 - [x] analysis (save sanity checks, t_intervals, threshold evolution, uncertainties, loss over time)
 - [ ] multiple MD settings
-- [ ] scf failsafe
+- [x] scf failsafe
 - [ ] initial dataset train and MD in parallel
 - [ ] AL train and MD in parallel
 - [ ] multi GPU?
 - [ ] multiple species at once
 - [ ] add support for stress
-- [ ] combine mace_settings and active_learning_settings into control.in (?)
 - [ ] refactor code, especially procedures.py and utilities.py and all the modified MACE parts
 - [ ] own MD engine using pytorch (or TorchMD?)
 - [ ] own asi wrapper

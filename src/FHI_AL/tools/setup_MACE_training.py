@@ -190,3 +190,58 @@ def setup_mace_training(
     training_setup['epoch'] = epoch
     return training_setup
     
+def reset_optimizer(
+    model,
+    training_setup,
+    training_settings,
+):
+    
+    
+    decay_interactions = {}
+    no_decay_interactions = {}
+    for name, param in model.interactions.named_parameters():
+        if "linear.weight" in name or "skip_tp_full.weight" in name:
+            decay_interactions[name] = param
+        else:
+            no_decay_interactions[name] = param
+    
+    param_options = dict(
+        params=[
+            {
+                "name": "embedding",
+                "params": model.node_embedding.parameters(),
+                "weight_decay": 0.0,
+            },
+            {
+                "name": "interactions_decay",
+                "params": list(decay_interactions.values()),
+                "weight_decay": training_settings["weight_decay"],
+            },
+            {
+                "name": "interactions_no_decay",
+                "params": list(no_decay_interactions.values()),
+                "weight_decay": 0.0,
+            },
+            {
+                "name": "products",
+                "params": model.products.parameters(),
+                "weight_decay": training_settings["weight_decay"],
+            },
+            {
+                "name": "readouts",
+                "params": model.readouts.parameters(),
+                "weight_decay": 0.0,
+            },
+        ],
+        lr=training_settings["lr"],
+        amsgrad=training_settings["amsgrad"],
+    )
+
+    optimizer: torch.optim.Optimizer
+    if training_settings["optimizer"] == "adamw":
+        optimizer = torch.optim.AdamW(**param_options)
+    else:
+        optimizer = torch.optim.Adam(**param_options)
+    
+    training_setup["optimizer"] = optimizer
+    return training_setup

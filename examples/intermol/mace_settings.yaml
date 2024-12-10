@@ -1,0 +1,67 @@
+GENERAL:
+  name_exp: test
+  log_dir: ./logs
+  checkpoints_dir: ./checkpoints
+  results_dir: ./results
+  model_dir: ./model
+  default_dtype: float32
+  compute_stress: False
+  seed: 100
+
+ARCHITECTURE:
+  model: ScaleShiftMACE
+  r_max: 5.
+  num_channels: 16
+  max_L: 0
+  max_ell: 3
+  radial_type: bessel
+  num_radial_basis: 8
+  num_cutoff_basis: 5
+  interaction: RealAgnosticResidualInteractionBlock
+  num_interactions: 2
+  correlation: 3
+  radial_MLP: 
+  - 16
+  - 16
+  - 16
+  gate: silu
+  MLP_irreps: 16x0e
+  interaction_first: RealAgnosticResidualInteractionBlock
+  compute_avg_num_neighbors: True
+  #atomic_energies:
+  #  1: -12.483008663366023
+  #  8: -2041.7075263924146
+
+TRAINING:
+  valid_fraction: 0.1
+  batch_size: 5
+  valid_batch_size: 5
+  weight_decay: 5.e-07
+  scaling: rms_forces_scaling # TODO: put this to architecture
+  lr: 0.01
+  amsgrad: True
+  optimizer: adam
+  scheduler: ReduceLROnPlateau
+  lr_scheduler_gamma: 0.9993
+  lr_factor: 0.8
+  scheduler_patience: 5
+  swa: False
+  ema: True
+  ema_decay: 0.99
+  max_num_epochs: 30
+  loss: weighted
+  energy_weight: 1.
+  forces_weight: 1000.
+  virials_weight: 1.
+  stress_weight: 1.
+  config_type_weights: {Default: 1.0}
+  patience: 15
+  clip_grad: 10.
+  eval_interval: 5
+
+MISC:
+  device: cuda
+  keep_checkpoints: False
+  restart_latest: False
+  error_table: PerAtomMAE
+  log_level: INFO
