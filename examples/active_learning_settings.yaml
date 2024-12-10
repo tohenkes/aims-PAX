@@ -1,7 +1,7 @@
 ACTIVE_LEARNING:
   desired_acc: 0.000042
   lambda: 15.
-  n_samples: 5
+  n_samples: 50
   valid_ratio: 0.3 # e.g. 0.3 means 30% of the data is used for validation
   converge_initial: False
   converge_al: True
@@ -16,10 +16,10 @@ ACTIVE_LEARNING:
   max_set_size: 300
   valid_skip: 5
   sanity_skip: 10
-  ensemble_size: 5
+  ensemble_size: 3
   c_x: -0.1
   dataset_dir: "./data"
-  skip_step_initial: 1 # step to skip in sampling initial MD
+  skip_step_initial: 10 # step to skip in sampling initial MD
   skip_step_mlff: 5 # step to skip in sampling MLFF MD
   num_trajectories: 3 # number of trajectories to from sample in parallel
   species_dir: "/project/home/p200243/tcp_software/aims_master_090824/FHIaims/species_defaults/defaults_2020/light"
@@ -27,7 +27,8 @@ ACTIVE_LEARNING:
   analysis: True
   initial_sampling: mace-mp0
   initial_foundational_size: "small"
-  
+  parallel: True
+
 MD:
   stat_ensemble: NVT
   thermostat: Langevin

@@ -393,8 +393,6 @@ class PrepareInitialDatasetProcedure:
 
             logging.info(f'{self.ensemble_atomic_energies_dict[list(self.seeds_tags_dict.keys())[0]]}')
 
-        
-    
     def check_initial_ds_done(self):
         if self.create_restart:
             check = self.init_ds_restart_dict.get("initial_ds_done", False)
@@ -403,8 +401,7 @@ class PrepareInitialDatasetProcedure:
                     logging.info('Initial dataset generation is already done. Closing')
             return check
         else:
-            return False
-        
+            return False     
 
     def run_MD(
             self,
@@ -437,7 +434,6 @@ class PrepareInitialDatasetProcedure:
         
         return current_point
     
-
     def converge(self):
         """
         Function to converge the ensemble on the acquired initial dataset.
@@ -943,3 +939,100 @@ class InitialDatasetFoundational(InitialDatasetProcedure):
         Kills the AIMS calculator.
         """
         self.aims_calc.close()
+
+class InitialDatasetFoundationalParallel(InitialDatasetFoundational):
+    
+    def __init__(                 
+        self,
+        mace_settings: dict,
+        al_settings: dict,
+        path_to_control: str = "./control.in",
+        path_to_geometry: str = "./geometry.in",):
+        
+        super().__init__(
+            mace_settings=mace_settings,
+            al_settings=al_settings,
+            path_to_control=path_to_control,
+            path_to_geometry=path_to_geometry
+        )
+        
+        if RANK == 0:
+            self.color = 0
+        else:
+            self.color = 1
+
+        self.comm = MPI.COMM_WORLD.Split(
+            color=self.color,
+            key=RANK
+            )
+    
+    
+    def setup_aims_calculator(
+        self,
+        atoms: ase.Atoms,
+        ) -> ase.Atoms:
+        """
+        Attaches the AIMS calculator to the atoms object. Uses the AIMS settings
+        from the control.in to set up the calculator.
+
+        Args:
+            atoms (ase.Atoms): Atoms object to attach the calculator to.
+            pbc (bool, optional): If periodic boundry conditions are required or not.
+            Defaults to False.
+
+        Returns:
+            ase.Atoms: Atoms object with the calculator attached.
+        """
+        aims_settings = self.aims_settings.copy()
+        if self.color == 1:
+            def init_via_ase(asi):
+                
+                from ase.calculators.aims import Aims
+                calc = Aims(**aims_settings)
+                calc.write_input(asi.atoms)
+
+            calc = ASI_ASE_calculator(
+                self.ASI_path,
+                init_via_ase,
+                self.comm,
+                atoms
+                )
+            return calc
+        else:
+            return None
+    
+    def sample_points(
+        self
+        ) -> list:
+            
+        sampled_points = []
+        current_point = None
+
+        for i in range(self.ensemble_size * self.n_samples):
+            if self.color == 0:
+                current_point = self.run_MD(self.atoms, self.dyn)
+                logging.info(f"Sampled point {i}.")    
+                for dest in range(1, MPI.COMM_WORLD.Get_size()): 
+                    MPI.COMM_WORLD.isend(current_point, dest=dest, tag=0)
+            
+            elif self.color == 1: 
+                req = MPI.COMM_WORLD.irecv(source=0, tag=0)
+                
+                #if req.Test():
+                current_point = req.wait()
+                if RANK == 1:
+                    logging.info(f"Recalculating point {i} with DFT.")  
+                sampled_points.append(self.recalc_aims(current_point))
+
+        MPI.COMM_WORLD.Barrier()
+        
+        if RANK == 1:
+            logging.info(f"Rank 1 is sending")
+            MPI.COMM_WORLD.send(sampled_points, dest=0, tag=1)
+
+        if RANK == 0:
+            logging.info("Rank 0 is receiving data...")
+            sampled_points = MPI.COMM_WORLD.recv(source=1, tag=1)
+            
+        MPI.COMM_WORLD.Barrier()
+        return sampled_points
