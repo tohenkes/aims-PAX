@@ -322,6 +322,8 @@ class PrepareALProcedure:
         self.margin = self.al.get("margin", 0.001)
         self.converge_best = self.al.get("converge_best", True)
         self.mol_idxs = np.load(self.al['mol_idxs'],allow_pickle=True)['arr_0'].tolist() if self.al.get("mol_idxs", None) is not None else None
+        if RANK == 0:
+            logging.info(f"Using molecular indices: {self.mol_idxs}")
         self.uncertainty_type = self.al.get("uncertainty_type", "max_atomic_sd")
         self.uncert_not_crossed_limit = self.al.get("uncert_not_crossed_limit", 500)
         
@@ -1219,41 +1221,45 @@ class ALProcedure(PrepareALProcedure):
                     MPI.COMM_WORLD.Barrier()
                     self.aims_calculator.calculate(self.point, properties=["energy","forces"])
                     MPI.COMM_WORLD.Barrier()
-                    
-                    check_results = self.sanity_check(
-                        sanity_prediction=sanity_prediction,
-                        true_forces = self.aims_calculator.results['forces']
-                    )
-                    for key in check_results.keys():
-                        self.sanity_checks[idx][key].append(check_results[key])
-                    self.sanity_checks[idx]['threshold'].append(self.threshold)
-
-                    
-                    self.collect_thresholds[idx].append(self.threshold)
-                    
-                    self.check += 1
-                    np.savez(
-                        "analysis/sanity_checks.npz",
-                        self.sanity_checks
-                    )
-                    np.savez(
-                        "analysis/t_intervals.npz",
-                        self.t_intervals
-                    )
-                    np.savez(
-                        "analysis/al_losses.npz",
-                        **self.collect_losses
-                    )
-                    np.savez(
-                        "analysis/thresholds.npz",
-                        self.collect_thresholds
-                    )
-                    if self.mol_idxs is not None:
-                        np.savez(
-                            "analysis/uncertainty_checks.npz",
-                            self.uncertainty_checks
+                    if self.aims_calculator.asi.is_scf_converged:
+                        check_results = self.sanity_check(
+                            sanity_prediction=sanity_prediction,
+                            true_forces = self.aims_calculator.results['forces']
                         )
+                        for key in check_results.keys():
+                            self.sanity_checks[idx][key].append(check_results[key])
+                        self.sanity_checks[idx]['threshold'].append(self.threshold)
 
+                        
+                        self.collect_thresholds[idx].append(self.threshold)
+                        
+                        self.check += 1
+                        np.savez(
+                            "analysis/sanity_checks.npz",
+                            self.sanity_checks
+                        )
+                        np.savez(
+                            "analysis/t_intervals.npz",
+                            self.t_intervals
+                        )
+                        np.savez(
+                            "analysis/al_losses.npz",
+                            **self.collect_losses
+                        )
+                        np.savez(
+                            "analysis/thresholds.npz",
+                            self.collect_thresholds
+                        )
+                        if self.mol_idxs is not None:
+                            np.savez(
+                                "analysis/uncertainty_checks.npz",
+                                self.uncertainty_checks
+                            )
+                    else:
+                        if RANK == 0:
+                            logging.info(
+                                f"SCF not converged at worker {idx} for analysis. Discarding point."
+                            )
     def run(self):
         """
         Main function to run the active learning procedure. Initializes variables and

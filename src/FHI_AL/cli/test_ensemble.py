@@ -48,6 +48,12 @@ def main():
         help='Path to folder where save results',
         default="./"
         )
+    parser.add_argument(
+        '--return_predictions',
+        type=bool,
+        help='Return predictions',
+        default=False
+    )
     args = parser.parse_args()
 
     ensemble = ensemble_from_folder(
@@ -62,6 +68,8 @@ def main():
         arg = arg.lower()
         if arg not in possible_args:
             raise ValueError('Invalid output argument')
+        if arg == 'energy':
+            output_args['energy'] = True
         if arg == 'forces':
             output_args['forces'] = True
         if arg == 'stress':
@@ -78,7 +86,8 @@ def main():
         atoms_list = atoms_list,
         batch_size = args.batch_size,
         output_args = output_args,
-        device = args.device
+        device = args.device,
+        return_predictions = args.return_predictions
     )
     results = {
         'avg_ensemble_metrics': avg_ensemble_metrics,

@@ -1073,6 +1073,7 @@ def test_model(
     data_loader,
     output_args: dict,
     device: str,
+    return_predictions: bool = False,
 
 ):
     for param in model.parameters():
@@ -1080,6 +1081,19 @@ def test_model(
 
     metrics = MACEEval().to(device)
     start_time = time.time()
+    if return_predictions:
+        predictions = {}
+        if output_args.get("energy", False):
+            predictions["energy"] = []
+        if output_args.get("forces", False):
+            predictions["forces"] = []
+        if output_args.get("stress", False):
+            predictions["stress"] = []
+        if output_args.get("virials", False):
+            predictions["virials"] = []
+        if output_args.get("dipole", False):
+            predictions["dipole"] = []
+
     for batch in data_loader:
         batch = batch.to(device)
         batch_dict = batch.to_dict()
@@ -1091,13 +1105,29 @@ def test_model(
             compute_stress=output_args["stress"],
         )
         aux = metrics(batch, output)
+
+        if return_predictions:
+            if output_args.get("energy", False):
+                predictions["energy"].append(output["energy"])
+            if output_args.get("forces", False):
+                predictions["forces"].append(output["forces"])
+            if output_args.get("stress", False):
+                predictions["stress"].append(output["stress"])
+            if output_args.get("virials", False):
+                predictions["virials"].append(output["virials"])
+            if output_args.get("dipole", False):
+                predictions["dipole"].append(output["dipole"])
+    
     aux = metrics.compute()
     aux["time"] = time.time() - start_time
     metrics.reset()
 
     for param in model.parameters():
         param.requires_grad = True
-    
+    if return_predictions:
+        for key in predictions.keys():
+            predictions[key] = torch.cat(predictions[key], dim=0).detach().cpu()
+        aux["predictions"] = predictions
     return aux
 
 def test_ensemble(
@@ -1108,6 +1138,7 @@ def test_ensemble(
     device: str,
     logger: MetricsLogger = None,
     log_errors: str = "PerAtomMAE",
+    return_predictions: bool = False,
 ) -> Tuple[dict, dict]:
     
     
@@ -1133,14 +1164,19 @@ def test_ensemble(
             data_loader=data_loader,
             output_args=output_args,
             device=device,
+            return_predictions=return_predictions,
         )
         ensemble_metrics[tag] = metrics
 
     avg_ensemble_metrics = {}
     for key in ensemble_metrics[list(ensemble_metrics.keys())[0]].keys():
-        if key not in ["mode", "epoch"]:
+        if key not in ["mode", "epoch", "predictions"]:
             avg_ensemble_metrics[key] = np.mean([m[key] for m in ensemble_metrics.values()])
-
+        if return_predictions:
+            avg_ensemble_metrics["predictions"] = {
+                key: np.mean([m["predictions"][key] for m in ensemble_metrics.values()], axis=0)
+                for key in ensemble_metrics[list(ensemble_metrics.keys())[0]]["predictions"].keys()
+            }
     if logger is not None:
         logger.log(avg_ensemble_metrics)
         if log_errors == "PerAtomRMSE":
