@@ -163,7 +163,7 @@ For now we have only one MD setting for all trajectories and the selection for s
 
 # ToDo
 - [ ] change epoch saved in AL for ckpt
-- [ ] update mace calculator
+- [x] update mace calculator
 - [x] Change training setup reset to optimizer reset only
 - [x] energy error bug fix
 - [x] parallelism for FHI aims in AL procedure
