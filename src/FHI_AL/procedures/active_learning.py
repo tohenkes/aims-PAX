@@ -4,7 +4,7 @@ import ase.build
 import torch
 import numpy as np
 from mace import tools
-from FHI_AL.tools.custom_MACECalculator import MACECalculator
+from mace.calculators import MACECalculator
 from FHI_AL.tools.uncertainty import (
     HandleUncertainty,
     MolForceUncertainty,

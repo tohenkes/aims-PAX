@@ -1,7 +1,7 @@
 ACTIVE_LEARNING:
   desired_acc: 0.000042
   lambda: 15.
-  n_samples: 50
+  n_samples: 5
   valid_ratio: 0.3 # e.g. 0.3 means 30% of the data is used for validation
   converge_initial: False
   converge_al: True
@@ -12,8 +12,8 @@ ACTIVE_LEARNING:
   max_final_epochs: 200
   intermediate_epochs: 10
   patience: 20
-  max_MD_steps: 4000
-  max_set_size: 300
+  max_MD_steps: 100
+  max_set_size: 15
   valid_skip: 5
   sanity_skip: 10
   ensemble_size: 3
