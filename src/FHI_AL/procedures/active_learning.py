@@ -1163,8 +1163,8 @@ class ALProcedure(PrepareALProcedure):
                         )
                         self.trajectories[idx] = atoms_full_copy(self.MD_checkpoints[idx])
                     else:
-                        self.point.info['energy'] = self.aims_calculator.results['energy']
-                        self.point.arrays['forces'] = self.aims_calculator.results['forces']
+                        self.point.info['REF_energy'] = self.aims_calculator.results['energy']
+                        self.point.arrays['REF_forces'] = self.aims_calculator.results['forces']
                         self.mace_point = create_mace_dataset(
                             data=[self.point],
                             z_table=self.z_table,

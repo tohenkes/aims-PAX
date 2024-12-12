@@ -422,8 +422,8 @@ class PrepareInitialDatasetProcedure:
         current_forces = np.array(atoms.get_forces())
         current_point = atoms.copy()
         # MACE reads energies and forces from the info & arrays dictionary
-        current_point.info['energy'] = current_energy
-        current_point.arrays['forces'] = current_forces 
+        current_point.info['REF_energy'] = current_energy
+        current_point.arrays['REF_forces'] = current_forces 
 
         if self.create_restart:
             current_point.set_velocities(atoms.get_velocities())
@@ -890,8 +890,8 @@ class InitialDatasetFoundational(InitialDatasetProcedure):
             current_point: ase.Atoms
             ) -> ase.Atoms:
         self.aims_calc.calculate(current_point, properties=["energy", "forces"])
-        current_point.info["energy"] = self.aims_calc.results["energy"]
-        current_point.arrays["forces"] = self.aims_calc.results["forces"]
+        current_point.info["REF_energy"] = self.aims_calc.results["energy"]
+        current_point.arrays["REF_forces"] = self.aims_calc.results["forces"]
         return current_point
 
     def sample_points(

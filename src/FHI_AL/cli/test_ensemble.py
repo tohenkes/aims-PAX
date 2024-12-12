@@ -54,6 +54,51 @@ def main():
         help='Return predictions',
         default=False
     )
+    
+    parser.add_argument(
+        '--energy_key',
+        type=str,
+        help='Energy key',
+        default='REF_energy'
+    )
+    parser.add_argument(
+        '--forces_key',
+        type=str,
+        help='Forces key',
+        default='REF_forces'
+    )
+    parser.add_argument(
+        '--stress_key',
+        type=str,
+        help='Stress key',
+        default='REF_stress'
+    )
+    parser.add_argument(
+        '--virials_key',
+        type=str,
+        help='Virials key',
+        default='virials'
+    )
+    parser.add_argument(
+        '--dipole_key',
+        type=str,
+        help='Dipole key',
+        default='dipoles'
+    )
+    parser.add_argument(
+        '--charges_key',
+        type=str,
+        help='Charges key',
+        default='charges'
+    )
+    parser.add_argument(
+        '--head_key',
+        type=str,
+        help='Head key',
+        default='head'
+    )
+    
+
     args = parser.parse_args()
 
     ensemble = ensemble_from_folder(
@@ -87,7 +132,14 @@ def main():
         batch_size = args.batch_size,
         output_args = output_args,
         device = args.device,
-        return_predictions = args.return_predictions
+        return_predictions = args.return_predictions,
+        energy_key = args.energy_key,
+        forces_key = args.forces_key,
+        stress_key = args.stress_key,
+        virials_key = args.virials_key,
+        dipole_key = args.dipole_key,
+        charges_key = args.charges_key,
+        head_key = args.head_key
     )
     results = {
         'avg_ensemble_metrics': avg_ensemble_metrics,
