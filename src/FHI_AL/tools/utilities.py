@@ -1617,10 +1617,11 @@ def update_model_auxiliaries(
     for interaction_idx in range(len(model.interactions)):
         model.interactions[interaction_idx].avg_num_neighbors = average_neighbors
     mean, std = modules.scaling_classes[scaling](train_loader, atomic_energies)
+    mean, std = torch.from_numpy(mean).to(device), torch.from_numpy(std).to(device)
     model.scale_shift = modules.blocks.ScaleShiftBlock(
         scale=std, shift=mean
     )
-                
+    
 def save_checkpoint(
     checkpoint_handler: tools.CheckpointHandler,
     training_setup: dict,
