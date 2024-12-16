@@ -171,7 +171,7 @@ class PrepareALProcedure:
         self.handle_atomic_energies()
         
         # this initializes the FHI aims process
-        self.aims_calculator = self.setup_aims_calc(
+        self.aims_calculator = self.setup_aims_calculator(
             atoms=read(path_to_geometry)
         )
         
@@ -294,7 +294,8 @@ class PrepareALProcedure:
         self.dtype = self.mace_settings["GENERAL"]["default_dtype"]
         self.device = self.mace_settings["MISC"]["device"]
         self.atomic_energies_dict = self.mace_settings["ARCHITECTURE"].get("atomic_energies", None)
-    
+        self.compute_stress = self.mace_settings.get("compute_stress", False)
+        
     def handle_al_settings(self, al_settings):
         
         self.al = al_settings['ACTIVE_LEARNING']
@@ -585,7 +586,7 @@ class PrepareALProcedure:
         if self.create_restart:
             os.makedirs("restart/al", exist_ok=True)
 
-    def setup_aims_calc(
+    def setup_aims_calculator(
             self,
             atoms: ase.Atoms,
             ):
@@ -596,19 +597,24 @@ class PrepareALProcedure:
             path_to_geometry (str, optional): Path to geometry file. Defaults to "./geometry.in".
         """
         
+        aims_settings = self.aims_settings.copy()
+        properties = ['energy', 'forces']
+        if self.compute_stress:
+            properties.append('stress')
+
         def init_via_ase(asi):
-            
-            from ase.calculators.aims import Aims
-            calc = Aims(**self.aims_settings)
-            calc.write_input(asi.atoms)
-            
-        calculator = ASI_ASE_calculator(
+            from ase.calculators.aims import Aims, AimsProfile
+            aims_settings["profile"] = AimsProfile(command="asi-doesnt-need-command")
+            calc = Aims(**aims_settings)
+            calc.write_inputfiles(asi.atoms, properties=properties)
+
+        calc = ASI_ASE_calculator(
             self.ASI_path,
             init_via_ase,
             MPI.COMM_WORLD,
-            atoms # TODO: must be changed when we have multiple species and then we need multiaims
+            atoms
             )
-        return calculator
+        return calc
 
     def setup_mace_calc(self):
         """
@@ -1077,7 +1083,7 @@ class ALProcedure(PrepareALProcedure):
             
             for _ in range(self.skip_step):
                 if RANK == 0:
-                    self.md_drivers[idx].step()
+                    self.md_drivers[idx].run(1)
                 self.trajectory_MD_steps[idx] += 1
                 current_MD_step += 1
             
@@ -1156,35 +1162,37 @@ class ALProcedure(PrepareALProcedure):
                 
                 MPI.COMM_WORLD.Barrier()
                 self.aims_calculator.calculate(self.point, properties=["energy","forces"])
-                if RANK == 0:
-                    if not self.aims_calculator.asi.is_scf_converged:
+
+                if not self.aims_calculator.asi.is_scf_converged:
+                    if RANK == 0:
                         logging.info(
                             f"SCF not converged at worker {idx}. Discarding point and restarting MD from last checkpoint."
                         )
-                        self.trajectories[idx] = atoms_full_copy(self.MD_checkpoints[idx])
-                    else:
-                        self.point.info['REF_energy'] = self.aims_calculator.results['energy']
-                        self.point.arrays['REF_forces'] = self.aims_calculator.results['forces']
-                        self.mace_point = create_mace_dataset(
-                            data=[self.point],
-                            z_table=self.z_table,
-                            seed=None,
-                            r_max=self.r_max,
-                        )
-                        # we are updating the MD checkpoint here because then we make sure
-                        # that the MD is restarted from a point that is inside the training set
-                        # so the MLFF should be able to handle this and lead to a better trajectory
-                        # that does not lead to convergence issues
-                        self.MD_checkpoints[idx] = atoms_full_copy(self.trajectories[idx])
-                        self.trajectory_status[idx] = "waiting"
-                        self.num_workers_waiting += 1
-                
-                MPI.COMM_WORLD.Barrier()
-                self.waiting_task(idx)
-                if RANK == 0:
-                    logging.info(
-                        f"Trajectory worker {idx} is waiting for job to finish."
+                    self.trajectories[idx] = atoms_full_copy(self.MD_checkpoints[idx])
+                    self.trajectory_status[idx] = "running"
+                else:
+                    self.point.info['REF_energy'] = self.aims_calculator.results['energy']
+                    self.point.arrays['REF_forces'] = self.aims_calculator.results['forces']
+                    self.mace_point = create_mace_dataset(
+                        data=[self.point],
+                        z_table=self.z_table,
+                        seed=None,
+                        r_max=self.r_max,
                     )
+                    # we are updating the MD checkpoint here because then we make sure
+                    # that the MD is restarted from a point that is inside the training set
+                    # so the MLFF should be able to handle this and lead to a better trajectory
+                    # that does not lead to convergence issues
+                    self.MD_checkpoints[idx] = atoms_full_copy(self.trajectories[idx])
+                    self.trajectory_status[idx] = "waiting"
+                    self.num_workers_waiting += 1
+                
+                    MPI.COMM_WORLD.Barrier()
+                    self.waiting_task(idx)
+                    if RANK == 0:
+                        logging.info(
+                            f"Trajectory worker {idx} is waiting for job to finish."
+                        )
             
             else:
                 self.uncert_not_crossed[idx] += 1

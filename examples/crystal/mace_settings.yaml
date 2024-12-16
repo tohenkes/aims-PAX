@@ -5,7 +5,7 @@ GENERAL:
   results_dir: ./results
   model_dir: ./model
   default_dtype: float32
-  compute_stress: False
+  compute_stress: True
   seed: 100
 
 ARCHITECTURE:
@@ -28,9 +28,9 @@ ARCHITECTURE:
   MLP_irreps: 16x0e
   interaction_first: RealAgnosticResidualInteractionBlock
   compute_avg_num_neighbors: True
-  atomic_energies:
-    1: -12.483008663366023
-    8: -2041.7075263924146
+  #atomic_energies:
+  #  1: -12.483008663366023
+  #  8: -2041.7075263924146
 
 TRAINING:
   valid_fraction: 0.1

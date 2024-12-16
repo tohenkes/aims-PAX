@@ -55,7 +55,13 @@ def setup_mace_training(
         loss_fn = modules.WeightedForcesLoss(
             forces_weight=training_settings["forces_weight"]
         )
-
+    
+    elif training_settings["loss"] == "weighted_stress":
+        loss_fn = modules.WeightedEnergyForcesStressLoss(
+            energy_weight=training_settings["energy_weight"],
+            forces_weight=training_settings["forces_weight"],
+            stress_weight=training_settings["stress_weight"],
+        )
     else:
         loss_fn = modules.EnergyForcesLoss(
             energy_weight=training_settings["energy_weight"],
@@ -185,7 +191,7 @@ def setup_mace_training(
     training_setup['output_args'] = {
         "forces": True,
         "virials": False, #TODO: Remove hardcoding
-        "stress": False, #TODO: Remove hardcoding
+        "stress": general_settings.get("compute_stress", False)
     }
     training_setup['epoch'] = epoch
     return training_setup

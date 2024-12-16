@@ -1,13 +1,13 @@
 ACTIVE_LEARNING:
   desired_acc: 0.000042
   lambda: 15.
-  n_samples: 5
+  n_samples: 4
   valid_ratio: 0.3 # e.g. 0.3 means 30% of the data is used for validation
   converge_initial: False
   converge_al: True
   converge_best: True
   scheduler_initial: True
-  max_initial_epochs: 10
+  max_initial_epochs: 30
   max_epochs_worker: 10
   max_final_epochs: 200
   intermediate_epochs: 10
@@ -16,7 +16,7 @@ ACTIVE_LEARNING:
   max_set_size: 15
   valid_skip: 5
   sanity_skip: 10
-  ensemble_size: 3
+  ensemble_size: 2
   c_x: -0.1
   dataset_dir: "./data"
   skip_step_initial: 10 # step to skip in sampling initial MD
@@ -30,12 +30,13 @@ ACTIVE_LEARNING:
   parallel: False
 
 MD:
-  stat_ensemble: NVT
-  thermostat: Langevin
-  temperature: 200
+  stat_ensemble: NPT
+  barostat: NPT
+  temperature: 300
   timestep: 0.5
-  friction: 0.001
-  seed: 42
+  externalstress: 1
+  ttime: 25
+  pfactor: 75
 
 MISC:
   create_restart: True

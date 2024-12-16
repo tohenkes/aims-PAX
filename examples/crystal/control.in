@@ -1,0 +1,13 @@
+#===============================================================================
+# FHI-aims file: ./control.in
+# Created using the Atomic Simulation Environment (ASE)
+# Wed May  8 16:44:57 2024
+#===============================================================================
+  xc                 pbe
+  spin               none
+  relativistic       atomic_zora scalar
+  charge             0
+  k_grid 1 1 1
+#  sc_iter_limit	     3
+#  many_body_dispersion
+#===============================================================================

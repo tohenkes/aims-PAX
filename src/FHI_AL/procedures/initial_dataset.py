@@ -31,6 +31,8 @@ from mpi4py import MPI
 from asi4py.asecalc import ASI_ASE_calculator
 from ase.md.velocitydistribution import MaxwellBoltzmannDistribution
 from ase.md.langevin import Langevin
+from ase.md.nptberendsen import NPTBerendsen
+from ase.md.npt import NPT
 from ase import units
 from contextlib import nullcontext
 
@@ -193,7 +195,8 @@ class PrepareInitialDatasetProcedure:
         self.dtype = self.mace_settings["GENERAL"]["default_dtype"]
         self.device = self.mace_settings["MISC"]["device"]
         self.atomic_energies_dict = self.mace_settings[
-            "ARCHITECTURE"].get("atomic_energies", None)       
+            "ARCHITECTURE"].get("atomic_energies", None)
+        self.compute_stress = self.mace_settings.get("compute_stress", False)       
 
     def handle_al_settings(self, al_settings: dict) -> None:
         """
@@ -276,11 +279,15 @@ class PrepareInitialDatasetProcedure:
             ase.Atoms: Atoms object with the calculator attached.
         """
         aims_settings = self.aims_settings.copy()
+        properties = ['energy', 'forces']
+        if self.compute_stress:
+            properties.append('stress')
+
         def init_via_ase(asi):
-            
-            from ase.calculators.aims import Aims
+            from ase.calculators.aims import Aims, AimsProfile
+            aims_settings["profile"] = AimsProfile(command="asi-doesnt-need-command")
             calc = Aims(**aims_settings)
-            calc.write_input(asi.atoms)
+            calc.write_inputfiles(asi.atoms, properties=properties)
 
         calc = ASI_ASE_calculator(
             self.ASI_path,
@@ -305,6 +312,8 @@ class PrepareInitialDatasetProcedure:
         self.aims_settings = self.control_parser(path_to_control)
         self.aims_settings['compute_forces'] = True
         self.aims_settings['species_dir'] = self.species_dir
+        self.aims_settings['postprocess_anyway'] = True # this is necesssary to check for convergence
+        
 
     def setup_md(
         self,
@@ -331,9 +340,45 @@ class PrepareInitialDatasetProcedure:
                     temperature_K=md_settings['temperature'],
                     rng=np.random.RandomState(md_settings['seed'])
                 )
-        # make this optional and have the possibility for different initial temperature
-        MaxwellBoltzmannDistribution(atoms, temperature_K=md_settings['temperature'])
-    
+            # make this optional and have the possibility for different initial temperature
+            MaxwellBoltzmannDistribution(atoms, temperature_K=md_settings['temperature'])
+        
+        elif md_settings["stat_ensemble"].lower() == 'npt':
+            if md_settings['barostat'].lower() == 'berendsen':
+                npt_settings = {
+                    'atoms': atoms,
+                    'timestep': md_settings['timestep'] * units.fs,
+                    'temperature': md_settings['temperature'],
+                    'pressure_au': md_settings['pressure_au'],
+                }
+                
+                if md_settings.get('taup',False):
+                    npt_settings['taup'] = md_settings['taup'] * units.fs
+                if md_settings.get('taut', False):
+                    npt_settings['taut'] = md_settings['taut'] * units.fs
+                if md_settings.get('compressibility_au', False):
+                    npt_settings['compressibility_au'] = md_settings['compressibility_au']
+                if md_settings.get('fixcm', False):
+                    npt_settings['fixcm'] = md_settings['fixcm']
+                
+                dyn = NPTBerendsen(**npt_settings)
+            if md_settings['barostat'].lower() == 'npt':
+                npt_settings = {
+                    'atoms': atoms,
+                    'timestep': md_settings['timestep'] * units.fs,
+                    'temperature_K': md_settings['temperature'],
+                    'externalstress': md_settings['externalstress'] * units.bar,
+                    'ttime': md_settings['ttime'] * units.fs,
+                    'pfactor': md_settings['pfactor'] * units.fs,
+                }
+                
+                if md_settings.get('mask', False):
+                    npt_settings['mask'] = md_settings['mask']
+                
+                dyn = NPT(**npt_settings)
+            
+            MaxwellBoltzmannDistribution(atoms, temperature_K=md_settings['temperature'])    
+            
         return dyn
 
     def handle_atomic_energies(
@@ -376,7 +421,7 @@ class PrepareInitialDatasetProcedure:
 
             else:
 
-                logging.info("Using specified atomic eneriges.")
+                logging.info("Using specified atomic energies.")
                 self.ensemble_atomic_energies_dict = {
                     tag: self.atomic_energies_dict for tag in self.seeds_tags_dict.keys()
                 }
@@ -415,9 +460,7 @@ class PrepareInitialDatasetProcedure:
             dyn (ase.md.MolecularDynamics): ASE MD engine.
         """
         
-        for _ in range(self.skip_step):
-            dyn.step()
-
+        dyn.run(self.skip_step)
         current_energy = np.array(atoms.get_potential_energy())
         current_forces = np.array(atoms.get_forces())
         current_point = atoms.copy()
@@ -627,8 +670,11 @@ class InitialDatasetProcedure(PrepareInitialDatasetProcedure):
             
             if RANK == 0:
                 logging.info(f"Sampling new points at step {self.step}.")
+
+            self.sampled_points = []    
+            while len(self.sampled_points) == 0:
+                self.sampled_points = self.sample_points()
             
-            self.sampled_points = self.sample_points()
             self.step += 1
             if RANK == 0:
                 random.shuffle(self.sampled_points)
@@ -890,9 +936,17 @@ class InitialDatasetFoundational(InitialDatasetProcedure):
             current_point: ase.Atoms
             ) -> ase.Atoms:
         self.aims_calc.calculate(current_point, properties=["energy", "forces"])
-        current_point.info["REF_energy"] = self.aims_calc.results["energy"]
-        current_point.arrays["REF_forces"] = self.aims_calc.results["forces"]
-        return current_point
+        if self.aims_calc.asi.is_scf_converged:
+            current_point.info["REF_energy"] = self.aims_calc.results["energy"]
+            current_point.arrays["REF_forces"] = self.aims_calc.results["forces"]
+            return current_point
+        else:
+            if RANK == 0:
+                logging.info("SCF not converged.")
+            return None
+            
+            
+
 
     def sample_points(
             self
@@ -915,8 +969,12 @@ class InitialDatasetFoundational(InitialDatasetProcedure):
         MPI.COMM_WORLD.Barrier()
         if RANK == 0:
             logging.info(f"Recalculating energies and forces with DFT.")
-        sampled_points = [self.recalc_aims(atoms) for atoms in sampled_points]
-        return sampled_points
+        recalculated_points = []
+        for atoms in sampled_points:
+            temp = self.recalc_aims(atoms)
+            if temp is not None:
+                recalculated_points.append(temp)
+        return recalculated_points
     
     def setup_calcs(
             self
