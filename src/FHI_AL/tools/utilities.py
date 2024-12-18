@@ -31,6 +31,7 @@ import dataclasses
 from torchmetrics import Metric
 from typing import Any, Dict, List, Optional, Tuple, Union
 from mace.tools import AtomicNumberTable
+from contextlib import nullcontext
 import time
 
 #TODO: this file combines a lot of stuff and should be split up and
@@ -1711,6 +1712,28 @@ def list_latest_file(
         return latest_file
     else:
         raise FileNotFoundError(f"No files found in {directory}!")
+
+
+def save_ensemble(
+    ensemble: dict,
+    training_setups: dict,
+    mace_settings: dict
+):
+    for tag, model in ensemble.items():
+        param_context = (
+            training_setups[tag]['ema'].average_parameters()
+            if training_setups[tag]['ema'] is not None
+            else nullcontext()
+        )
+        with param_context:
+            torch.save(
+                model,
+                Path(
+                    mace_settings["GENERAL"]["model_dir"]
+                )
+                / (tag + ".model"),
+            )    
+
 
 class ModifyMD:
     def __init__(

@@ -20,6 +20,7 @@ from FHI_AL.tools.utilities import (
     get_atomic_energies_from_pt,
     create_seeds_tags_dict,
     create_ztable,
+    save_ensemble,
     AIMSControlParser,
 )
 from FHI_AL.tools.train_epoch_mace import train_epoch, validate_epoch_ensemble
@@ -330,7 +331,7 @@ class PrepareInitialDatasetProcedure:
         Returns:
             ase.md.MolecularDynamics: ASE MD engine.
         """
-        #TODO: make this more flexible
+        
         if md_settings["stat_ensemble"].lower() == 'nvt':
             if md_settings['thermostat'].lower() == 'langevin':
                 dyn = Langevin(
@@ -339,10 +340,7 @@ class PrepareInitialDatasetProcedure:
                     friction=md_settings['friction'] / units.fs,
                     temperature_K=md_settings['temperature'],
                     rng=np.random.RandomState(md_settings['seed'])
-                )
-            # make this optional and have the possibility for different initial temperature
-            MaxwellBoltzmannDistribution(atoms, temperature_K=md_settings['temperature'])
-        
+                )  
         elif md_settings["stat_ensemble"].lower() == 'npt':
             if md_settings['barostat'].lower() == 'berendsen':
                 npt_settings = {
@@ -376,7 +374,8 @@ class PrepareInitialDatasetProcedure:
                     npt_settings['mask'] = md_settings['mask']
                 
                 dyn = NPT(**npt_settings)
-            
+        
+        if not self.restart:
             MaxwellBoltzmannDistribution(atoms, temperature_K=md_settings['temperature'])    
             
         return dyn
@@ -645,8 +644,28 @@ class InitialDatasetProcedure(PrepareInitialDatasetProcedure):
         Dummy function to close the AIMS calculators. This function should be overwritten in the
         derived classes.
         """
-        raise NotImplementedError
-
+        raise NotImplementedError 
+    
+    def handle_analysis(
+        self,
+        valid_loss,
+        ensemble_valid_losses,
+        save_path: str = "analysis/initial_losses.npz"
+    ):
+        self.collect_losses["epoch"].append(
+            self.epoch
+        )
+        self.collect_losses["avg_losses"].append(
+            valid_loss
+        )
+        self.collect_losses["ensemble_losses"].append(
+            ensemble_valid_losses
+        )
+        np.savez(
+            save_path,
+            **self.collect_losses
+        )
+    
     def run(self):
         """
         Main function to run the initial dataset generation procedure.
@@ -672,6 +691,8 @@ class InitialDatasetProcedure(PrepareInitialDatasetProcedure):
                 logging.info(f"Sampling new points at step {self.step}.")
 
             self.sampled_points = []    
+            # in case SCF fails to converge no point is returned
+            # TODO: come with a better solution. maybe restart trajectory
             while len(self.sampled_points) == 0:
                 self.sampled_points = self.sample_points()
             
@@ -722,7 +743,7 @@ class InitialDatasetProcedure(PrepareInitialDatasetProcedure):
                     )
                     # because we are continously training the model we
                     # have to update the average number of neighbors, shifts
-                    # and the scaling factor also continously
+                    # and the scaling factor continously as well
                     update_model_auxiliaries(
                         model=model,
                         mace_sets=self.ensemble_mace_sets[tag],
@@ -792,18 +813,9 @@ class InitialDatasetProcedure(PrepareInitialDatasetProcedure):
                         current_valid = metrics["mae_f"]
                         
                         if self.analysis:
-                            self.collect_losses["epoch"].append(
-                                self.epoch
-                            )
-                            self.collect_losses["avg_losses"].append(
-                                valid_loss
-                            )
-                            self.collect_losses["ensemble_losses"].append(
-                                ensemble_valid_losses
-                            )
-                            np.savez(
-                                "analysis/initial_losses.npz",
-                                **self.collect_losses
+                            self.handle_analysis(
+                                valid_loss=valid_loss,
+                                ensemble_valid_losses=ensemble_valid_losses
                             )
                         
                         for tag, model in self.ensemble.items():
@@ -855,20 +867,13 @@ class InitialDatasetProcedure(PrepareInitialDatasetProcedure):
             MPI.COMM_WORLD.Barrier()
         
         if RANK == 0:
-            for tag, model in self.ensemble.items():
-                param_context = (
-                    self.training_setups[tag]['ema'].average_parameters()
-                    if self.training_setups[tag]['ema'] is not None
-                    else nullcontext()
-                )
-                with param_context:
-                    torch.save(
-                        model,
-                        Path(
-                            self.mace_settings["GENERAL"]["model_dir"]
-                        )
-                        / (tag + ".model"),
-                    )
+            
+            save_ensemble(
+                ensemble=self.ensemble,
+                training_setups=self.training_setups,
+                mace_settings=self.mace_settings
+            )
+            
             if self.create_restart:
                 self.update_restart_dict()
                 self.init_ds_restart_dict["initial_ds_done"] = True
@@ -1045,11 +1050,15 @@ class InitialDatasetFoundationalParallel(InitialDatasetFoundational):
         """
         aims_settings = self.aims_settings.copy()
         if self.color == 1:
+            properties = ['energy', 'forces']
+            if self.compute_stress:
+                properties.append('stress')
+
             def init_via_ase(asi):
-                
-                from ase.calculators.aims import Aims
+                from ase.calculators.aims import Aims, AimsProfile
+                aims_settings["profile"] = AimsProfile(command="asi-doesnt-need-command")
                 calc = Aims(**aims_settings)
-                calc.write_input(asi.atoms)
+                calc.write_inputfiles(asi.atoms, properties=properties)
 
             calc = ASI_ASE_calculator(
                 self.ASI_path,
@@ -1064,35 +1073,69 @@ class InitialDatasetFoundationalParallel(InitialDatasetFoundational):
     def sample_points(
         self
         ) -> list:
-            
+        import time
         sampled_points = []
         current_point = None
-
-        for i in range(self.ensemble_size * self.n_samples):
+        recieved_points = None
+        i = 0
+        
+        if RANK != 0:
+            q = np.array([0.5])
+        else:
+            q = None
+            
+        req = None
+        while True:
             if self.color == 0:
                 current_point = self.run_MD(self.atoms, self.dyn)
+                i += 1
                 logging.info(f"Sampled point {i}.")    
                 for dest in range(1, MPI.COMM_WORLD.Get_size()): 
-                    MPI.COMM_WORLD.isend(current_point, dest=dest, tag=0)
+                    sample_send = MPI.COMM_WORLD.isend(current_point, dest=dest, tag=0)
+                    sample_send.Wait()
+
+                if req is None:
+                    req = MPI.COMM_WORLD.irecv(source=1, tag=1)
+                    req.Wait()
+
+                if req.Test():
+                    q = req.wait()
+                    logging.info(f"Recieved q {q}.")
+                    req = None
             
-            elif self.color == 1: 
-                req = MPI.COMM_WORLD.irecv(source=0, tag=0)
-                
+            elif self.color == 1:
+                if req is None:
+                    req = MPI.COMM_WORLD.irecv(source=0, tag=0)
+                    req.Wait()             
                 #if req.Test():
                 current_point = req.wait()
+                i += 1
                 if RANK == 1:
                     logging.info(f"Recalculating point {i} with DFT.")  
                 sampled_points.append(self.recalc_aims(current_point))
+                if RANK == 1:
+                    logging.info(f'len(sampled_points): {len(sampled_points)}')
+                    #logging.info(f'criterion: {self.ensemble_size * self.n_samples}')
+                    #if len(sampled_points) % (self.n_samples * self.ensemble_size) == 0:
+                    logging.info(f'Sending q {q} to rank 0.')
+                    req_send = MPI.COMM_WORLD.isend(q, dest=0, tag=1)
+                    req_send.Wait()
+                    req = None
+                            
 
+        MPI.COMM_WORLD.Barrier()
+        if RANK == 1:
+            MPI.COMM_WORLD.send(sampled_points, dest=0, tag=1)
+        if RANK == 0:
+            sampled_points = MPI.COMM_WORLD.recv(source=1, tag=1)
         MPI.COMM_WORLD.Barrier()
         
-        if RANK == 1:
-            logging.info(f"Rank 1 is sending")
-            MPI.COMM_WORLD.send(sampled_points, dest=0, tag=1)
-
-        if RANK == 0:
-            logging.info("Rank 0 is receiving data...")
-            sampled_points = MPI.COMM_WORLD.recv(source=1, tag=1)
-            
-        MPI.COMM_WORLD.Barrier()
         return sampled_points
+    
+    #def run(
+    #    self
+    #):
+        
+        
+        
+    #    return

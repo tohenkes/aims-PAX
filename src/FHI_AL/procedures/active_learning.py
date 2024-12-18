@@ -49,6 +49,8 @@ from mpi4py import MPI
 from asi4py.asecalc import ASI_ASE_calculator
 from ase.md.velocitydistribution import MaxwellBoltzmannDistribution
 from ase.md.langevin import Langevin
+from ase.md.nptberendsen import NPTBerendsen
+from ase.md.npt import NPT
 from ase import units
 from contextlib import nullcontext
 
@@ -359,7 +361,7 @@ class PrepareALProcedure:
             }
             self.save_restart = False # is set to true in training when checkpoint is saved
             
-            if self.md_settings['stat_ensemble'].lower() == 'nvt':
+            if self.md_settings['stat_ensemble'].lower() in ['nvt', 'npt']:
                 self.al_restart_dict.update({
                     'current_temperatures': None,
                 })
@@ -444,7 +446,7 @@ class PrepareALProcedure:
             'num_workers_waiting', 'total_epoch', 'check', 'uncertainties', 'converge_best',
             'uncert_not_crossed'
         ]
-        if self.md_settings['stat_ensemble'].lower() == 'nvt':
+        if self.md_settings['stat_ensemble'].lower() in ['nvt', 'npt']:
             attributes.append('current_temperatures')
             
         for attr in attributes:
@@ -476,7 +478,7 @@ class PrepareALProcedure:
                 'num_workers_waiting', 'total_epoch', 'check', 'uncertainties', 'converge_best',
                 'uncert_not_crossed'
             ]
-            if self.md_settings['stat_ensemble'].lower() == 'nvt':
+            if self.md_settings['stat_ensemble'].lower() in ['nvt', 'npt']:
                 restart_keys.append('current_temperatures')
 
             for key in restart_keys:
@@ -513,7 +515,7 @@ class PrepareALProcedure:
         self.converge_best = MPI.COMM_WORLD.bcast(self.converge_best, root=0)
         self.uncert_not_crossed = MPI.COMM_WORLD.bcast(self.uncert_not_crossed, root=0)
         
-        if self.md_settings['stat_ensemble'].lower() == 'nvt':
+        if self.md_settings['stat_ensemble'].lower() in ['nvt','npt']:
             self.current_temperatures = MPI.COMM_WORLD.bcast(self.current_temperatures, root=0)
             
         if self.analysis:
@@ -551,10 +553,15 @@ class PrepareALProcedure:
             'uncert_not_crossed': self.uncert_not_crossed
         })
         
-        if self.md_settings['stat_ensemble'].lower() == 'nvt':
+        if self.md_settings['stat_ensemble'].lower() in ['nvt', 'npt']:
+            if self.md_settings['stat_ensemble'].lower() == 'nvt':
+                get_temp = lambda x: x.temp
+            elif self.md_settings['stat_ensemble'].lower() == 'npt':
+                get_temp = lambda x: x.temperature
+
             self.al_restart_dict.update({
                 'current_temperatures': {
-                    trajectory: (self.md_drivers[trajectory].temp / units.kB) for trajectory in self.trajectories.keys()
+                    trajectory: (get_temp(self.md_drivers[trajectory]) / units.kB) for trajectory in self.trajectories.keys()
                 }
             })
             
@@ -648,30 +655,60 @@ class PrepareALProcedure:
             ase.md.MolecularDynamics: ASE MD engine.
         """
         #TODO: make this more flexible
-        if md_settings["stat_ensemble"].lower() == 'nvt':
+        if md_settings["stat_ensemble"].lower() in ['nvt', 'npt']:
             if not self.restart:
                 try:
                     self.current_temperatures[idx] = md_settings['temperature']
                 except AttributeError:
                     self.current_temperatures = {idx: md_settings['temperature']}
             
-            if md_settings['thermostat'].lower() == 'langevin':
-                dyn = Langevin(
-                    atoms,
-                    timestep=md_settings['timestep'] * units.fs,
-                    friction=md_settings['friction'] / units.fs,
-                    temperature_K=self.current_temperatures[idx],
-                    rng=np.random.RandomState(md_settings['seed'])
-                )
+            if md_settings["stat_ensemble"].lower() == 'nvt':
+                if md_settings['thermostat'].lower() == 'langevin':
+                    dyn = Langevin(
+                        atoms,
+                        timestep=md_settings['timestep'] * units.fs,
+                        friction=md_settings['friction'] / units.fs,
+                        temperature_K=self.current_temperatures[idx],
+                        rng=np.random.RandomState(md_settings['seed'])
+                    )  
+            elif md_settings["stat_ensemble"].lower() == 'npt':
+                if md_settings['barostat'].lower() == 'berendsen':
+                    npt_settings = {
+                        'atoms': atoms,
+                        'timestep': md_settings['timestep'] * units.fs,
+                        'temperature': self.current_temperatures[idx],
+                        'pressure_au': md_settings['pressure_au'],
+                    }
+                    
+                    if md_settings.get('taup',False):
+                        npt_settings['taup'] = md_settings['taup'] * units.fs
+                    if md_settings.get('taut', False):
+                        npt_settings['taut'] = md_settings['taut'] * units.fs
+                    if md_settings.get('compressibility_au', False):
+                        npt_settings['compressibility_au'] = md_settings['compressibility_au']
+                    if md_settings.get('fixcm', False):
+                        npt_settings['fixcm'] = md_settings['fixcm']
+                    
+                    dyn = NPTBerendsen(**npt_settings)
+                if md_settings['barostat'].lower() == 'npt':
+                    npt_settings = {
+                        'atoms': atoms,
+                        'timestep': md_settings['timestep'] * units.fs,
+                        'temperature_K': self.current_temperatures[idx],
+                        'externalstress': md_settings['externalstress'] * units.bar,
+                        'ttime': md_settings['ttime'] * units.fs,
+                        'pfactor': md_settings['pfactor'] * units.fs,
+                    }
+                    
+                    if md_settings.get('mask', False):
+                        npt_settings['mask'] = md_settings['mask']
+                    
+                    dyn = NPT(**npt_settings)
+            
+            if not self.restart:
+                MaxwellBoltzmannDistribution(atoms, temperature_K=md_settings['temperature'])    
                 
-        # make this optional and have the possibility for different initial temperature
-        if not self.restart:
-            MaxwellBoltzmannDistribution(
-                atoms,
-                temperature_K=self.current_temperatures[idx]
-                )
-    
-        return dyn
+            return dyn
     
     def setup_md_modify(
         self,

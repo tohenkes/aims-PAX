@@ -45,18 +45,18 @@ def setup_mace_training(
 
     training_setup = {}
     loss_fn: torch.nn.Module
-    if training_settings["loss"] == "weighted":
+    if training_settings["loss"].lower() == "weighted":
         loss_fn = modules.WeightedEnergyForcesLoss(
             energy_weight=training_settings["energy_weight"],
             forces_weight=training_settings["forces_weight"],
         )
 
-    elif training_settings["loss"] == "forces_only":
+    elif training_settings["loss"].lower() == "forces_only":
         loss_fn = modules.WeightedForcesLoss(
             forces_weight=training_settings["forces_weight"]
         )
     
-    elif training_settings["loss"] == "weighted_stress":
+    elif training_settings["loss"].lower() == "weighted_stress":
         loss_fn = modules.WeightedEnergyForcesStressLoss(
             energy_weight=training_settings["energy_weight"],
             forces_weight=training_settings["forces_weight"],
