@@ -36,10 +36,38 @@ from ase.md.nptberendsen import NPTBerendsen
 from ase.md.npt import NPT
 from ase import units
 from contextlib import nullcontext
+import threading
+
 
 WORLD_COMM = MPI.COMM_WORLD
 WORLD_SIZE = WORLD_COMM.Get_size()
 RANK = WORLD_COMM.Get_rank()
+
+class ReqHandler:
+    def __init__(self, source, tag):
+        self.source = source
+        self.tag = tag
+        self.received_data = None
+        self.req = None
+        self.thread = None
+        self.lock = threading.Lock()
+
+    def start_wait_thread(self):
+        if self.thread is None or not self.thread.is_alive():
+            self.req = MPI.COMM_WORLD.irecv(source=self.source, tag=self.tag)
+            self.thread = threading.Thread(target=self._wait_and_store)
+            self.thread.start()
+
+    def _wait_and_store(self):
+        data = self.req.wait()
+        with self.lock:
+            self.received_data = data
+
+    def get_received_data(self):
+        with self.lock:
+            data = self.received_data
+            self.received_data = None
+        return data
 
 class PrepareInitialDatasetProcedure:
     """
@@ -1076,7 +1104,7 @@ class InitialDatasetFoundationalParallel(InitialDatasetFoundational):
         import time
         sampled_points = []
         current_point = None
-        recieved_points = None
+        self.recieved_points = None
         i = 0
         
         if RANK != 0:
@@ -1085,6 +1113,9 @@ class InitialDatasetFoundationalParallel(InitialDatasetFoundational):
             q = None
             
         req = None
+        if self.color == 0:
+            self.req_handler = ReqHandler(source=1, tag=1)
+
         while True:
             if self.color == 0:
                 current_point = self.run_MD(self.atoms, self.dyn)
@@ -1094,19 +1125,16 @@ class InitialDatasetFoundationalParallel(InitialDatasetFoundational):
                     sample_send = MPI.COMM_WORLD.isend(current_point, dest=dest, tag=0)
                     sample_send.Wait()
 
-                if req is None:
-                    req = MPI.COMM_WORLD.irecv(source=1, tag=1)
-                    req.Wait()
-
-                if req.Test():
-                    q = req.wait()
-                    logging.info(f"Recieved q {q}.")
-                    req = None
+                self.req_handler.start_wait_thread()
+                self.recieved_points = self.req_handler.get_received_data()
+                if self.recieved_points is not None:
+                    logging.info(f"Recieved q {self.recieved_points}.")
+                    self.recieved_points = None
             
             elif self.color == 1:
                 if req is None:
                     req = MPI.COMM_WORLD.irecv(source=0, tag=0)
-                    req.Wait()             
+                    #req.Wait()             
                 #if req.Test():
                 current_point = req.wait()
                 i += 1
@@ -1132,10 +1160,3 @@ class InitialDatasetFoundationalParallel(InitialDatasetFoundational):
         
         return sampled_points
     
-    #def run(
-    #    self
-    #):
-        
-        
-        
-    #    return

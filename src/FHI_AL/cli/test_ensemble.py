@@ -105,8 +105,8 @@ def main():
         path_to_models=args.models,
         device=args.device
         )
-    atoms_list = read(args.data, index=':')
-    
+
+
     possible_args = ['energy', 'forces', 'stress', 'virials']
     output_args = {}
     for arg in args.output_args:
@@ -125,10 +125,10 @@ def main():
     for arg in possible_args:
         if arg not in output_args:
             output_args[arg] = False
-
+            
     (avg_ensemble_metrics, ensemble_metrics) = test_ensemble(
         ensemble = ensemble,
-        atoms_list = atoms_list,
+        path_to_data = args.data,
         batch_size = args.batch_size,
         output_args = output_args,
         device = args.device,

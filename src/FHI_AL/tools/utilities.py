@@ -11,7 +11,7 @@ from mace import data as mace_data
 from mace import tools, modules
 from mace.tools import AtomicNumberTable, torch_geometric, torch_tools, utils
 from mace.tools.train import evaluate
-from mace.data.utils import compute_average_E0s, config_from_atoms_list
+from mace.data.utils import compute_average_E0s, config_from_atoms_list, load_from_xyz
 from FHI_AL.tools.setup_MACE import setup_mace
 from FHI_AL.tools.setup_MACE_training import setup_mace_training
 from dataclasses import dataclass
@@ -886,8 +886,6 @@ class MACEEval(Metric):
             self.delta_es_per_atom.append(
                 (batch.energy - output["energy"]) / (batch.ptr[1:] - batch.ptr[:-1])
             )
-            logging.info(f'batch.energy: {batch.energy}')
-            logging.info(f'output["energy"]: {output["energy"]}')
         if output.get("forces") is not None and batch.forces is not None:
             self.Fs_computed += 1.0
             self.fs.append(batch.forces)
@@ -1033,10 +1031,11 @@ def test_model(
 
 def test_ensemble(
     ensemble: dict,
-    atoms_list: list,
     batch_size: int,
     output_args: dict,
     device: str,
+    path_to_data: str = None,
+    atoms_list: list = None,
     logger: MetricsLogger = None,
     log_errors: str = "PerAtomMAE",
     return_predictions: bool = False,
@@ -1050,18 +1049,34 @@ def test_ensemble(
 ) -> Tuple[dict, dict]:
     
     
-    configs = [mace_data.config_from_atoms(
-        atoms,
-        energy_key=energy_key,
-        forces_key=forces_key,
-        stress_key=stress_key,
-        dipole_key=dipole_key,
-        virials_key=virials_key,
-        charges_key=charges_key,
-        head_key=head_key
-        ) for atoms in atoms_list
-               ]
+    if atoms_list is not None:
+        configs = [mace_data.config_from_atoms(
+            atoms,
+            energy_key=energy_key,
+            forces_key=forces_key,
+            stress_key=stress_key,
+            dipole_key=dipole_key,
+            virials_key=virials_key,
+            charges_key=charges_key,
+            head_key=head_key
+            ) for atoms in atoms_list
+                ]
+    elif path_to_data is not None:
+        _, configs = load_from_xyz(
+            file_path=path_to_data,
+            config_type_weights=None,
+            energy_key=energy_key,
+            forces_key=forces_key,
+            stress_key=stress_key,
+            virials_key=virials_key,
+            dipole_key=dipole_key,
+            charges_key=charges_key,
+            head_key=head_key
+        )
 
+    else:
+        raise ValueError("Either atoms_list or path_to_data must be provided")
+    
     z_table = utils.AtomicNumberTable([int(z) for z in ensemble[list(ensemble.keys())[0]].atomic_numbers])
 
     data_loader = torch_geometric.dataloader.DataLoader(
