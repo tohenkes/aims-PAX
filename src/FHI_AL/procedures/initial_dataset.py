@@ -1073,6 +1073,7 @@ class InitialDatasetFoundationalParallel(InitialDatasetFoundational):
             path_to_geometry=path_to_geometry
         )
         
+        # one for ML and one for DFT
         if RANK == 0:
             self.color = 0
         else:
@@ -1085,6 +1086,9 @@ class InitialDatasetFoundationalParallel(InitialDatasetFoundational):
     
     
     def close_aims(self):
+        # this is just to overwrite the function in the parent class
+        # due to the communicators we are closing it inside the
+        # sample_and_train function
         return None
     
     def setup_aims_calculator(
@@ -1104,6 +1108,7 @@ class InitialDatasetFoundationalParallel(InitialDatasetFoundational):
             ase.Atoms: Atoms object with the calculator attached.
         """
         aims_settings = self.aims_settings.copy()
+        # only one communictor initializes aims
         if self.color == 1:
             properties = ['energy', 'forces']
             if self.compute_stress:
@@ -1132,20 +1137,23 @@ class InitialDatasetFoundationalParallel(InitialDatasetFoundational):
         self.sampled_points = []
         temp_sampled_points = []
         
-        req = None
-        criterion_req = None
+        req = None # handling data communication
+        criterion_req = None # handling the communication regarding stopping
         current_point = None
         recieved_points = None
         criterion_met = False
+        
         if RANK == 0:
             logging.info('Starting sampling and training using parallel mode.')
         while not criterion_met:
             if self.color == 0:
                 current_point = self.run_MD(self.atoms, self.dyn)
-                for dest in range(1, MPI.COMM_WORLD.Get_size()): 
+                for dest in range(1, MPI.COMM_WORLD.Get_size()):
+                    # using isend to create a queue of messages
                     sample_send = MPI.COMM_WORLD.isend(current_point, dest=dest, tag=0)
                     sample_send.Wait()
 
+                # checking if training data recieved
                 if req is None:
                     req = MPI.COMM_WORLD.irecv(source=1, tag=1)
                 status, recieved_points = req.test() # non-blocking recieve
@@ -1154,8 +1162,11 @@ class InitialDatasetFoundationalParallel(InitialDatasetFoundational):
                     self.sampled_points.extend(recieved_points)
                     recieved_points = None
                     self.train()
-                    
-                    criterion_met = self.desired_acc * self.lamb >= self.current_valid or self.epoch > self.max_initial_epochs
+                    # checking if the criterion is met
+                    criterion_met = (
+                        self.desired_acc * self.lamb >= self.current_valid or
+                        self.epoch > self.max_initial_epochs
+                        )
                     if criterion_met:
                         for dest in range(1, MPI.COMM_WORLD.Get_size()):
                             criterion_send = MPI.COMM_WORLD.isend(None, dest=dest, tag=2)
@@ -1164,21 +1175,23 @@ class InitialDatasetFoundationalParallel(InitialDatasetFoundational):
                     req = None
                            
             if self.color == 1:
-                if req is None:
-                    req = MPI.COMM_WORLD.irecv(source=0, tag=0)
+                # recieving the criterion
                 if criterion_req is None:
                     criterion_req = MPI.COMM_WORLD.irecv(source=0, tag=2)
-                
                 criterion_met = criterion_req.Test()
-                
                 if criterion_met:
                     break
-                  
+                
+                # recieving sampled point to recompute
+                if req is None:
+                    req = MPI.COMM_WORLD.irecv(source=0, tag=0)
                 current_point = req.wait() # blocking recieve
                 req = None
+                # dft results are computed here and collected
                 temp_sampled_points.append(self.recalc_aims(current_point))
                 
-                if RANK == 1:    
+                if RANK == 1:
+                    # if enough are computed send them to training worker    
                     if len(temp_sampled_points) % (self.n_samples * self.ensemble_size) == 0 and len(temp_sampled_points) != 0:
                         logging.info(f'Computed {len(temp_sampled_points)} points with DFT and sending them to training worker.')
                         req_send = MPI.COMM_WORLD.isend(temp_sampled_points, dest=0, tag=1)

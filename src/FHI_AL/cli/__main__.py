@@ -1,4 +1,8 @@
-from FHI_AL.procedures.initial_dataset import InitialDatasetAIMD, InitialDatasetFoundational
+from FHI_AL.procedures.initial_dataset import (
+    InitialDatasetAIMD,
+    InitialDatasetFoundational,
+    InitialDatasetFoundationalParallel
+    )
 from FHI_AL.procedures.active_learning import ALProcedure
 from yaml import safe_load
 from mpi4py import MPI
@@ -16,10 +20,17 @@ def main():
             al_settings=al_settings
         )
     elif al_settings['ACTIVE_LEARNING']["initial_sampling"].lower() == "mace-mp0":
-        initial_ds = InitialDatasetFoundational(
-            mace_settings=mace_settings,
-            al_settings=al_settings
-        )
+        
+        if al_settings['ACTIVE_LEARNING'].get('parallel', False):
+            initial_ds = InitialDatasetFoundationalParallel(
+                mace_settings=mace_settings,
+                al_settings=al_settings
+            )
+        else:
+            initial_ds = InitialDatasetFoundational(
+                mace_settings=mace_settings,
+                al_settings=al_settings
+            )
 
     MPI.COMM_WORLD.Barrier()
     
