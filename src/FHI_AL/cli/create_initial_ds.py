@@ -8,6 +8,7 @@ from mpi4py import MPI
 
 
 def main():
+    
     with open("./mace_settings.yaml", "r") as file:
         mace_settings = safe_load(file)
     with open("./active_learning_settings.yaml", "r") as file:
@@ -34,12 +35,14 @@ def main():
     
     if not initial_ds.check_initial_ds_done():
         initial_ds.run()
-        
+    
     if al_settings['ACTIVE_LEARNING'].get("converge_initial", False):
         initial_ds.converge() 
 
     MPI.COMM_WORLD.Barrier()
+    
     MPI.Finalize()
-
+    
+    
 if __name__ == "__main__":
     main()

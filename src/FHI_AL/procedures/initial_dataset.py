@@ -43,6 +43,8 @@ WORLD_COMM = MPI.COMM_WORLD
 WORLD_SIZE = WORLD_COMM.Get_size()
 RANK = WORLD_COMM.Get_rank()
 
+
+#TODO: remove, but keeping it as a reference for now
 class ReqHandler:
     def __init__(self, source, tag):
         self.source = source
@@ -51,17 +53,24 @@ class ReqHandler:
         self.req = None
         self.thread = None
         self.lock = threading.Lock()
+        self.stop_flag = threading.Event()  # Event to signal thread termination
 
     def start_wait_thread(self):
         if self.thread is None or not self.thread.is_alive():
+            logging.info('Starting wait thread.')
             self.req = MPI.COMM_WORLD.irecv(source=self.source, tag=self.tag)
+            self.stop_flag.clear()  # Reset the stop flag
             self.thread = threading.Thread(target=self._wait_and_store)
             self.thread.start()
 
     def _wait_and_store(self):
-        data = self.req.wait()
-        with self.lock:
-            self.received_data = data
+        data = None
+        while not self.stop_flag.is_set():
+            s, data = self.req.test()
+            if s:
+                with self.lock:
+                    self.received_data = data
+                break  # Exit loop once data is received
 
     def get_received_data(self):
         with self.lock:
@@ -69,6 +78,13 @@ class ReqHandler:
             self.received_data = None
         return data
 
+    def stop_thread(self):
+        if self.thread and self.thread.is_alive():
+            self.stop_flag.set()  # Signal the thread to stop
+            self.thread.join()   # Wait for the thread to terminate
+
+
+            
 class PrepareInitialDatasetProcedure:
     """
     Class to prepare the inital dataset generation procedure for 
@@ -656,6 +672,186 @@ class InitialDatasetProcedure(PrepareInitialDatasetProcedure):
         """
         raise NotImplementedError
     
+    def train(
+            self
+            ):
+        if RANK == 0:
+            random.shuffle(self.sampled_points)
+            # each ensemble member collects their respective points
+            for number, (tag, model) in enumerate(self.ensemble.items()):
+
+                member_points = self.sampled_points[
+                    self.n_samples * number : self.n_samples * (number + 1)
+                ]
+                
+                (
+                    self.ensemble_ase_sets[tag],
+                    self.ensemble_mace_sets[tag],
+                ) = update_datasets(
+                    new_points=member_points,
+                    mace_set=self.ensemble_mace_sets[tag],
+                    ase_set=self.ensemble_ase_sets[tag],
+                    valid_split=self.valid_ratio,
+                    z_table=self.z_table,
+                    seed=self.seed,
+                    r_max=self.r_max,
+                )
+                
+                batch_size = (
+                    1
+                    if len(self.ensemble_mace_sets[tag]["train"])
+                    < self.set_batch_size
+                    else self.set_batch_size
+                )
+                valid_batch_size = (
+                    1
+                    if len(self.ensemble_mace_sets[tag]["valid"])
+                    < self.set_valid_batch_size
+                    else self.set_valid_batch_size
+                )
+
+                (
+                    self.ensemble_mace_sets[tag]["train_loader"],
+                    self.ensemble_mace_sets[tag]["valid_loader"],
+                ) = create_dataloader(
+                    self.ensemble_mace_sets[tag]["train"],
+                    self.ensemble_mace_sets[tag]["valid"],
+                    batch_size,
+                    valid_batch_size,
+                )
+                # because we are continously training the model we
+                # have to update the average number of neighbors, shifts
+                # and the scaling factor continously as well
+                update_model_auxiliaries(
+                    model=model,
+                    mace_sets=self.ensemble_mace_sets[tag],
+                    atomic_energies=self.ensemble_atomic_energies[tag],
+                    scaling=self.scaling,
+                    update_atomic_energies=self.update_atomic_energies,
+                    z_table=self.z_table,
+                    atomic_energies_dict=self.ensemble_atomic_energies_dict[tag],
+                    dtype=self.dtype,
+                    device=self.device,
+                )
+                logging.info(
+                    f"Training set size for '{tag}': {len(self.ensemble_mace_sets[tag]['train'])}; Validation set size: {len(self.ensemble_mace_sets[tag]['valid'])}."
+                )
+                #logging.info(
+                #    f"Updated model auxiliaries for '{tag}'."
+                #)
+
+            logging.info("Training.")
+            ensemble_valid_losses = {
+                    tag: np.inf for tag in self.ensemble.keys()
+                }
+            for _ in range(self.intermediate_epochs):
+                # each member gets trained individually
+                for tag, model in self.ensemble.items():
+
+                    logger = tools.MetricsLogger(
+                        directory=self.mace_settings["GENERAL"]["results_dir"],
+                        tag=tag + "_train",
+                    )
+                    train_epoch(
+                        model=model,
+                        train_loader=self.ensemble_mace_sets[tag][
+                            "train_loader"
+                        ],
+                        loss_fn=self.training_setups[tag]["loss_fn"],
+                        optimizer=self.training_setups[tag]["optimizer"],
+                        lr_scheduler=self.training_setups[tag]["lr_scheduler"],
+                        epoch=self.epoch,
+                        start_epoch=0,
+                        valid_loss=ensemble_valid_losses[tag],
+                        logger=logger,
+                        device=self.training_setups[tag]["device"],
+                        max_grad_norm=self.training_setups[tag][
+                            "max_grad_norm"
+                        ],
+                        output_args=self.training_setups[tag]["output_args"],
+                        ema=self.training_setups[tag]["ema"],
+                    )
+                # the validation errors are averages over the ensemble members
+                if (
+                    self.epoch % self.valid_skip == 0
+                    or (self.epoch + 1) % self.valid_skip == 0
+                ):
+                    (
+                        ensemble_valid_losses,
+                        valid_loss,
+                        metrics,
+                    ) = validate_epoch_ensemble(
+                        ensemble=self.ensemble,
+                        training_setups=self.training_setups,
+                        ensemble_set=self.ensemble_mace_sets,
+                        logger=logger,
+                        log_errors=self.mace_settings["MISC"]["error_table"],
+                        epoch=self.epoch,
+                    )
+                    self.current_valid = metrics["mae_f"]
+                    
+                    if self.analysis:
+                        self.handle_analysis(
+                            valid_loss=valid_loss,
+                            ensemble_valid_losses=ensemble_valid_losses
+                        )
+                    
+                    for tag, model in self.ensemble.items():
+                        save_checkpoint(
+                            checkpoint_handler=self.training_setups[tag][
+                                "checkpoint_handler"
+                            ],
+                            training_setup=self.training_setups[tag],
+                            model=model,
+                            epoch=self.epoch,
+                            keep_last=False,
+                        )
+                        save_datasets(
+                            self.ensemble,
+                            self.ensemble_ase_sets,
+                            path=self.dataset_dir / "initial",
+                            initial=True,
+                        )
+                    if self.create_restart:
+                        self.update_restart_dict()
+                        np.save(
+                            "restart/initial_ds/initial_ds_restart.npy",
+                            self.init_ds_restart_dict
+                        )
+                    if self.desired_acc * self.lamb >= self.current_valid:
+                        logging.info(
+                            f"Accuracy criterion reached at step {self.step}."
+                        )
+                        logging.info(
+                            f"Criterion: {self.desired_acc * self.lamb}; Current accuracy: {self.current_valid}."
+                        )
+                            
+                        break
+
+                self.epoch += 1
+
+
+            if (
+                self.epoch == self.max_initial_epochs
+            ):  # TODO: change to a different variable (shares with al-algo right now)
+                logging.info(f"Maximum number of epochs reached.")
+
+    
+    def sample_and_train(
+            self
+            ):
+        if RANK == 0:
+            logging.info(f"Sampling new points at step {self.step}.")
+
+        self.sampled_points = []    
+        # in case SCF fails to converge no point is returned
+        # TODO: come up with a better solution. maybe restart trajectory
+        while len(self.sampled_points) == 0:
+            self.sampled_points = self.sample_points()
+        
+        self.step += 1 
+        self.train()
+    
     def setup_calcs(
             self
             ):
@@ -707,190 +903,20 @@ class InitialDatasetProcedure(PrepareInitialDatasetProcedure):
         
         self.setup_calcs()
         
-        current_valid = np.inf
+        self.current_valid = np.inf
         # criterion for initial dataset is multiple of the desired accuracy
         # TODO: add maximum initial dataset len criterion
         while (
-            self.desired_acc * self.lamb <= current_valid 
+            self.desired_acc * self.lamb <= self.current_valid 
             and self.epoch < self.max_initial_epochs
         ):
             
-            if RANK == 0:
-                logging.info(f"Sampling new points at step {self.step}.")
-
-            self.sampled_points = []    
-            # in case SCF fails to converge no point is returned
-            # TODO: come with a better solution. maybe restart trajectory
-            while len(self.sampled_points) == 0:
-                self.sampled_points = self.sample_points()
-            
-            self.step += 1
-            if RANK == 0:
-                random.shuffle(self.sampled_points)
-                # each ensemble member collects their respective points
-                for number, (tag, model) in enumerate(self.ensemble.items()):
-
-                    member_points = self.sampled_points[
-                        self.n_samples * number : self.n_samples * (number + 1)
-                    ]
-                    
-                    (
-                        self.ensemble_ase_sets[tag],
-                        self.ensemble_mace_sets[tag],
-                    ) = update_datasets(
-                        new_points=member_points,
-                        mace_set=self.ensemble_mace_sets[tag],
-                        ase_set=self.ensemble_ase_sets[tag],
-                        valid_split=self.valid_ratio,
-                        z_table=self.z_table,
-                        seed=self.seed,
-                        r_max=self.r_max,
-                    )
-                    
-                    batch_size = (
-                        1
-                        if len(self.ensemble_mace_sets[tag]["train"])
-                        < self.set_batch_size
-                        else self.set_batch_size
-                    )
-                    valid_batch_size = (
-                        1
-                        if len(self.ensemble_mace_sets[tag]["valid"])
-                        < self.set_valid_batch_size
-                        else self.set_valid_batch_size
-                    )
-
-                    (
-                        self.ensemble_mace_sets[tag]["train_loader"],
-                        self.ensemble_mace_sets[tag]["valid_loader"],
-                    ) = create_dataloader(
-                        self.ensemble_mace_sets[tag]["train"],
-                        self.ensemble_mace_sets[tag]["valid"],
-                        batch_size,
-                        valid_batch_size,
-                    )
-                    # because we are continously training the model we
-                    # have to update the average number of neighbors, shifts
-                    # and the scaling factor continously as well
-                    update_model_auxiliaries(
-                        model=model,
-                        mace_sets=self.ensemble_mace_sets[tag],
-                        atomic_energies=self.ensemble_atomic_energies[tag],
-                        scaling=self.scaling,
-                        update_atomic_energies=self.update_atomic_energies,
-                        z_table=self.z_table,
-                        atomic_energies_dict=self.ensemble_atomic_energies_dict[tag],
-                        dtype=self.dtype,
-                        device=self.device,
-                    )
-                    logging.info(
-                        f"Training set size for '{tag}': {len(self.ensemble_mace_sets[tag]['train'])}; Validation set size: {len(self.ensemble_mace_sets[tag]['valid'])}."
-                    )
-                    #logging.info(
-                    #    f"Updated model auxiliaries for '{tag}'."
-                    #)
-
-                logging.info("Training.")
-                ensemble_valid_losses = {
-                        tag: np.inf for tag in self.ensemble.keys()
-                    }
-                for _ in range(self.intermediate_epochs):
-                    # each member gets trained individually
-                    for tag, model in self.ensemble.items():
-
-                        logger = tools.MetricsLogger(
-                            directory=self.mace_settings["GENERAL"]["results_dir"],
-                            tag=tag + "_train",
-                        )
-                        train_epoch(
-                            model=model,
-                            train_loader=self.ensemble_mace_sets[tag][
-                                "train_loader"
-                            ],
-                            loss_fn=self.training_setups[tag]["loss_fn"],
-                            optimizer=self.training_setups[tag]["optimizer"],
-                            lr_scheduler=self.training_setups[tag]["lr_scheduler"],
-                            epoch=self.epoch,
-                            start_epoch=0,
-                            valid_loss=ensemble_valid_losses[tag],
-                            logger=logger,
-                            device=self.training_setups[tag]["device"],
-                            max_grad_norm=self.training_setups[tag][
-                                "max_grad_norm"
-                            ],
-                            output_args=self.training_setups[tag]["output_args"],
-                            ema=self.training_setups[tag]["ema"],
-                        )
-                    # the validation errors are averages over the ensemble members
-                    if (
-                        self.epoch % self.valid_skip == 0
-                        or (self.epoch + 1) % self.valid_skip == 0
-                    ):
-                        (
-                            ensemble_valid_losses,
-                            valid_loss,
-                            metrics,
-                        ) = validate_epoch_ensemble(
-                            ensemble=self.ensemble,
-                            training_setups=self.training_setups,
-                            ensemble_set=self.ensemble_mace_sets,
-                            logger=logger,
-                            log_errors=self.mace_settings["MISC"]["error_table"],
-                            epoch=self.epoch,
-                        )
-                        current_valid = metrics["mae_f"]
-                        
-                        if self.analysis:
-                            self.handle_analysis(
-                                valid_loss=valid_loss,
-                                ensemble_valid_losses=ensemble_valid_losses
-                            )
-                        
-                        for tag, model in self.ensemble.items():
-                            save_checkpoint(
-                                checkpoint_handler=self.training_setups[tag][
-                                    "checkpoint_handler"
-                                ],
-                                training_setup=self.training_setups[tag],
-                                model=model,
-                                epoch=self.epoch,
-                                keep_last=False,
-                            )
-                            save_datasets(
-                                self.ensemble,
-                                self.ensemble_ase_sets,
-                                path=self.dataset_dir / "initial",
-                                initial=True,
-                            )
-                        if self.create_restart:
-                            self.update_restart_dict()
-                            np.save(
-                                "restart/initial_ds/initial_ds_restart.npy",
-                                self.init_ds_restart_dict
-                            )
-                        if self.desired_acc * self.lamb >= current_valid:
-                            logging.info(
-                                f"Accuracy criterion reached at step {self.step}."
-                            )
-                            logging.info(
-                                f"Criterion: {self.desired_acc * self.lamb}; Current accuracy: {current_valid}."
-                            )
-                                
-                            break
-
-                    self.epoch += 1
-
-
-                if (
-                    self.epoch == self.max_initial_epochs
-                ):  # TODO: change to a different variable (shares with al-algo right now)
-                    logging.info(f"Maximum number of epochs reached.")
-
+            self.sample_and_train()
             # only one worker is doing the training right now,
             # so we have to broadcast the criterion so they
             # don't get stuck in the while loop
             MPI.COMM_WORLD.Barrier()
-            current_valid = MPI.COMM_WORLD.bcast(current_valid, root=0)
+            self.current_valid = MPI.COMM_WORLD.bcast(self.current_valid, root=0)
             self.epoch = MPI.COMM_WORLD.bcast(self.epoch, root=0)
             MPI.COMM_WORLD.Barrier()
         
@@ -977,9 +1003,6 @@ class InitialDatasetFoundational(InitialDatasetProcedure):
             if RANK == 0:
                 logging.info("SCF not converged.")
             return None
-            
-            
-
 
     def sample_points(
             self
@@ -1042,6 +1065,7 @@ class InitialDatasetFoundationalParallel(InitialDatasetFoundational):
         path_to_control: str = "./control.in",
         path_to_geometry: str = "./geometry.in",):
         
+        # this is necessary because of the way the MPI communicator is split
         super().__init__(
             mace_settings=mace_settings,
             al_settings=al_settings,
@@ -1059,6 +1083,9 @@ class InitialDatasetFoundationalParallel(InitialDatasetFoundational):
             key=RANK
             )
     
+    
+    def close_aims(self):
+        return None
     
     def setup_aims_calculator(
         self,
@@ -1098,65 +1125,76 @@ class InitialDatasetFoundationalParallel(InitialDatasetFoundational):
         else:
             return None
     
-    def sample_points(
+    def sample_and_train(
         self
         ) -> list:
-        import time
-        sampled_points = []
-        current_point = None
-        self.recieved_points = None
-        i = 0
         
-        if RANK != 0:
-            q = np.array([0.5])
-        else:
-            q = None
-            
+        self.sampled_points = []
+        temp_sampled_points = []
+        
         req = None
-        if self.color == 0:
-            self.req_handler = ReqHandler(source=1, tag=1)
-
-        while True:
+        criterion_req = None
+        current_point = None
+        recieved_points = None
+        criterion_met = False
+        if RANK == 0:
+            logging.info('Starting sampling and training using parallel mode.')
+        while not criterion_met:
             if self.color == 0:
                 current_point = self.run_MD(self.atoms, self.dyn)
-                i += 1
-                logging.info(f"Sampled point {i}.")    
                 for dest in range(1, MPI.COMM_WORLD.Get_size()): 
                     sample_send = MPI.COMM_WORLD.isend(current_point, dest=dest, tag=0)
                     sample_send.Wait()
 
-                self.req_handler.start_wait_thread()
-                self.recieved_points = self.req_handler.get_received_data()
-                if self.recieved_points is not None:
-                    logging.info(f"Recieved q {self.recieved_points}.")
-                    self.recieved_points = None
-            
-            elif self.color == 1:
+                if req is None:
+                    req = MPI.COMM_WORLD.irecv(source=1, tag=1)
+                status, recieved_points = req.test() # non-blocking recieve
+                if status:
+                    logging.info('Recieved points from DFT worker; training.')
+                    self.sampled_points.extend(recieved_points)
+                    recieved_points = None
+                    self.train()
+                    
+                    criterion_met = self.desired_acc * self.lamb >= self.current_valid or self.epoch > self.max_initial_epochs
+                    if criterion_met:
+                        for dest in range(1, MPI.COMM_WORLD.Get_size()):
+                            criterion_send = MPI.COMM_WORLD.isend(None, dest=dest, tag=2)
+                            criterion_send.Wait()
+                        break
+                    req = None
+                           
+            if self.color == 1:
                 if req is None:
                     req = MPI.COMM_WORLD.irecv(source=0, tag=0)
-                    #req.Wait()             
-                #if req.Test():
-                current_point = req.wait()
-                i += 1
-                if RANK == 1:
-                    logging.info(f"Recalculating point {i} with DFT.")  
-                sampled_points.append(self.recalc_aims(current_point))
-                if RANK == 1:
-                    logging.info(f'len(sampled_points): {len(sampled_points)}')
-                    #logging.info(f'criterion: {self.ensemble_size * self.n_samples}')
-                    #if len(sampled_points) % (self.n_samples * self.ensemble_size) == 0:
-                    logging.info(f'Sending q {q} to rank 0.')
-                    req_send = MPI.COMM_WORLD.isend(q, dest=0, tag=1)
-                    req_send.Wait()
-                    req = None
-                            
-
-        MPI.COMM_WORLD.Barrier()
-        if RANK == 1:
-            MPI.COMM_WORLD.send(sampled_points, dest=0, tag=1)
+                if criterion_req is None:
+                    criterion_req = MPI.COMM_WORLD.irecv(source=0, tag=2)
+                
+                criterion_met = criterion_req.Test()
+                
+                if criterion_met:
+                    break
+                  
+                current_point = req.wait() # blocking recieve
+                req = None
+                temp_sampled_points.append(self.recalc_aims(current_point))
+                
+                if RANK == 1:    
+                    if len(temp_sampled_points) % (self.n_samples * self.ensemble_size) == 0 and len(temp_sampled_points) != 0:
+                        logging.info(f'Computed {len(temp_sampled_points)} points with DFT and sending them to training worker.')
+                        req_send = MPI.COMM_WORLD.isend(temp_sampled_points, dest=0, tag=1)
+                        req_send.Wait()
+                        temp_sampled_points = []
         if RANK == 0:
-            sampled_points = MPI.COMM_WORLD.recv(source=1, tag=1)
+            logging.info('Closing down MPI communicators.')
+            
         MPI.COMM_WORLD.Barrier()
+        self.current_valid = MPI.COMM_WORLD.bcast(self.current_valid, root=0)
+        self.epoch = MPI.COMM_WORLD.bcast(self.epoch, root=0)
+        MPI.COMM_WORLD.Barrier()
+    
+        if self.color == 1:
+            self.aims_calc.close()
+            
+        self.comm.Free()
         
-        return sampled_points
     
