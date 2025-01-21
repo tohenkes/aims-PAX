@@ -122,7 +122,7 @@ following subdictionaries and keys:
     - **max_MD_steps** *(int)*: Maximum number of steps taken using the MLFF during active learning per trajectory.
     - **max_set_size** *(int)*: Maximum size of training set size before procedure is stopped.
     - **valid_skip** *(int)*: How many epochs to skip before evaluating the model(s) on the validation set.
-    - **sanity_skip** *(int)*: How many MD steps to skip before performing a sanity check.
+    - **analysis_skip** *(int)*: How many MD steps to skip before performing a DFT calculation for analysis.
     - **ensemble_size** *(int)*: Number of models in the ensemble.
     - **c_x** *Rename* *(float)*: Parameter to calculate the uncertainty threshold based on the formula threshold = moving_avg_uncert * (1 - c_x).
     - **dataset_dir** *(str)*: Path to save the generated datasets to (see below).
@@ -136,6 +136,7 @@ following subdictionaries and keys:
     - **initial_sampling** *(str)*: Choice of method for sampling the initial points when creating the initial training sets. For now the choice are: ```"mace-mp0"``` or ```"aimd"```.
     - **initial_foundational_size** *(str)*: If one sets ```initial_sampling = "mace-mp0"```, the size (```"small"```,```"medium"```,```"large"```) of the foundational model can be chosen here. It is recommended to use ```"small"```.
     - **converge_best** *(bool)*: Whether to converge to whole ensemble (```False```) or only the best performing (based on validation loss) member (```True```) on the acquired dataset (only applies to convergence after AL procedure).
+    - **parallel** *(bool)*: Whether to use the parallel version of the algorithm for creating an initial dataset and performing active learning.
 
 For now we have only one MD setting for all trajectories and the selection for settings is limited to Langevin dynamics. Currently these settings are used for *ab initio* and MLFF MD.
 - MD
@@ -163,34 +164,34 @@ For now we have only one MD setting for all trajectories and the selection for s
 
 # ToDo
 - [ ] change epoch saved in AL for ckpt
-- [x] update mace calculator
-- [x] Change training setup reset to optimizer reset only
-- [x] energy error bug fix
-- [x] parallelism for FHI aims in AL procedure
+- [X] update mace calculator
+- [X] Change training setup reset to optimizer reset only
+- [X] energy error bug fix
+- [X] parallelism for FHI aims in AL procedure
 - [ ] copy original MACE input file
 - [ ] spin polarization for E0 calculations
 - [ ] energy, force weight swap in loss fn during convergence
-- [x] make it work with gpu
-- [x] analysis (save sanity checks, t_intervals, threshold evolution, uncertainties, loss over time)
+- [X] make it work with gpu
+- [X] analysis (save sanity checks, t_intervals, threshold evolution, uncertainties, loss over time)
 - [ ] multiple MD settings
-- [x] scf failsafe
+- [X] scf failsafe
 - [X] initial dataset train and MD in parallel
-- [ ] AL train and MD in parallel
-- [ ] multi GPU?
+- [X] AL train and MD in parallel
+- [ ] multi GPU parallelism for AL
 - [ ] multiple species at once
 - [X] add support for stress
 - [ ] refactor code, especially procedures.py and utilities.py and all the modified MACE parts
 - [ ] own MD engine using pytorch (or TorchMD?)
 - [ ] own asi wrapper
 - [ ] unit tests
-- [x] console scripts for initial dataset/active learning separately
+- [X] console scripts for initial dataset/active learning separately
 - [ ] implement default settings and create checks when reading the input
-- [x] make restarting the procedure possible
-- [x] separate skip_step for initial and al
+- [X] make restarting the procedure possible
+- [X] separate skip_step for initial and al
 - [ ] compile models at the end
-- [x] foundation model initial geometries
+- [X] foundation model initial geometries
 - [ ] fine-tuning of foundational models
-- [x] select best performing ensemble member
+- [X] select best performing ensemble member
 - [ ] Start multiple trajectories from different starting geometries
 
 

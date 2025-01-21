@@ -33,6 +33,10 @@ from typing import Any, Dict, List, Optional, Tuple, Union
 from mace.tools import AtomicNumberTable
 from contextlib import nullcontext
 import time
+import GPUtil
+from threading import Thread
+import time
+import pandas as pd
 
 #TODO: this file combines a lot of stuff and should be split up and
         # refactored into classes
@@ -2015,3 +2019,36 @@ dtype_mapping = {
     'int8': torch.int8,
     'uint8': torch.uint8,
 }
+
+
+class GPUMonitor(Thread):
+    def __init__(self, delay, output_file):
+        super(GPUMonitor, self).__init__()
+        self.stopped = False
+        self.delay = delay  # Time between calls to GPUtil
+        self.output_file = output_file
+        self.data = []  # Temporary storage for GPU utilization data
+        self.start()
+
+    def run(self):
+        while not self.stopped:
+            # Get GPU utilization data
+            gpus = GPUtil.getGPUs()
+            timestamp = time.strftime('%Y-%m-%d %H:%M:%S', time.localtime())
+            
+            for gpu in gpus:
+                self.data.append({
+                    'Time': timestamp,
+                    'GPU ID': gpu.id,
+                    'Utilization (%)': gpu.load * 100,
+                    'Memory Utilization (%)': gpu.memoryUtil * 100
+                })
+                
+            time.sleep(self.delay)
+
+    def stop(self):
+        self.stopped = True
+        # Save collected data to a CSV file using pandas
+        df = pd.DataFrame(self.data)
+        df.to_csv(self.output_file, index=False)
+

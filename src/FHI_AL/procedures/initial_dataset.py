@@ -324,15 +324,15 @@ class PrepareInitialDatasetProcedure:
             ase.Atoms: Atoms object with the calculator attached.
         """
         aims_settings = self.aims_settings.copy()
-        properties = ['energy', 'forces']
+        self.properties = ['energy', 'forces']
         if self.compute_stress:
-            properties.append('stress')
+            self.properties.append('stress')
 
         def init_via_ase(asi):
             from ase.calculators.aims import Aims, AimsProfile
             aims_settings["profile"] = AimsProfile(command="asi-doesnt-need-command")
             calc = Aims(**aims_settings)
-            calc.write_inputfiles(asi.atoms, properties=properties)
+            calc.write_inputfiles(asi.atoms, properties=self.properties)
 
         calc = ASI_ASE_calculator(
             self.ASI_path,
@@ -654,6 +654,7 @@ class PrepareInitialDatasetProcedure:
                     logging.info(
                         f"Maximum number of epochs reached. Best model (Epoch {best_epoch}) based on validation loss saved."
                     )
+                    break
 
 class InitialDatasetProcedure(PrepareInitialDatasetProcedure):
     """
@@ -835,6 +836,7 @@ class InitialDatasetProcedure(PrepareInitialDatasetProcedure):
                 self.epoch == self.max_initial_epochs
             ):  # TODO: change to a different variable (shares with al-algo right now)
                 logging.info(f"Maximum number of epochs reached.")
+                return True
 
     
     def sample_and_train(
@@ -994,10 +996,12 @@ class InitialDatasetFoundational(InitialDatasetProcedure):
             self,
             current_point: ase.Atoms
             ) -> ase.Atoms:
-        self.aims_calc.calculate(current_point, properties=["energy", "forces"])
+        self.aims_calc.calculate(current_point, properties=self.properties)
         if self.aims_calc.asi.is_scf_converged:
             current_point.info["REF_energy"] = self.aims_calc.results["energy"]
             current_point.arrays["REF_forces"] = self.aims_calc.results["forces"]
+            if self.compute_stress:
+                current_point.arrays["REF_stress"] = self.aims_calc.results["stress"]
             return current_point
         else:
             if RANK == 0:
@@ -1110,15 +1114,15 @@ class InitialDatasetFoundationalParallel(InitialDatasetFoundational):
         aims_settings = self.aims_settings.copy()
         # only one communictor initializes aims
         if self.color == 1:
-            properties = ['energy', 'forces']
+            self.properties = ['energy', 'forces']
             if self.compute_stress:
-                properties.append('stress')
+                self.properties.append('stress')
 
             def init_via_ase(asi):
                 from ase.calculators.aims import Aims, AimsProfile
                 aims_settings["profile"] = AimsProfile(command="asi-doesnt-need-command")
                 calc = Aims(**aims_settings)
-                calc.write_inputfiles(asi.atoms, properties=properties)
+                calc.write_inputfiles(asi.atoms, properties=self.properties)
 
             calc = ASI_ASE_calculator(
                 self.ASI_path,
@@ -1129,7 +1133,7 @@ class InitialDatasetFoundationalParallel(InitialDatasetFoundational):
             return calc
         else:
             return None
-    
+        
     def sample_and_train(
         self
         ) -> list:
@@ -1158,20 +1162,21 @@ class InitialDatasetFoundationalParallel(InitialDatasetFoundational):
                     req = MPI.COMM_WORLD.irecv(source=1, tag=1)
                 status, recieved_points = req.test() # non-blocking recieve
                 if status:
-                    logging.info('Recieved points from DFT worker; training.')
-                    self.sampled_points.extend(recieved_points)
-                    recieved_points = None
-                    self.train()
                     # checking if the criterion is met
                     criterion_met = (
                         self.desired_acc * self.lamb >= self.current_valid or
-                        self.epoch > self.max_initial_epochs
+                        self.epoch >= self.max_initial_epochs
                         )
                     if criterion_met:
                         for dest in range(1, MPI.COMM_WORLD.Get_size()):
                             criterion_send = MPI.COMM_WORLD.isend(None, dest=dest, tag=2)
                             criterion_send.Wait()
                         break
+                    logging.info('Recieved points from DFT worker; training.')
+                    self.sampled_points.extend(recieved_points)
+                    recieved_points = None
+                    self.train()
+
                     req = None
                            
             if self.color == 1:
@@ -1188,7 +1193,9 @@ class InitialDatasetFoundationalParallel(InitialDatasetFoundational):
                 current_point = req.wait() # blocking recieve
                 req = None
                 # dft results are computed here and collected
-                temp_sampled_points.append(self.recalc_aims(current_point))
+                dft_result = self.recalc_aims(current_point)
+                if dft_result is not None:
+                    temp_sampled_points.append(dft_result)
                 
                 if RANK == 1:
                     # if enough are computed send them to training worker    
