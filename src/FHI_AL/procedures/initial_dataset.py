@@ -1087,8 +1087,7 @@ class InitialDatasetFoundationalParallel(InitialDatasetFoundational):
             color=self.color,
             key=RANK
             )
-    
-    
+        
     def close_aims(self):
         # this is just to overwrite the function in the parent class
         # due to the communicators we are closing it inside the
@@ -1141,8 +1140,8 @@ class InitialDatasetFoundationalParallel(InitialDatasetFoundational):
         self.sampled_points = []
         temp_sampled_points = []
         
-        req = None # handling data communication
-        criterion_req = None # handling the communication regarding stopping
+        self.req = None # handling data communication
+        self.criterion_req = None # handling the communication regarding stopping
         current_point = None
         recieved_points = None
         criterion_met = False
@@ -1152,47 +1151,64 @@ class InitialDatasetFoundationalParallel(InitialDatasetFoundational):
         while not criterion_met:
             if self.color == 0:
                 current_point = self.run_MD(self.atoms, self.dyn)
-                for dest in range(1, MPI.COMM_WORLD.Get_size()):
                     # using isend to create a queue of messages
-                    sample_send = MPI.COMM_WORLD.isend(current_point, dest=dest, tag=0)
-                    sample_send.Wait()
+                sample_send = MPI.COMM_WORLD.isend(current_point, dest=1, tag=96)
+                sample_send.Wait()
 
                 # checking if training data recieved
-                if req is None:
-                    req = MPI.COMM_WORLD.irecv(source=1, tag=1)
-                status, recieved_points = req.test() # non-blocking recieve
-                if status:
-                    # checking if the criterion is met
-                    criterion_met = (
-                        self.desired_acc * self.lamb >= self.current_valid or
-                        self.epoch >= self.max_initial_epochs
-                        )
-                    if criterion_met:
-                        for dest in range(1, MPI.COMM_WORLD.Get_size()):
-                            criterion_send = MPI.COMM_WORLD.isend(None, dest=dest, tag=2)
-                            criterion_send.Wait()
-                        break
-                    logging.info('Recieved points from DFT worker; training.')
-                    self.sampled_points.extend(recieved_points)
-                    recieved_points = None
-                    self.train()
+                if self.req is None:
+                    flag = False
+                    status = MPI.Status()
+                    # the size of the message has be determind because the default
+                    # is not large enough for long lists of atoms objects
+                    flag = MPI.COMM_WORLD.iprobe(source=1, tag=2211, status=status)
+                    if flag:
+                        message_size = status.Get_count(MPI.BYTE)
+                        buf = bytearray(message_size)
+                        self.req = MPI.COMM_WORLD.irecv(buf=buf, source=1, tag=2211)
+                else:
+                    status, recieved_points = self.req.test() # non-blocking recieve
+                    if status:
+                        # checking if the criterion is met
+                        criterion_met = (
+                            self.desired_acc * self.lamb >= self.current_valid or
+                            self.epoch >= self.max_initial_epochs
+                            )
+                        if criterion_met:
+                            for dest in range(1, MPI.COMM_WORLD.Get_size()):
+                                self.criterion_send = MPI.COMM_WORLD.isend(None, dest=dest, tag=2305)
+                                self.criterion_send.Wait()
+                            break
+                        logging.info('Recieved points from DFT worker; training.')
+                        self.sampled_points.extend(recieved_points)
+                        recieved_points = None
+                        self.train()
 
-                    req = None
+                        self.req = None
                            
             if self.color == 1:
+                current_point = None
                 # recieving the criterion
-                if criterion_req is None:
-                    criterion_req = MPI.COMM_WORLD.irecv(source=0, tag=2)
-                criterion_met = criterion_req.Test()
+                if self.criterion_req is None:
+                    self.criterion_req = MPI.COMM_WORLD.irecv(source=0, tag=2305)
+                criterion_met = self.criterion_req.Test()
                 if criterion_met:
                     break
+
                 
                 # recieving sampled point to recompute
-                if req is None:
-                    req = MPI.COMM_WORLD.irecv(source=0, tag=0)
-                current_point = req.wait() # blocking recieve
-                req = None
+                if RANK == 1:
+                    if self.req is None:
+                        self.req = MPI.COMM_WORLD.irecv(source=0, tag=96)
+                    current_point = self.req.wait() # blocking recieve
+                self.req = None
+
+                self.comm.Barrier()
+                current_point = self.comm.bcast(current_point, root=0)
                 # dft results are computed here and collected
+                #if RANK == 1:
+                #    logging.info('Calculating point')
+                self.comm.Barrier()
                 dft_result = self.recalc_aims(current_point)
                 if dft_result is not None:
                     temp_sampled_points.append(dft_result)
@@ -1201,12 +1217,10 @@ class InitialDatasetFoundationalParallel(InitialDatasetFoundational):
                     # if enough are computed send them to training worker    
                     if len(temp_sampled_points) % (self.n_samples * self.ensemble_size) == 0 and len(temp_sampled_points) != 0:
                         logging.info(f'Computed {len(temp_sampled_points)} points with DFT and sending them to training worker.')
-                        req_send = MPI.COMM_WORLD.isend(temp_sampled_points, dest=0, tag=1)
-                        req_send.Wait()
+                        self.req_send = MPI.COMM_WORLD.isend(temp_sampled_points, dest=0, tag=2211)
+                        self.req_send.Wait()
                         temp_sampled_points = []
-        if RANK == 0:
-            logging.info('Closing down MPI communicators.')
-            
+                
         MPI.COMM_WORLD.Barrier()
         self.current_valid = MPI.COMM_WORLD.bcast(self.current_valid, root=0)
         self.epoch = MPI.COMM_WORLD.bcast(self.epoch, root=0)
@@ -1214,6 +1228,7 @@ class InitialDatasetFoundationalParallel(InitialDatasetFoundational):
     
         if self.color == 1:
             self.aims_calc.close()
+            
             
         self.comm.Free()
         

@@ -854,8 +854,9 @@ class ALProcedure(PrepareALProcedure):
                     logging.info(
                         "Desired accuracy reached."
                     )
-                break
-    
+                break           
+        self.aims_calculator.asi.close()
+
     def analysis_check(
     #TODO: put this somewhere else and its ugly
     #TODO: update docstring
@@ -1468,7 +1469,6 @@ class ALProcedure(PrepareALProcedure):
 
         MPI.COMM_WORLD.Barrier()
         self._al_loop()
-        
         # turn keys which are ints into strings
         # save the datasets and the intervals for analysis
         if RANK == 0:
@@ -1693,12 +1693,12 @@ class ALProcedureParallel(ALProcedure):
         """
 
         for dest in range(1, WORLD_SIZE):
-            self.kill_send = WORLD_COMM.isend(True, dest=dest, tag=42)
+            self.kill_send = WORLD_COMM.isend(True, dest=dest, tag=422)
             self.kill_send.Wait()
         
-        for trajectory_idx in range(self.num_trajectories):
-            if self.worker_reqs[trajectory_idx] is not None:
-                self.worker_reqs[trajectory_idx].cancel()
+        #for trajectory_idx in range(self.num_trajectories):
+        #    if self.worker_reqs[trajectory_idx] is not None:
+        #        self.worker_reqs[trajectory_idx].cancel()
 
         #if self.point_send is not None:
         #    self.point_send.cancel()
@@ -1717,7 +1717,7 @@ class ALProcedureParallel(ALProcedure):
             self.analysis_worker_reqs = {idx: None for idx in range(self.num_trajectories)}
 
         if self.color == 1:
-            self.req_kill = WORLD_COMM.irecv(source=0, tag=42)
+            self.req_kill = WORLD_COMM.irecv(source=0, tag=422)
         
         while True:
             if self.color == 0: 
@@ -1787,14 +1787,13 @@ class ALProcedureParallel(ALProcedure):
                 # TODO: put everything into a function
                 kill_signal = self.req_kill.Test()
                 if kill_signal:
-                    logging.info("DFT worker recieved kill signal.")
                     self.aims_calculator.asi.close()
-                    self.req.cancel() if self.req is not None else None
-                    self.req_send.cancel() if self.req_send is not None and not self.req_send.Test() else None
+                    #self.req.cancel() if self.req is not None else None
+                    #self.req_send.cancel() if self.req_send is not None and not self.req_send.Test() else None
                     break
                 
                 if self.req is None:
-                    self.req = WORLD_COMM.irecv(source=0, tag=123)
+                    self.req = WORLD_COMM.irecv(source=0, tag=1234)
 
                 status, data = self.req.test()
                 
@@ -1807,7 +1806,7 @@ class ALProcedureParallel(ALProcedure):
                     dft_result = self.recalc_aims(point)
                     if dft_result is not None:
                         if RANK == 1:
-                            logging.info(f"Calculation for worker {idx} finished and sending point back.")
+                            logging.info(f"DFT calculation for worker {idx} finished and sending point back.")
                             self.req_send = WORLD_COMM.isend(dft_result, dest=0, tag=idx)
                             self.req_send.Wait()
                     else:
@@ -1828,7 +1827,7 @@ class ALProcedureParallel(ALProcedure):
                         if dft_result_analysis is not None:
 
                             if RANK == 1:
-                                logging.info(f"Calculation for worker {idx} analysis finished and sending point back.")
+                                logging.info(f"DFT calculation for worker {idx} analysis finished and sending point back.")
                                 self.req_send_analysis = WORLD_COMM.isend(dft_result_analysis, dest=0, tag=idx)
                                 self.req_send_analysis.Wait()
                         else:
@@ -1836,6 +1835,9 @@ class ALProcedureParallel(ALProcedure):
                                 self.req_send_analysis = WORLD_COMM.isend(False, dest=0, tag=idx)
                                 self.req_send_analysis.Wait()        
 
+        if self.color == 1:
+            self.aims_calculator.asi.close()
+            
     def waiting_task(
             self,
             idx: int
@@ -1930,7 +1932,7 @@ class ALProcedureParallel(ALProcedure):
         if RANK == 0:
             logging.info(f"Trajectory worker {idx} is sending point to DFT.")
             for dest in range(1, WORLD_SIZE):
-                self.point_send = MPI.COMM_WORLD.isend((idx, self.point), dest=dest, tag=123)
+                self.point_send = MPI.COMM_WORLD.isend((idx, self.point), dest=dest, tag=1234)
                 self.point_send.Wait()
 
         self.comm.Barrier()
