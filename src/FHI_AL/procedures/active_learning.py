@@ -75,17 +75,15 @@ class PrepareALProcedure:
         comm: MPI.Comm = MPI.COMM_WORLD
     ) -> None:
         self.comm = comm
-        logging.basicConfig(
-            filename="AL.log",
-            encoding="utf-8",
-            level=logging.INFO,
-            force=True,
-        )
+        # basic logger is being set up here
+        logger_level = logging.DEBUG if mace_settings["MISC"]["log_level"].lower() == "debug" else logging.INFO 
+        
         tools.setup_logger(
-            level=mace_settings["MISC"]["log_level"],
-            #    tag=tag,
+            level=logger_level,
+            tag='active_learning',
             directory=mace_settings["GENERAL"]["log_dir"],
         )
+        
  
         if RANK == 0:
             logging.info("Initializing active learning procedure.")

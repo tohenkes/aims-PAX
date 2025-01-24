@@ -21,6 +21,7 @@ from FHI_AL.tools.utilities import (
     create_seeds_tags_dict,
     create_ztable,
     save_ensemble,
+    setup_logger,
     AIMSControlParser,
 )
 from FHI_AL.tools.train_epoch_mace import train_epoch, validate_epoch_ensemble
@@ -111,15 +112,17 @@ class PrepareInitialDatasetProcedure:
         """
 
         # basic logger is being set up here
-        logging.basicConfig(
-            filename="initial_dataset.log",
-            encoding="utf-8",
-            level=logging.DEBUG,
-            force=True,
-        )
-        tools.setup_logger(
-            level=mace_settings["MISC"]["log_level"],
-            #    tag=tag,
+        logger_level = logging.DEBUG if mace_settings["MISC"]["log_level"].lower() == "debug" else logging.INFO 
+
+        #logging.basicConfig(
+        #    filename="initial_dataset.log",
+        #    encoding="utf-8",
+        #    level=logger_level,
+        #    force=True,
+        #)
+        self.logger = setup_logger(
+            level=logger_level,
+                tag='initial_dataset',
             directory=mace_settings["GENERAL"]["log_dir"],
         )
         if RANK == 0:
@@ -485,6 +488,7 @@ class PrepareInitialDatasetProcedure:
             if check:
                 if RANK==0:
                     logging.info('Initial dataset generation is already done. Closing')
+                    self.logger.handlers.clear()
             return check
         else:
             return False     
@@ -937,6 +941,7 @@ class InitialDatasetProcedure(PrepareInitialDatasetProcedure):
                     "restart/initial_ds/initial_ds_restart.npy",
                     self.init_ds_restart_dict
                 )
+        self.logger.handlers.clear()        
         self.close_aims()
         return 0
 
@@ -1138,37 +1143,66 @@ class InitialDatasetFoundationalParallel(InitialDatasetFoundational):
         ) -> list:
         
         self.sampled_points = []
-        temp_sampled_points = []
         
+        #TODO: add stress
+        temp_sampled_geometries = []
+        temp_sampled_forces = []
+        temp_sampled_energies = []
+        self.req_geometries, self.req_energies, self.req_forces = None, None, None
+
         self.req = None # handling data communication
         self.criterion_req = None # handling the communication regarding stopping
         current_point = None
         recieved_points = None
         criterion_met = False
+        self.atoms_dummy = self.atoms.copy()
         
         if RANK == 0:
             logging.info('Starting sampling and training using parallel mode.')
         while not criterion_met:
             if self.color == 0:
                 current_point = self.run_MD(self.atoms, self.dyn)
-                    # using isend to create a queue of messages
-                sample_send = MPI.COMM_WORLD.isend(current_point, dest=1, tag=96)
+                # TODO: also send cell and pbc
+                geometry = current_point.get_positions()
+                # using isend to create a queue of messages
+                sample_send = MPI.COMM_WORLD.Isend(geometry, dest=1, tag=96)
                 sample_send.Wait()
 
-                # checking if training data recieved
-                if self.req is None:
-                    flag = False
-                    status = MPI.Status()
-                    # the size of the message has be determind because the default
-                    # is not large enough for long lists of atoms objects
-                    flag = MPI.COMM_WORLD.iprobe(source=1, tag=2211, status=status)
-                    if flag:
-                        message_size = status.Get_count(MPI.BYTE)
-                        buf = bytearray(message_size)
-                        self.req = MPI.COMM_WORLD.irecv(buf=buf, source=1, tag=2211)
+                 #checking if training data recieved
+                if (
+                    self.req_geometries is None and
+                    self.req_energies is None and
+                    self.req_forces is None
+                ):
+                    buf_geometries, buf_energies, buf_forces = (
+                        np.zeros((self.n_samples * self.ensemble_size, len(self.atoms), 3), dtype=float),
+                        np.zeros(self.n_samples * self.ensemble_size, dtype=float),
+                        np.zeros((self.n_samples * self.ensemble_size, len(self.atoms), 3), dtype=float)
+                    )
+                    self.req_geometries = MPI.COMM_WORLD.Irecv(buf=buf_geometries, source=1, tag=2210)
+                    self.req_energies = MPI.COMM_WORLD.Irecv(buf=buf_energies, source=1, tag=2211)
+                    self.req_forces = MPI.COMM_WORLD.Irecv(buf=buf_forces, source=1, tag=2212)
+
+
                 else:
-                    status, recieved_points = self.req.test() # non-blocking recieve
-                    if status:
+                    status_geometries = self.req_geometries.Test() # non-blocking recieve
+                    status_energies = self.req_energies.Test() # non-blocking recieve
+                    status_forces = self.req_forces.Test() # non-blocking recieve
+
+                    if status_energies and status_forces and status_geometries:
+                        recieved_points = []
+                        
+                        for i in range(self.n_samples * self.ensemble_size):
+                            temp = self.atoms_dummy.copy()
+                            temp.set_positions(buf_geometries[i])
+                            temp.info["REF_energy"] = buf_energies[i]
+                            temp.arrays["REF_forces"] = buf_forces[i]
+                            recieved_points.append(temp)
+                        
+                        self.req_geometries = None
+                        self.req_energies = None
+                        self.req_forces = None
+
                         # checking if the criterion is met
                         criterion_met = (
                             self.desired_acc * self.lamb >= self.current_valid or
@@ -1183,43 +1217,74 @@ class InitialDatasetFoundationalParallel(InitialDatasetFoundational):
                         self.sampled_points.extend(recieved_points)
                         recieved_points = None
                         self.train()
-
-                        self.req = None
+                        logging.info('Training done, going back to sampling.')
                            
             if self.color == 1:
-                current_point = None
+                current_geometry = None
                 # recieving the criterion
                 if self.criterion_req is None:
                     self.criterion_req = MPI.COMM_WORLD.irecv(source=0, tag=2305)
                 criterion_met = self.criterion_req.Test()
                 if criterion_met:
                     break
-
-                
+     
                 # recieving sampled point to recompute
                 if RANK == 1:
                     if self.req is None:
-                        self.req = MPI.COMM_WORLD.irecv(source=0, tag=96)
-                    current_point = self.req.wait() # blocking recieve
-                self.req = None
+                        buffer = np.zeros(self.atoms_dummy.get_positions().shape, dtype=float)
+                        self.req = MPI.COMM_WORLD.Irecv(buf=buffer,source=0, tag=96)
+                    self.req.wait() # blocking recieve
+                    current_geometry = buffer.copy()
 
+                self.req = None
                 self.comm.Barrier()
-                current_point = self.comm.bcast(current_point, root=0)
-                # dft results are computed here and collected
-                #if RANK == 1:
-                #    logging.info('Calculating point')
+                current_geometry = self.comm.bcast(current_geometry, root=0)
                 self.comm.Barrier()
+
+                current_point = self.atoms_dummy.copy()
+                current_point.set_positions(current_geometry)
+
+
                 dft_result = self.recalc_aims(current_point)
-                if dft_result is not None:
-                    temp_sampled_points.append(dft_result)
-                
                 if RANK == 1:
-                    # if enough are computed send them to training worker    
-                    if len(temp_sampled_points) % (self.n_samples * self.ensemble_size) == 0 and len(temp_sampled_points) != 0:
-                        logging.info(f'Computed {len(temp_sampled_points)} points with DFT and sending them to training worker.')
-                        self.req_send = MPI.COMM_WORLD.isend(temp_sampled_points, dest=0, tag=2211)
+                    energies, forces = dft_result.info["REF_energy"], dft_result.arrays["REF_forces"]
+                    #TODO: add stress
+                    if dft_result is not None:
+                        temp_sampled_geometries.append(current_geometry)
+                        temp_sampled_energies.append(energies)
+                        temp_sampled_forces.append(forces)
+
+
+                        # if enough are computed send them to training worker    
+                    if len(temp_sampled_energies) % (self.n_samples * self.ensemble_size) == 0 and len(temp_sampled_energies) != 0:
+                        logging.info(f'Computed {len(temp_sampled_energies)} points with DFT and sending them to training worker.')
+
+                        
+                        #TODO: create loop or package data in one
+                        self.req_send = MPI.COMM_WORLD.Isend(
+                            np.array(temp_sampled_geometries),
+                            dest=0,
+                            tag=2210
+                            )
                         self.req_send.Wait()
-                        temp_sampled_points = []
+
+                        self.req_send = MPI.COMM_WORLD.Isend(
+                            np.array(temp_sampled_energies),
+                            dest=0,
+                            tag=2211
+                            )
+                        self.req_send.Wait()
+                        
+                        self.req_send = MPI.COMM_WORLD.Isend(
+                            np.array(temp_sampled_forces),
+                            dest=0,
+                            tag=2212
+                            )
+                        self.req_send.Wait()
+
+                        temp_sampled_geometries = []
+                        temp_sampled_energies = []
+                        temp_sampled_forces = []
                 
         MPI.COMM_WORLD.Barrier()
         self.current_valid = MPI.COMM_WORLD.bcast(self.current_valid, root=0)
@@ -1228,8 +1293,6 @@ class InitialDatasetFoundationalParallel(InitialDatasetFoundational):
     
         if self.color == 1:
             self.aims_calc.close()
-            
-            
         self.comm.Free()
         
     
