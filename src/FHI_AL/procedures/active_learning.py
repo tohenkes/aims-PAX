@@ -80,7 +80,7 @@ class PrepareALProcedure:
         
         tools.setup_logger(
             level=logger_level,
-            tag='active_learning',
+            tag=f'active_learning',
             directory=mace_settings["GENERAL"]["log_dir"],
         )
         
@@ -241,6 +241,7 @@ class PrepareALProcedure:
                         "mean_error": [],
                         "atom_wise_error": [],
                         "threshold": [],
+                        "train_set_length": []
                         } for trajectory in range(self.num_trajectories)
                 }
                 if self.mol_idxs is not None:
@@ -789,14 +790,13 @@ class ALProcedure(PrepareALProcedure):
         path_to_geometry: str = "./geometry.in",
         comm: MPI.Comm = MPI.COMM_WORLD
     ) -> None:
-        
         super().__init__(
             mace_settings,
             al_settings,
             path_to_control=path_to_control,
             path_to_geometry=path_to_geometry,
             comm=comm
-        )
+        )   
     
     def _al_loop(self):
         while True: 
@@ -895,6 +895,7 @@ class ALProcedure(PrepareALProcedure):
         check_results['atom_wise_error'] = atom_wise_error
         check_results['max_error'] = max_error
         check_results['mean_error'] = mean_error
+        check_results['train_set_length'] = self.train_dataset_len
         
         if self.mol_idxs is not None:
             total_certainty = self.get_uncertainty(analysis_prediction)
@@ -1184,7 +1185,7 @@ class ALProcedure(PrepareALProcedure):
             point,
             properties=self.properties
         )
-        return self.aims_calculator.asi.is_scf_converged()
+        return self.aims_calculator.asi.is_scf_converged
     
     def _save_analysis(
             self
@@ -1255,7 +1256,6 @@ class ALProcedure(PrepareALProcedure):
         if (
             current_MD_step % self.analysis_skip == 0
         ):  
-            
             if RANK == 0:
                 logging.info(f"Trajectory worker {idx} is sending a point to DFT for analysis.")
             
@@ -1355,7 +1355,7 @@ class ALProcedure(PrepareALProcedure):
                 uncertainty = self.get_uncertainty(prediction)
 
                 self.uncertainties.append(uncertainty)
-                    
+
                 if len(self.uncertainties) > 10: #TODO: remove hardcode
                     self.threshold = get_threshold(
                         uncertainties=self.uncertainties,
@@ -1373,14 +1373,15 @@ class ALProcedure(PrepareALProcedure):
                 prediction = None
                 self.point = None
                 self.threshold = None
+                current_MD_step = None
                 
             self.comm.Barrier()
             self.threshold = self.comm.bcast(self.threshold, root=0)
             self.point = self.comm.bcast(self.point, root=0)
             uncertainty = self.comm.bcast(uncertainty, root=0)
             prediction = self.comm.bcast(prediction, root=0)
+            current_MD_step = self.comm.bcast(current_MD_step, root=0)
             self.comm.Barrier()
-    
             
             if (uncertainty > self.threshold).any() or self.uncert_not_crossed[idx] > self.skip_step * self.uncert_not_crossed_limit:
                 self.uncert_not_crossed[idx] = 0
@@ -1401,8 +1402,7 @@ class ALProcedure(PrepareALProcedure):
                 self._handle_dft_call(
                     idx
                 )
-
-            
+      
             else:
                 self.uncert_not_crossed[idx] += 1
             
