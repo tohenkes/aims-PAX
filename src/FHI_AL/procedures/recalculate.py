@@ -68,8 +68,12 @@ class ReCalculator:
         
         self.handle_aims_settings(path_to_control)
         idx_str = f'{start_idx}:' if end_idx is None else f'{start_idx}:{end_idx}'
+        if RANK == 0:
+            logging.info(f'Loading data from {path_to_data}.')
         self.data = read(path_to_data, index=idx_str)
-        logging.info(f'Found cell: {self.data[0].get_cell()}')
+        if RANK == 0:
+            logging.info(f'Found cell: {self.data[0].get_cell()}')
+            logging.info("Setting up calculator.")
         #TODO: This only works for single species. Need to generalize for multiple species
         self.calc = self.setup_calculator(self.data[0])
 
@@ -115,7 +119,7 @@ class ReCalculator:
                 point.arrays['forces'] = forces
                 self.recalc_data.append(point)
                 if i % self.save_interval == 0:
-                    logging.info(f'Calculated {i}/{len(self.data)-1}')
+                    logging.info(f'Calculated {i+1}/{len(self.data)}')
                     write('recalculated_data.xyz', self.recalc_data)
         
     def setup_calculator(
@@ -134,11 +138,16 @@ class ReCalculator:
         """
 
         aims_settings = self.aims_settings.copy()
+        self.properties = ['energy', 'forces']
+        #TODO: Implement stress calculation
+        #if self.compute_stress:
+        #    self.properties.append('stress')
+
         def init_via_ase(asi):
-            
-            from ase.calculators.aims import Aims
+            from ase.calculators.aims import Aims, AimsProfile
+            aims_settings["profile"] = AimsProfile(command="asi-doesnt-need-command")
             calc = Aims(**aims_settings)
-            calc.write_input(asi.atoms)
+            calc.write_inputfiles(asi.atoms, properties=self.properties)
 
         calc = ASI_ASE_calculator(
             self.ASI_path,
@@ -147,4 +156,3 @@ class ReCalculator:
             atoms
             )
         return calc
-    

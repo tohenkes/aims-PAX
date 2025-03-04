@@ -1431,7 +1431,7 @@ class ALProcedure(PrepareALProcedure):
                 logging.info(
                     f"SCF not converged at worker {idx}. Discarding point and restarting MD from last checkpoint."
                 )
-            self.trajectories[idx] = atoms_full_copy(self.MD_checkpoints[idx])
+                self.trajectories[idx] = atoms_full_copy(self.MD_checkpoints[idx])
             self.trajectory_status[idx] = "running"
         else:
             self.mace_point = create_mace_dataset(
@@ -1444,7 +1444,8 @@ class ALProcedure(PrepareALProcedure):
             # that the MD is restarted from a point that is inside the training set
             # so the MLFF should be able to handle this and lead to a better trajectory
             # that does not lead to convergence issues
-            self.MD_checkpoints[idx] = atoms_full_copy(self.trajectories[idx])
+            if RANK == 0:
+                self.MD_checkpoints[idx] = atoms_full_copy(self.trajectories[idx])
             self.trajectory_status[idx] = "waiting"
             self.num_workers_waiting += 1
         
@@ -1862,7 +1863,7 @@ class ALProcedureParallel(ALProcedure):
                     logging.info(
                         f"SCF not converged at worker {idx}. Discarding point and restarting MD from last checkpoint."
                     )
-                self.trajectories[idx] = atoms_full_copy(self.MD_checkpoints[idx])
+                    self.trajectories[idx] = atoms_full_copy(self.MD_checkpoints[idx])
                 self.trajectory_status[idx] = "running"
             
             else:
@@ -1877,7 +1878,8 @@ class ALProcedureParallel(ALProcedure):
                 # that the MD is restarted from a point that is inside the training set
                 # so the MLFF should be able to handle this and lead to a better trajectory
                 # that does not lead to convergence issues
-                self.MD_checkpoints[idx] = atoms_full_copy(self.trajectories[idx])
+                if RANK == 0:
+                    self.MD_checkpoints[idx] = atoms_full_copy(self.trajectories[idx])
 
                 if self.valid_points_added < self.valid_ratio * self.total_points_added:
                     self.trajectory_status[idx] = "running"
