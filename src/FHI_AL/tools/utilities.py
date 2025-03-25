@@ -549,6 +549,7 @@ def create_mace_dataset(
 def ensemble_from_folder(
     path_to_models: str,
     device: str,
+    dtype,
     compile_mode: str = "default",
     ) -> list:
     """
@@ -571,7 +572,7 @@ def ensemble_from_folder(
     for filename in os.listdir(path_to_models):
         if os.path.isfile(os.path.join(path_to_models, filename)):
             complete_path = os.path.join(path_to_models, filename)
-            model = torch.load(complete_path, map_location=device)
+            model = torch.load(complete_path, map_location=device).to(dtype)
             # One can't train compiled models so not usefull for us.
             #model = torch.compile(
             #        prepare(extract_load)(f=complete_path, map_location=device),
@@ -1304,7 +1305,8 @@ def setup_ensemble_dicts(
 
 def get_atomic_energies_from_ensemble(
     ensemble: dict,
-    z
+    z,
+    dtype: str,
 ):
     """
     Loads the atomic energies from existing ensemble members.
@@ -1312,7 +1314,10 @@ def get_atomic_energies_from_ensemble(
     ensemble_atomic_energies_dict = {}
     ensemble_atomic_energies = {}
     for tag, model in ensemble.items():
-        ensemble_atomic_energies[tag] = np.array(model.atomic_energies_fn.atomic_energies.cpu())
+        ensemble_atomic_energies[tag] = np.array(
+            model.atomic_energies_fn.atomic_energies.cpu(),
+            dtype=dtype_mapping[dtype]
+        )
         ensemble_atomic_energies_dict[tag] = {}
         for i, atomic_energy in enumerate(ensemble_atomic_energies[tag]):
             # TH: i don't know if the atomic energies are really sorted by atomic number
@@ -1325,6 +1330,7 @@ def get_atomic_energies_from_pt(
     path_to_checkpoints: str,
     z,
     seeds_tags_dict: dict,
+    dtype: str,
     convergence: bool = False,
 ):  
     ensemble_atomic_energies_dict = {}
@@ -1337,7 +1343,7 @@ def get_atomic_energies_from_pt(
         
         
         atomic_energies_array = check_pt['model']['atomic_energies_fn.atomic_energies']
-        ensemble_atomic_energies[tag] = np.array(atomic_energies_array.cpu())
+        ensemble_atomic_energies[tag] = np.array(atomic_energies_array.cpu(), dtype=dtype)
         ensemble_atomic_energies_dict[tag] = {}
         for i, atomic_energy in enumerate(ensemble_atomic_energies[tag]):
             # TH: i don't know if the atomic energies are really sorted by atomic number
@@ -1523,7 +1529,8 @@ def update_model_auxiliaries(
         assert z_table is not None
         assert atomic_energies_dict is not None
     
-        energies_train = torch.stack([point.energy.reshape(1)  for point in mace_sets["train"]])
+        energies_train = torch.stack(
+            [point.energy.reshape(1)  for point in mace_sets["train"]])
         zs_train = [
             [
                 z_table.index_to_z(torch.nonzero(one_hot).item()) for one_hot in point.node_attrs

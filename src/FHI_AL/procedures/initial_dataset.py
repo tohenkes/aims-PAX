@@ -23,6 +23,7 @@ from FHI_AL.tools.utilities import (
     save_ensemble,
     setup_logger,
     AIMSControlParser,
+    dtype_mapping
 )
 from FHI_AL.tools.train_epoch_mace import train_epoch, validate_epoch_ensemble
 import ase
@@ -241,6 +242,7 @@ class PrepareInitialDatasetProcedure:
         self.checkpoints_dir = self.mace_settings["GENERAL"]["checkpoints_dir"] + "/initial"
         self.scaling = self.mace_settings["TRAINING"]["scaling"]
         self.dtype = self.mace_settings["GENERAL"]["default_dtype"]
+        torch.set_default_dtype(dtype_mapping[self.dtype])
         self.device = self.mace_settings["MISC"]["device"]
         self.atomic_energies_dict = self.mace_settings[
             "ARCHITECTURE"].get("atomic_energies", None)

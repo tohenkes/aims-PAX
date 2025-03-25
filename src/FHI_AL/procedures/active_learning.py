@@ -34,6 +34,7 @@ from FHI_AL.tools.utilities import (
     get_atomic_energies_from_pt,
     select_best_member,
     atoms_full_copy,
+    dtype_mapping,
     AIMSControlParser,
     ModifyMD
 )
@@ -128,6 +129,7 @@ class PrepareALProcedure:
             self.ensemble = ensemble_from_folder(
                 path_to_models=self.model_dir,
                 device=self.device,
+                dtype=dtype_mapping[self.dtype],
             )
 
             self.training_setups = ensemble_training_setups(
@@ -295,6 +297,7 @@ class PrepareALProcedure:
         self.device = self.mace_settings["MISC"]["device"]
         self.model_dir = self.mace_settings["GENERAL"]["model_dir"]
         self.dtype = self.mace_settings["GENERAL"]["default_dtype"]
+        torch.set_default_dtype(dtype_mapping[self.dtype])
         self.device = self.mace_settings["MISC"]["device"]
         self.atomic_energies_dict = self.mace_settings["ARCHITECTURE"].get("atomic_energies", None)
         self.compute_stress = self.mace_settings.get("compute_stress", False)
@@ -409,6 +412,7 @@ class PrepareALProcedure:
                             path_to_checkpoints=self.checkpoints_dir,
                             z=self.z,
                             seeds_tags_dict=self.seeds_tags_dict,
+                            dtype=self.dtype
                         )
                     else:
                         logging.info("Loading atomic energies from existing ensemble.")
@@ -418,6 +422,7 @@ class PrepareALProcedure:
                         ) = get_atomic_energies_from_ensemble(
                             ensemble=self.ensemble,
                             z=self.z,
+                            dtype=self.dtype
                         )
                     self.update_atomic_energies = True
 
@@ -431,7 +436,8 @@ class PrepareALProcedure:
                         [
                             self.ensemble_atomic_energies_dict[tag][z]
                             for z in self.ensemble_atomic_energies_dict[tag].keys()
-                        ]
+                        ],
+                        dtype=self.dtype
                     ) for tag in self.seeds_tags_dict.keys()}
 
                 logging.info(f'{self.ensemble_atomic_energies_dict[list(self.seeds_tags_dict.keys())[0]]}')
@@ -2038,6 +2044,38 @@ class ALProcedureParallel(ALProcedure):
                 f"Trajectory worker {idx} is waiting for analysis job to finish."
             )
         return None
+
+class ALProcedureGPUParallel(ALProcedureParallel):
+    def __init__(
+        self,
+        mace_settings: dict,
+        al_settings: dict,
+        path_to_control: str = "./control.in",
+        path_to_geometry: str = "./geometry.in",
+    ):
+        super().__init__(
+            mace_settings=mace_settings,
+            al_settings=al_settings,
+            path_to_control=path_to_control,
+            path_to_geometry=path_to_geometry,
+        )
+        # get number of GPUs
+        self.num_gpus = torch.cuda.device_count()
+        self.devices = [torch.device(f"cuda:{i}") for i in range(self.num_gpus)]
+        # create one mpi communcatior per gpu and assign rest to extra communicator
+        self.world_size = WORLD_SIZE
+        self.gpu_world_size = self.num_gpus
+        self.gpu_world_comm = MPI.COMM_WORLD.Split(color=0, key=0)
+        self.extra_comm = MPI.COMM_WORLD.Split(color=1, key=0)
+        self.gpu_ranks = self.gpu_world_comm.Get_size()
+        self.extra_ranks = self.extra_comm.Get_size()
+        self.gpu_rank = self.gpu_world_comm.Get_rank()
+        self.extra_rank = self.extra_comm.Get_rank()
+
+        
+        
+        
+        
         
 
 # TODO: This is not done yet
