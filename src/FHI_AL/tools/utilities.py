@@ -1316,7 +1316,7 @@ def get_atomic_energies_from_ensemble(
     for tag, model in ensemble.items():
         ensemble_atomic_energies[tag] = np.array(
             model.atomic_energies_fn.atomic_energies.cpu(),
-            dtype=dtype_mapping[dtype]
+            dtype=dtype
         )
         ensemble_atomic_energies_dict[tag] = {}
         for i, atomic_energy in enumerate(ensemble_atomic_energies[tag]):

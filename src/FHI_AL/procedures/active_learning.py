@@ -106,6 +106,7 @@ class PrepareALProcedure:
         self.z = Z_from_geometry_in()
         self.z_table = create_ztable(self.z)
         self.n_atoms = len(self.z)
+        self.freeze_threshold = False
         
         if self.seeds_tags_dict is None:
             try:
@@ -304,6 +305,7 @@ class PrepareALProcedure:
         
     def handle_al_settings(self, al_settings):
         
+        # TODO: use setattr here
         self.al = al_settings['ACTIVE_LEARNING']
         self.misc = al_settings.get('MISC', {})
         
@@ -333,6 +335,11 @@ class PrepareALProcedure:
             logging.info(f"Using molecular indices: {self.mol_idxs}")
         self.uncertainty_type = self.al.get("uncertainty_type", "max_atomic_sd")
         self.uncert_not_crossed_limit = self.al.get("uncert_not_crossed_limit", 500)
+        self.freeze_threshold_dataset = self.al.get("freeze_threshold_dataset", np.inf)
+        if RANK == 0:
+            if self.freeze_threshold_dataset != np.inf:
+                logging.info(f"Freezing threshold at dataset size of {self.freeze_threshold_dataset}")
+        
         
         self.restart = os.path.exists("restart/al/al_restart.npy")
         self.create_restart = self.misc.get("create_restart", False)
@@ -1363,11 +1370,19 @@ class ALProcedure(PrepareALProcedure):
                 self.uncertainties.append(uncertainty)
 
                 if len(self.uncertainties) > 10: #TODO: remove hardcode
-                    self.threshold = get_threshold(
-                        uncertainties=self.uncertainties,
-                        c_x = self.c_x,
-                        max_len = 400 #TODO: remove hardcode
-                    )
+                    if (
+                        self.train_dataset_len >= self.freeze_threshold_dataset
+                        ) and not self.freeze_threshold:
+                        if RANK == 0:
+                            logging.info(f'Train data has reached size {self.train_dataset_len}: freezing threshold at {self.threshold:.3f}.')
+                        self.freeze_threshold = True
+                         
+                    if not self.freeze_threshold:
+                        self.threshold = get_threshold(
+                            uncertainties=self.uncertainties,
+                            c_x = self.c_x,
+                            max_len = 400 #TODO: remove hardcode
+                        )
                     
                     if self.analysis:
                         self.collect_thresholds[

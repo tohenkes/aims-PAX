@@ -448,6 +448,7 @@ class PrepareInitialDatasetProcedure:
                         path_to_checkpoints=self.checkpoints_dir,
                         z=self.z,
                         seeds_tags_dict=self.seeds_tags_dict,
+                        dtype=self.dtype,
                     )
                 else:
                     
