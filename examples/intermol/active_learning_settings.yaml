@@ -15,7 +15,7 @@ ACTIVE_LEARNING:
   max_MD_steps: 2000
   max_set_size: 15
   valid_skip: 5
-  sanity_skip: 10
+  analysis_skip: 10
   ensemble_size: 2
   c_x: -0.1
   dataset_dir: "./data"
@@ -35,17 +35,17 @@ MD:
   timestep: 0.5
   friction: 0.001
   seed: 42
-  MODIFY:
+  #MODIFY:
   # NOT WORKING YET!!!!!
-    type: 'temp'
-    metric: 'train_size'
-    temp_step: 50
-    mod_interval: 
-      - 2
-      - 4
-      - 5
-      - 8
-      - 20
+  #  type: 'temp'
+  #  metric: 'train_size'
+  #  temp_step: 50
+  #  mod_interval: 
+  #    - 2
+  #    - 4
+  #    - 5
+  #    - 8
+  #    - 20
 
 
 

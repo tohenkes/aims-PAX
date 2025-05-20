@@ -138,6 +138,7 @@ class PrepareALProcedure:
                 mace_settings=self.mace_settings,
                 restart=self.restart,
                 checkpoints_dir=self.checkpoints_dir,
+                al_settings=self.al,
             )
 
             if not self.restart:
@@ -237,6 +238,8 @@ class PrepareALProcedure:
                 # this saves uncertainty and true errors for each trajectory
                 self.analysis_checks = {
                     trajectory: {
+                        "prediction": [],
+                        "true_forces": [],
                         "atom_wise_uncertainty": [],
                         "uncertainty_via_max": [],
                         "uncertainty_via_mean": [],
@@ -250,6 +253,8 @@ class PrepareALProcedure:
                 if self.mol_idxs is not None:
                     for trajectory in range(self.num_trajectories):
                         self.analysis_checks[trajectory].update({
+                            "mol_forces_prediction": [],
+                            "mol_forces_true": [],
                             "total_uncertainty": [],
                             "mol_forces_uncertainty": [],
                             "mol_wise_error": [],
@@ -902,6 +907,8 @@ class ALProcedure(PrepareALProcedure):
         mean_error = np.mean(np.sqrt(diff_sq_mean), axis=-1)
         atom_wise_error = np.sqrt(diff_sq_mean)
         
+        check_results['prediction'] = mean_analysis_prediction
+        check_results['true_forces'] = true_forces
         check_results['atom_wise_uncertainty'] = atom_wise_uncertainty
         check_results['uncertainty_via_max'] = uncertainty_via_max
         check_results['uncertainty_via_mean'] = uncertainty_via_mean
@@ -915,11 +922,11 @@ class ALProcedure(PrepareALProcedure):
             mol_forces_uncertainty = self.get_uncertainty.get_intermol_uncertainty(
                 analysis_prediction
             )
-            mol_forces_prediction = self.get_uncertainty.compute_mol_forces(
+            mol_forces_prediction = self.get_uncertainty.compute_mol_forces_ensemble(
                 analysis_prediction,
                 self.mol_idxs
                 ).mean(0).squeeze()
-            mol_forces_true =  self.get_uncertainty.compute_mol_forces(
+            mol_forces_true =  self.get_uncertainty.compute_mol_forces_ensemble(
                 true_forces.reshape(1, *true_forces.shape),
                 self.mol_idxs
                 ).squeeze()
@@ -930,6 +937,8 @@ class ALProcedure(PrepareALProcedure):
             mean_mol_error = np.mean(np.sqrt(mol_diff_sq_mean), axis=-1)
             mol_wise_error = np.sqrt(mol_diff_sq_mean)
             
+            check_results['mol_forces_prediction'] = mol_forces_prediction
+            check_results['mol_forces_true'] = mol_forces_true
             check_results['total_uncertainty'] = total_certainty
             check_results['mol_forces_uncertainty'] = mol_forces_uncertainty
             check_results['mol_wise_error'] = mol_wise_error
@@ -1548,6 +1557,7 @@ class ALProcedure(PrepareALProcedure):
                     restart=self.restart,
                     convergence=True,
                     checkpoints_dir=self.checkpoints_dir,
+                    al_settings=self.al,
                 )
             best_valid_loss = np.inf
             epoch = 0
@@ -2087,9 +2097,10 @@ class ALProcedureGPUParallel(ALProcedureParallel):
         self.gpu_rank = self.gpu_world_comm.Get_rank()
         self.extra_rank = self.extra_comm.Get_rank()
 
-        
-        
-        
+class ALProcedureParsl(ALProcedureParallel):
+    raise NotImplementedError(
+        "This class is not implemented yet. Please use ALProcedureParallel or ALProcedureGPUParallel."
+    )
         
         
 

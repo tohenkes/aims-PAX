@@ -1,3 +1,36 @@
+CLUSTER:
+  type: slurm
+  project_name: 'fhi_aims_dft'
+  parsl_options:
+    nodes_per_block: 1
+    init_blocks: 1
+    min_blocks: 1
+    max_blocks: 1
+    label: 'test'
+
+  slurm_str: |
+    #SBATCH --job-name=parsl_test
+    #SBATCH --partition=cpu
+    #SBATCH --nodes=1
+    #SBATCH --ntasks-per-node=128
+    #SBATCH --time=48:00:00
+    #SBATCH --account=p200716
+    #SBATCH --qos=default
+
+  worker_str: |
+    module load env/release/2023
+    source /project/home/p200243/thenkes/miniconda3/bin/activate mace
+    module load CUDA/12.2.0
+    module load intel
+    ulimit -s unlimited
+    export OMP_NUM_THREADS=1
+    export MKL_NUM_THREADS=1
+    export MKL_DYNAMIC='FALSE'
+
+  launch_str: srun -n 128 /project/home/p200243/tcp_software/fhi-aims.250320/build/aims.250320.scalapack.mpi.x >> aims.out
+  clean_dirs: False
+  calc_dir: "/home/users/u101418/al_aims/asi/FHI_AL/examples/parsl"
+
 ACTIVE_LEARNING:
   desired_acc: 0
   lambda: 20.

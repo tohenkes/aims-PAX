@@ -193,5 +193,6 @@ For now we have only one MD setting for all trajectories and the selection for s
 - [ ] fine-tuning of foundational models
 - [X] select best performing ensemble member
 - [ ] Start multiple trajectories from different starting geometries
+- [ ] Implement SO3LR (needed: (ensemble) calculator, model setup, training setup, one epoch function, update model auxiliaries)
 
 

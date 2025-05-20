@@ -1,11 +1,13 @@
 from FHI_AL.procedures.initial_dataset import (
     InitialDatasetAIMD,
     InitialDatasetFoundational,
-    InitialDatasetFoundationalParallel
+    InitialDatasetFoundationalParallel,
+    InitialDatasetPARSL
     )
 from yaml import safe_load
 from mpi4py import MPI
-
+from time import perf_counter
+from FHI_AL.tools.utilities import GPUMonitor
 
 def main():
     
@@ -26,6 +28,12 @@ def main():
                 mace_settings=mace_settings,
                 al_settings=al_settings
             )
+        elif al_settings.get('CLUSTER', False):
+            initial_ds = InitialDatasetPARSL(
+                mace_settings=mace_settings,
+                al_settings=al_settings
+            )
+            
         else:
             initial_ds = InitialDatasetFoundational(
                 mace_settings=mace_settings,
@@ -34,7 +42,15 @@ def main():
     MPI.COMM_WORLD.Barrier()
     
     if not initial_ds.check_initial_ds_done():
+        monitor = GPUMonitor(1, 'gpu_utilization.csv')
+        start_time = perf_counter()
         initial_ds.run()
+        end_time = perf_counter()
+        monitor.stop()
+        execution_time = end_time - start_time
+        if MPI.COMM_WORLD.Get_rank() == 0:
+            with open("initial_ds_execution_time.txt", "a") as file:
+                file.write(f".run() Execution Time: {execution_time:.6f} seconds\n")
     
     if al_settings['ACTIVE_LEARNING'].get("converge_initial", False):
         initial_ds.converge() 

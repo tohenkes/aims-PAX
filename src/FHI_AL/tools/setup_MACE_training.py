@@ -1,8 +1,18 @@
+import FHI_AL.tools
+import FHI_AL.tools.utilities
 import torch
 from typing import Optional
 import torch.nn.functional
 from torch_ema import ExponentialMovingAverage
 from mace import modules, tools
+from mace.tools import TensorDict
+from mace.tools.torch_geometric import Batch
+from mace.modules.loss import (
+    weighted_mean_squared_error_energy,
+    mean_squared_error_forces
+)
+import FHI_AL
+import numpy as np
 import os
 
 #############################################################################
@@ -19,7 +29,8 @@ def setup_mace_training(
     tag: str,
     restart: bool = False,
     convergence: bool = False,
-    checkpoints_dir: str = None
+    checkpoints_dir: str = None,
+    al_settings: dict = None,
 )-> dict:
     """
     Setup the MACE training according to the settings and return it.
@@ -61,6 +72,17 @@ def setup_mace_training(
             energy_weight=training_settings["energy_weight"],
             forces_weight=training_settings["forces_weight"],
             stress_weight=training_settings["stress_weight"],
+        )
+    elif training_settings["loss"].lower() == "intermol":
+        mol_idxs = al_settings.get('mol_idxs') 
+        assert mol_idxs is not None, "mol_idxs must be provided"
+        mol_idxs = np.load(mol_idxs,allow_pickle=True)['arr_0'].tolist()
+        
+        loss_fn = WeightedEnergyForceIntermolForceLoss(
+            energy_weight=training_settings["energy_weight"],
+            forces_weight=training_settings["forces_weight"],
+            intermol_forces_weight=training_settings["intermol_forces_weight"],
+            mol_idxs=mol_idxs,
         )
     else:
         loss_fn = modules.EnergyForcesLoss(
@@ -251,3 +273,113 @@ def reset_optimizer(
     
     training_setup["optimizer"] = optimizer
     return training_setup
+
+def mean_square_intermol_error(
+    ref: Batch,
+    pred: TensorDict,
+    mol_idxs: list,
+) -> torch.Tensor:
+    
+    intermol_forces_pred = compute_mol_forces(
+        forces=pred["forces"],
+        select_idxs=mol_idxs,
+    )
+    
+    intermol_forces_ref = compute_mol_forces(
+        forces=ref["forces"],
+        select_idxs=mol_idxs,
+    )
+
+    return torch.mean(
+        torch.square(
+            intermol_forces_pred - intermol_forces_ref
+        )
+    )
+    
+
+def compute_mol_forces(
+    forces,
+    select_idxs
+) -> torch.tensor:
+    """
+    Compute molecular forces by summing atomic forces for selected indices.
+    Handles both batched and non-batched inputs.
+
+    Args:
+        forces (torch.tensor): Tensor of atomic forces. Shape can be [n_atoms, 3] or [batch_size, n_atoms, 3].
+        select_idxs (list): List of indices for molecules.
+
+    Returns:
+        torch.tensor: Tensor of molecular forces. Shape is [len(select_idxs), 3] for non-batched input,
+                      or [batch_size, len(select_idxs), 3] for batched input.
+    """
+    if forces.ndim == 2:  # Non-batched case
+        mol_forces = torch.empty(
+            (len(select_idxs), 3),
+            dtype=forces.dtype,
+            device=forces.device
+        )
+        for idx, mol in enumerate(select_idxs):
+            mol_forces[idx, :] = forces[mol].sum(axis=0)
+    elif forces.ndim == 3:  # Batched case
+        batch_size = forces.shape[0]
+        mol_forces = torch.empty(
+            (batch_size, len(select_idxs), 3),
+            dtype=forces.dtype,
+            device=forces.device
+        )
+        for idx, mol in enumerate(select_idxs):
+            mol_forces[:, idx, :] = forces[:, mol, :].sum(axis=1)
+    else:
+        raise ValueError("Unexpected number of dimensions in forces tensor")
+    
+    return mol_forces
+
+class WeightedEnergyForceIntermolForceLoss(torch.nn.Module):
+    
+    def __init__(
+        self,
+        energy_weight: float = 1.0,
+        forces_weight: float = 1.0,
+        intermol_forces_weight: float = 1.0,
+        mol_idxs: list = None,
+    ):
+        super().__init__()
+        assert mol_idxs is not None, "mol_idxs must be provided"
+        self.mol_idxs = mol_idxs
+
+        self.register_buffer(
+            "energy_weight",
+            torch.tensor(energy_weight, dtype=torch.get_default_dtype()),
+        )
+        self.register_buffer(
+            "forces_weight",
+            torch.tensor(forces_weight, dtype=torch.get_default_dtype()),
+        )
+        self.register_buffer(
+            "intermol_forces_weight",
+            torch.tensor(intermol_forces_weight, dtype=torch.get_default_dtype()),
+        )
+        
+    def forward(
+        self,
+        ref: Batch,
+        pred: TensorDict
+    ) -> torch.Tensor:
+        
+        return (
+            self.energy_weight
+            * weighted_mean_squared_error_energy(ref, pred)
+            + self.forces_weight
+            * mean_squared_error_forces(ref, pred)
+            + self.intermol_forces_weight
+            * mean_square_intermol_error(ref, pred, self.mol_idxs)
+        )
+    
+    
+    def __repr__(self):
+        return (
+            f"{self.__class__.__name__}(energy_weight={self.energy_weight:.3f}, "
+            f"forces_weight={self.forces_weight:.3f}), "
+            f"intermol_forces_weight={self.intermol_forces_weight:.3f})"
+        )

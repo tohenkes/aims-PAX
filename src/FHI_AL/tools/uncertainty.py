@@ -93,15 +93,15 @@ class MolForceUncertainty(HandleUncertainty):
             )
         #[n_mols, 1]
         self.global_uncerstainty = np.array(self.global_uncerstainty).reshape(-1,1)
-        
-    def compute_mol_forces(
+
+    def compute_mol_forces_ensemble(
             self,
             ensemble_prediction: np.array,
             select_idxs
     )-> np.array:
         
         if ensemble_prediction.ndim == 4:
-            self.mol_forces = np.empty(
+            mol_forces = np.empty(
                 (
                 ensemble_prediction.shape[0],
                 ensemble_prediction.shape[1],
@@ -110,7 +110,7 @@ class MolForceUncertainty(HandleUncertainty):
                 )
             )
         elif ensemble_prediction.ndim == 3:
-            self.mol_forces = np.empty(
+            mol_forces = np.empty(
                 (
                 ensemble_prediction.shape[0],
                 len(select_idxs),
@@ -121,20 +121,19 @@ class MolForceUncertainty(HandleUncertainty):
         for idx, mol in enumerate(select_idxs):
             if ensemble_prediction.ndim == 4:
                 per_mol = ensemble_prediction[:,:,mol,:].sum(axis=-2)
-                self.mol_forces[:,:,idx,:] = per_mol
+                mol_forces[:,:,idx,:] = per_mol
             elif ensemble_prediction.ndim == 3:
                 per_mol = ensemble_prediction[:,mol,:].sum(axis=-2)
-                self.mol_forces[:,idx,:] = per_mol
+                mol_forces[:,idx,:] = per_mol
             else:
                 raise ValueError("Unexpected number of dimensions in ensemble_prediction")
-        return self.mol_forces
-               
+        return mol_forces       
     def get_intermol_uncertainty(
             self,
             ensemble_prediction: np.array
             ):
         # [n_ensemble_members, n_mols, len(select_idxs), xyz]
-        self.compute_mol_forces(ensemble_prediction, self.mol_idxs)
+        self.mol_forces = self.compute_mol_forces_ensemble(ensemble_prediction, self.mol_idxs)
         # [n_mols, len(select_idxs)] 
         self.inter_mol_uncertainty = self.ensemble_sd(
             self.mol_forces

@@ -339,8 +339,6 @@ def load_from_atoms(
     )
     return atomic_energies_dict, configs
 
-
-
 def compute_average_E0s(
     collections_train: Configurations, z_table: AtomicNumberTable
 ) -> Dict[int, float]:
@@ -371,7 +369,6 @@ def compute_average_E0s(
         for i, z in enumerate(z_table.zs):
             atomic_energies_dict[z] = 0.0
     return atomic_energies_dict
-
 
 def max_sd_2(
     ensemble_prediction: np.array, 
@@ -583,7 +580,6 @@ def ensemble_from_folder(
             ensemble[filename_without_suffix] = model
     return ensemble
 
-
 def pre_trajectories_from_folder(
         path: str,
         num_trajectories: int,
@@ -607,7 +603,6 @@ def pre_trajectories_from_folder(
         if i == num_trajectories:
             break
     return trajectories
-
 
 def evaluate_model(
     atoms_list: list,
@@ -682,7 +677,6 @@ def evaluate_model(
     else:
         return energies, forces_array
 
-
 def ensemble_prediction(
     models: list,
     atoms_list: list,
@@ -736,7 +730,6 @@ def ensemble_prediction(
     if return_energies:
         return all_energies, all_forces
     return all_forces
-
 
 def evaluate_model_v2(
     mace_ds: list,
@@ -857,7 +850,6 @@ def ensemble_prediction_v2(
 def compute_max_error(delta: np.ndarray) -> float:
     return np.max(np.abs(delta)).item()
     
-
 class MACEEval(Metric):
     def __init__(self):
         super().__init__()
@@ -1191,7 +1183,6 @@ def select_best_member(
     """
     return min(ensemble_valid_loss, key=ensemble_valid_loss.get)
     
-
 def E_uncert(
         prediction: np.array,
 ) -> float:
@@ -1236,6 +1227,7 @@ def ensemble_training_setups(
         mace_settings: dict,
         checkpoints_dir: str = None,
         restart: bool = False,
+        al_settings: dict = None,
         ) -> dict:
     training_setups = {}
     for tag, model in ensemble.items():
@@ -1245,6 +1237,7 @@ def ensemble_training_setups(
             tag=tag,
             restart=restart,
             checkpoints_dir=checkpoints_dir,
+            al_settings=al_settings
         )
     return training_setups
 
@@ -1740,7 +1733,6 @@ def list_latest_file(
     else:
         raise FileNotFoundError(f"No files found in {directory}!")
 
-
 def save_ensemble(
     ensemble: dict,
     training_setups: dict,
@@ -1760,7 +1752,6 @@ def save_ensemble(
                 )
                 / (tag + ".model"),
             )    
-
 
 class ModifyMD:
     def __init__(
@@ -2027,7 +2018,6 @@ dtype_mapping = {
     'int8': torch.int8,
     'uint8': torch.uint8,
 }
-
 
 class GPUMonitor(Thread):
     def __init__(self, delay, output_file):
