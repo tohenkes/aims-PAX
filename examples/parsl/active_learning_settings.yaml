@@ -5,7 +5,7 @@ CLUSTER:
     nodes_per_block: 1
     init_blocks: 1
     min_blocks: 1
-    max_blocks: 1
+    max_blocks: 10
     label: 'test'
 
   slurm_str: |
@@ -29,7 +29,7 @@ CLUSTER:
 
   launch_str: srun -n 128 /project/home/p200243/tcp_software/fhi-aims.250320/build/aims.250320.scalapack.mpi.x >> aims.out
   clean_dirs: False
-  calc_dir: "/home/users/u101418/al_aims/asi/FHI_AL/examples/parsl"
+  calc_dir: "/home/users/u101418/al_aims/asi/FHI_AL/examples/parsl/calcs"
 
 ACTIVE_LEARNING:
   desired_acc: 0

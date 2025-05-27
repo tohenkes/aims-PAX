@@ -32,6 +32,9 @@ try:
     import parsl
 except ImportError:
     parsl = None  # Set to None if not installed
+if parsl is not None:
+    from parsl import python_app
+from FHI_AL.tools.utilities_parsl import recalc_aims_parsl
 from FHI_AL.tools.utilities_parsl import (
     create_parsl_config,
 )
@@ -926,7 +929,6 @@ class InitialDatasetProcedure(PrepareInitialDatasetProcedure):
     def sample_and_train(self):
         if RANK == 0:
             logging.info(f"Sampling new points at step {self.step}.")
-
         self.sampled_points = []
         # in case SCF fails to converge no point is returned
         # TODO: come up with a better solution. maybe restart trajectory
@@ -1083,6 +1085,10 @@ class InitialDatasetFoundational(InitialDatasetProcedure):
             if RANK == 0:
                 current_point = self.run_MD(self.atoms, self.dyn)
                 self.sampled_points.append(current_point)
+        if RANK == 0:
+            logging.info(
+                f"Sampled {len(self.sampled_points)} points using foundational model."
+            )
         MPI.COMM_WORLD.Barrier()
         self.sampled_points = MPI.COMM_WORLD.bcast(self.sampled_points, root=0)
         MPI.COMM_WORLD.Barrier()
@@ -1448,7 +1454,6 @@ class InitialDatasetPARSL(InitialDatasetFoundational):
         self.calc_idx = 0
 
     def sample_points(self) -> list:
-
         self._md_w_foundational()
         recalculated_points = []
         if RANK == 0:
@@ -1502,8 +1507,8 @@ class InitialDatasetPARSL(InitialDatasetFoundational):
 
     def run(self):
         if RANK == 0:
-            with parsl.load(self.config):
-                super().run()
+            parsl.load(self.config)
+        super().run()
 
     def setup_calcs(
         self,
@@ -1515,32 +1520,6 @@ class InitialDatasetPARSL(InitialDatasetFoundational):
             self.atoms.calc = self.setup_foundational()
 
     def close_aims(self):
-        parsl.dfk.cleanup()
+        parsl.dfk().cleanup()
 
 
-@parsl.python_app
-def recalc_aims_parsl(
-    atoms,
-    aims_settings: dict,
-    directory: str = "./",
-    properties: list = ["energy", "forces"],
-    ase_aims_command: str = None,
-):
-    from ase.calculators.aims import Aims, AimsProfile
-    import os
-
-    print("EAT CATS WITH A SPOON")
-    # create output directory
-    if not os.path.exists(directory):
-        os.makedirs(directory)
-
-    os.environ["ASE_AIMS_COMMAND"] = ase_aims_command
-
-    calc = Aims(
-        profile=AimsProfile(command=os.environ["ASE_AIMS_COMMAND"]),
-        directory=directory,
-        **aims_settings,
-    )
-
-    calc.calculate(atoms=atoms, properties=properties, system_changes=None)
-    return calc.results

@@ -1,6 +1,7 @@
 from parsl.config import Config
 from parsl.executors import WorkQueueExecutor
 from parsl.providers import SlurmProvider
+from parsl import python_app
 import re
 import logging
 
@@ -60,3 +61,39 @@ def create_parsl_config(
         ]
     )
     return config
+
+
+@python_app
+def parsl_test_app():
+    import time
+    time.sleep(1)
+    with open("/home/users/u101418/al_aims/asi/FHI_AL/examples/parsl/parsl_test.txt", "a") as f:
+        f.write("Hello from PARSL!\n")
+    return 0
+
+@python_app
+def recalc_aims_parsl(
+    atoms,
+    aims_settings: dict,
+    directory: str = "./",
+    properties: list = ["energy", "forces"],
+    ase_aims_command: str = None,
+):
+
+    from ase.calculators.aims import Aims, AimsProfile
+    import os
+
+    # create output directory
+    if not os.path.exists(directory):
+        os.makedirs(directory)
+
+    os.environ["ASE_AIMS_COMMAND"] = ase_aims_command
+
+    calc = Aims(
+        profile=AimsProfile(command=os.environ["ASE_AIMS_COMMAND"]),
+        directory=directory,
+        **aims_settings,
+    )
+
+    calc.calculate(atoms=atoms, properties=properties, system_changes=None)
+    return calc.results
