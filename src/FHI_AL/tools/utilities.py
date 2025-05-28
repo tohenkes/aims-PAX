@@ -8,6 +8,7 @@ import numpy as np
 from typing import Optional, Sequence, Tuple, List, Dict
 from pathlib import Path
 from ase.io import write
+import threading
 from mace import data as mace_data
 from mace import tools, modules
 from mace.tools import AtomicNumberTable, torch_geometric, torch_tools, utils
@@ -2093,3 +2094,77 @@ def setup_logger(
         fh_debug.addFilter(lambda record: record.levelno >= logging.DEBUG)
         logger.addHandler(fh_debug)
     return logger
+
+
+class CommHandler:
+    def __init__(self, use_mpi=True):
+        self.use_mpi = use_mpi
+        if self.use_mpi:
+            try:
+                from mpi4py import MPI
+            except ImportError:
+                raise ImportError("mpi4py is not installed. Please install it to use MPI features.")
+            self.comm = MPI.COMM_WORLD
+            self.rank = self.comm.Get_rank()
+            self.size = self.comm.Get_size()
+        else:
+            self.rank = 0
+            self.size = 1
+
+    def barrier(self):
+        if self.use_mpi:
+            self.comm.Barrier()
+
+    def bcast(self, data, root=0):
+        if self.use_mpi:
+            return self.comm.bcast(data, root=root)
+        return data
+
+    def get_rank(self):
+        return self.rank
+
+    def get_size(self):
+        return self.size
+
+
+
+# TODO: remove, but keeping it as a reference for now
+class ReqHandler:
+    def __init__(self, source, tag):
+        self.source = source
+        self.tag = tag
+        self.received_data = None
+        self.req = None
+        self.thread = None
+        self.lock = threading.Lock()
+        self.stop_flag = (
+            threading.Event()
+        )  # Event to signal thread termination
+
+    def start_wait_thread(self):
+        if self.thread is None or not self.thread.is_alive():
+            logging.info("Starting wait thread.")
+            self.req = WORLD_COMM.irecv(source=self.source, tag=self.tag)
+            self.stop_flag.clear()  # Reset the stop flag
+            self.thread = threading.Thread(target=self._wait_and_store)
+            self.thread.start()
+
+    def _wait_and_store(self):
+        data = None
+        while not self.stop_flag.is_set():
+            s, data = self.req.test()
+            if s:
+                with self.lock:
+                    self.received_data = data
+                break  # Exit loop once data is received
+
+    def get_received_data(self):
+        with self.lock:
+            data = self.received_data
+            self.received_data = None
+        return data
+
+    def stop_thread(self):
+        if self.thread and self.thread.is_alive():
+            self.stop_flag.set()  # Signal the thread to stop
+            self.thread.join()  # Wait for the thread to terminate

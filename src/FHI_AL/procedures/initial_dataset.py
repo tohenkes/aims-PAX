@@ -24,16 +24,11 @@ from FHI_AL.tools.utilities import (
     create_ztable,
     save_ensemble,
     setup_logger,
+    CommHandler,
     AIMSControlParser,
     dtype_mapping,
 )
-
-try:
-    import parsl
-except ImportError:
-    parsl = None  # Set to None if not installed
-if parsl is not None:
-    from parsl import python_app
+import parsl
 from FHI_AL.tools.utilities_parsl import recalc_aims_parsl
 from FHI_AL.tools.utilities_parsl import (
     create_parsl_config,
@@ -43,7 +38,6 @@ import ase
 from ase.io import read
 import logging
 import random
-from mpi4py import MPI
 from asi4py.asecalc import ASI_ASE_calculator
 from ase.md.velocitydistribution import MaxwellBoltzmannDistribution
 from ase.md.langevin import Langevin
@@ -51,55 +45,8 @@ from ase.md.nptberendsen import NPTBerendsen
 from ase.md.npt import NPT
 from ase import units
 from contextlib import nullcontext
-import threading
-
-
-WORLD_COMM = MPI.COMM_WORLD
-WORLD_SIZE = WORLD_COMM.Get_size()
-RANK = WORLD_COMM.Get_rank()
-
-
-# TODO: remove, but keeping it as a reference for now
-class ReqHandler:
-    def __init__(self, source, tag):
-        self.source = source
-        self.tag = tag
-        self.received_data = None
-        self.req = None
-        self.thread = None
-        self.lock = threading.Lock()
-        self.stop_flag = (
-            threading.Event()
-        )  # Event to signal thread termination
-
-    def start_wait_thread(self):
-        if self.thread is None or not self.thread.is_alive():
-            logging.info("Starting wait thread.")
-            self.req = MPI.COMM_WORLD.irecv(source=self.source, tag=self.tag)
-            self.stop_flag.clear()  # Reset the stop flag
-            self.thread = threading.Thread(target=self._wait_and_store)
-            self.thread.start()
-
-    def _wait_and_store(self):
-        data = None
-        while not self.stop_flag.is_set():
-            s, data = self.req.test()
-            if s:
-                with self.lock:
-                    self.received_data = data
-                break  # Exit loop once data is received
-
-    def get_received_data(self):
-        with self.lock:
-            data = self.received_data
-            self.received_data = None
-        return data
-
-    def stop_thread(self):
-        if self.thread and self.thread.is_alive():
-            self.stop_flag.set()  # Signal the thread to stop
-            self.thread.join()  # Wait for the thread to terminate
-
+import sys
+sys.stdout.flush()
 
 class PrepareInitialDatasetProcedure:
     """
@@ -114,6 +61,7 @@ class PrepareInitialDatasetProcedure:
         al_settings: dict,
         path_to_control: str = "./control.in",
         path_to_geometry: str = "./geometry.in",
+        use_mpi: bool = True,
     ) -> None:
         """
         Args:
@@ -127,6 +75,12 @@ class PrepareInitialDatasetProcedure:
             ensemble_seeds (np.array, optional): Seeds for the individual ensemble members. Defaults to None.
         """
 
+        self.comm_handler = CommHandler(
+            use_mpi=use_mpi
+        )
+        self.rank = self.comm_handler.get_rank()
+        self.world_size = self.comm_handler.get_size()
+        
         # basic logger is being set up here
         logger_level = (
             logging.DEBUG
@@ -145,9 +99,9 @@ class PrepareInitialDatasetProcedure:
             tag="initial_dataset",
             directory=mace_settings["GENERAL"]["log_dir"],
         )
-        if RANK == 0:
+        if self.rank == 0:
             logging.info("Initializing initial dataset procedure.")
-            logging.info(f"Procedure runs on {WORLD_SIZE} workers.")
+            logging.info(f"Procedure runs on {self.world_size} workers.")
 
         self.control_parser = AIMSControlParser()
         self.handle_mace_settings(mace_settings)
@@ -156,7 +110,7 @@ class PrepareInitialDatasetProcedure:
         self.create_folders()
 
         if self.restart:
-            if RANK == 0:
+            if self.rank == 0:
                 logging.info(
                     "Restarting initial dataset acquisition from checkpoint."
                 )
@@ -192,7 +146,7 @@ class PrepareInitialDatasetProcedure:
         # the ensemble dictionary contains the models and their tags as values and keys
         # the seeds_tags_dict connects the seeds to the tags of each ensemble member
         # the training_setups dictionary contains the training setups for each ensemble member
-        if RANK == 0:
+        if self.rank == 0:
             self.ensemble = setup_ensemble_dicts(
                 seeds_tags_dict=self.seeds_tags_dict,
                 mace_settings=self.mace_settings,
@@ -214,14 +168,14 @@ class PrepareInitialDatasetProcedure:
                     + 1
                 )
 
-        MPI.COMM_WORLD.Barrier()
-        self.epoch = MPI.COMM_WORLD.bcast(self.epoch, root=0)
-        MPI.COMM_WORLD.Barrier()
+        self.comm_handler.barrier()
+        self.epoch = self.comm_handler.bcast(self.epoch, root=0)
+        self.comm_handler.barrier()
 
         # each ensemble member has their own initial dataset.
         # we create a ASE and MACE dataset because it makes the conversion and
         # saving easier
-        if RANK == 0:
+        if self.rank == 0:
             if self.restart:
                 self.ensemble_ase_sets = load_ensemble_sets_from_folder(
                     ensemble=self.ensemble,
@@ -392,7 +346,7 @@ class PrepareInitialDatasetProcedure:
             calc.write_inputfiles(asi.atoms, properties=self.properties)
 
         calc = ASI_ASE_calculator(
-            self.ASI_path, init_via_ase, MPI.COMM_WORLD, atoms
+            self.ASI_path, init_via_ase, self.comm_handler.comm, atoms
         )
         return calc
 
@@ -484,7 +438,7 @@ class PrepareInitialDatasetProcedure:
         self.ensemble_atomic_energies = None
         self.ensemble_atomic_energies_dict = None
         self.update_atomic_energies = False
-        if RANK == 0:
+        if self.rank == 0:
             if self.atomic_energies_dict is None:
                 if self.restart:
 
@@ -549,7 +503,7 @@ class PrepareInitialDatasetProcedure:
         if self.create_restart:
             check = self.init_ds_restart_dict.get("initial_ds_done", False)
             if check:
-                if RANK == 0:
+                if self.rank == 0:
                     logging.info(
                         "Initial dataset generation is already done. Closing"
                     )
@@ -587,7 +541,7 @@ class PrepareInitialDatasetProcedure:
         """
         Function to converge the ensemble on the acquired initial dataset.
         """
-        if RANK == 0:
+        if self.rank == 0:
             logging.info("Converging.")
             for _, (tag, model) in enumerate(self.ensemble.items()):
 
@@ -763,7 +717,7 @@ class InitialDatasetProcedure(PrepareInitialDatasetProcedure):
         raise NotImplementedError
 
     def train(self):
-        if RANK == 0:
+        if self.rank == 0:
             random.shuffle(self.sampled_points)
             # each ensemble member collects their respective points
             for number, (tag, model) in enumerate(self.ensemble.items()):
@@ -927,7 +881,7 @@ class InitialDatasetProcedure(PrepareInitialDatasetProcedure):
                 return True
 
     def sample_and_train(self):
-        if RANK == 0:
+        if self.rank == 0:
             logging.info(f"Sampling new points at step {self.step}.")
         self.sampled_points = []
         # in case SCF fails to converge no point is returned
@@ -937,6 +891,7 @@ class InitialDatasetProcedure(PrepareInitialDatasetProcedure):
 
         self.step += 1
         self.train()
+        
 
     def setup_calcs(self):
         """
@@ -988,14 +943,14 @@ class InitialDatasetProcedure(PrepareInitialDatasetProcedure):
             # only one worker is doing the training right now,
             # so we have to broadcast the criterion so they
             # don't get stuck in the while loop
-            MPI.COMM_WORLD.Barrier()
-            self.current_valid = MPI.COMM_WORLD.bcast(
+            self.comm_handler.barrier()
+            self.current_valid = self.comm_handler.bcast(
                 self.current_valid, root=0
             )
-            self.epoch = MPI.COMM_WORLD.bcast(self.epoch, root=0)
-            MPI.COMM_WORLD.Barrier()
+            self.epoch = self.comm_handler.bcast(self.epoch, root=0)
+            self.comm_handler.barrier()
 
-        if RANK == 0:
+        if self.rank == 0:
 
             save_ensemble(
                 ensemble=self.ensemble,
@@ -1073,25 +1028,26 @@ class InitialDatasetFoundational(InitialDatasetProcedure):
                 ]
             return current_point
         else:
-            if RANK == 0:
+            if self.rank == 0:
                 logging.info("SCF not converged.")
             return None
 
     def _md_w_foundational(
         self,
     ):
+        self.comm_handler.barrier()
         self.sampled_points = []
-        for _ in range(self.ensemble_size * self.n_samples):
-            if RANK == 0:
+        if self.rank == 0:
+            for _ in range(self.ensemble_size * self.n_samples):
                 current_point = self.run_MD(self.atoms, self.dyn)
                 self.sampled_points.append(current_point)
-        if RANK == 0:
             logging.info(
                 f"Sampled {len(self.sampled_points)} points using foundational model."
             )
-        MPI.COMM_WORLD.Barrier()
-        self.sampled_points = MPI.COMM_WORLD.bcast(self.sampled_points, root=0)
-        MPI.COMM_WORLD.Barrier()
+        self.comm_handler.barrier()
+        self.sampled_points = self.comm_handler.bcast(self.sampled_points, root=0)
+        self.comm_handler.barrier()
+        
 
     def sample_points(self) -> list:
         """
@@ -1102,7 +1058,7 @@ class InitialDatasetFoundational(InitialDatasetProcedure):
             list: List of ASE Atoms objects.
         """
         self._md_w_foundational()
-        if RANK == 0:
+        if self.rank == 0:
             logging.info("Recalculating energies and forces with DFT.")
         recalculated_points = []
         for atoms in self.sampled_points:
@@ -1118,7 +1074,7 @@ class InitialDatasetFoundational(InitialDatasetProcedure):
         the energies and forces and the foundational model for MD.
         """
         self.aims_calc = self.setup_aims_calculator(self.atoms)
-        if RANK == 0:
+        if self.rank == 0:
             logging.info(
                 f"Initial dataset generation with foundational model of size: {self.initial_foundational_size}."
             )
@@ -1150,12 +1106,12 @@ class InitialDatasetFoundationalParallel(InitialDatasetFoundational):
         )
 
         # one for ML and one for DFT
-        if RANK == 0:
+        if self.rank == 0:
             self.color = 0
         else:
             self.color = 1
 
-        self.comm = MPI.COMM_WORLD.Split(color=self.color, key=RANK)
+        self.comm = self.comm_handler.comm.Split(color=self.color, key=self.rank)
 
     def close_aims(self):
         # this is just to overwrite the function in the parent class
@@ -1225,7 +1181,7 @@ class InitialDatasetFoundationalParallel(InitialDatasetFoundational):
         criterion_met = False
         self.atoms_dummy = self.atoms.copy()
 
-        if RANK == 0:
+        if self.rank == 0:
             logging.info("Starting sampling and training using parallel mode.")
         while not criterion_met:
             if self.color == 0:
@@ -1233,7 +1189,7 @@ class InitialDatasetFoundationalParallel(InitialDatasetFoundational):
                 # TODO: also send cell and pbc
                 geometry = current_point.get_positions()
                 # using isend to create a queue of messages
-                sample_send = MPI.COMM_WORLD.Isend(geometry, dest=1, tag=96)
+                sample_send = self.comm_handler.comm.Isend(geometry, dest=1, tag=96)
                 sample_send.Wait()
 
                 # checking if training data recieved
@@ -1263,13 +1219,13 @@ class InitialDatasetFoundationalParallel(InitialDatasetFoundational):
                             dtype=float,
                         ),
                     )
-                    self.req_geometries = MPI.COMM_WORLD.Irecv(
+                    self.req_geometries = self.comm_handler.comm.Irecv(
                         buf=buf_geometries, source=1, tag=2210
                     )
-                    self.req_energies = MPI.COMM_WORLD.Irecv(
+                    self.req_energies = self.comm_handler.comm.Irecv(
                         buf=buf_energies, source=1, tag=2211
                     )
-                    self.req_forces = MPI.COMM_WORLD.Irecv(
+                    self.req_forces = self.comm_handler.comm.Irecv(
                         buf=buf_forces, source=1, tag=2212
                     )
 
@@ -1304,8 +1260,8 @@ class InitialDatasetFoundationalParallel(InitialDatasetFoundational):
                             or self.epoch >= self.max_initial_epochs
                         )
                         if criterion_met:
-                            for dest in range(1, MPI.COMM_WORLD.Get_size()):
-                                self.criterion_send = MPI.COMM_WORLD.isend(
+                            for dest in range(1, self.comm_handler.comm.Get_size()):
+                                self.criterion_send = self.comm_handler.comm.isend(
                                     None, dest=dest, tag=2305
                                 )
                                 self.criterion_send.Wait()
@@ -1322,7 +1278,7 @@ class InitialDatasetFoundationalParallel(InitialDatasetFoundational):
                 current_geometry = None
                 # recieving the criterion
                 if self.criterion_req is None:
-                    self.criterion_req = MPI.COMM_WORLD.irecv(
+                    self.criterion_req = self.comm_handler.comm.irecv(
                         source=0, tag=2305
                     )
                 criterion_met = self.criterion_req.Test()
@@ -1330,12 +1286,12 @@ class InitialDatasetFoundationalParallel(InitialDatasetFoundational):
                     break
 
                 # recieving sampled point to recompute
-                if RANK == 1:
+                if self.rank == 1:
                     if self.req is None:
                         buffer = np.zeros(
                             self.atoms_dummy.get_positions().shape, dtype=float
                         )
-                        self.req = MPI.COMM_WORLD.Irecv(
+                        self.req = self.comm_handler.comm.Irecv(
                             buf=buffer, source=0, tag=96
                         )
                     self.req.wait()  # blocking recieve
@@ -1350,7 +1306,7 @@ class InitialDatasetFoundationalParallel(InitialDatasetFoundational):
                 current_point.set_positions(current_geometry)
 
                 dft_result = self.recalc_aims(current_point)
-                if RANK == 1:
+                if self.rank == 1:
                     energies, forces = (
                         dft_result.info["REF_energy"],
                         dft_result.arrays["REF_forces"],
@@ -1373,17 +1329,17 @@ class InitialDatasetFoundationalParallel(InitialDatasetFoundational):
                         )
 
                         # TODO: create loop or package data in one
-                        self.req_send = MPI.COMM_WORLD.Isend(
+                        self.req_send = self.comm_handler.comm.Isend(
                             np.array(temp_sampled_geometries), dest=0, tag=2210
                         )
                         self.req_send.Wait()
 
-                        self.req_send = MPI.COMM_WORLD.Isend(
+                        self.req_send = self.comm_handler.comm.Isend(
                             np.array(temp_sampled_energies), dest=0, tag=2211
                         )
                         self.req_send.Wait()
 
-                        self.req_send = MPI.COMM_WORLD.Isend(
+                        self.req_send = self.comm_handler.comm.Isend(
                             np.array(temp_sampled_forces), dest=0, tag=2212
                         )
                         self.req_send.Wait()
@@ -1392,10 +1348,10 @@ class InitialDatasetFoundationalParallel(InitialDatasetFoundational):
                         temp_sampled_energies = []
                         temp_sampled_forces = []
 
-        MPI.COMM_WORLD.Barrier()
-        self.current_valid = MPI.COMM_WORLD.bcast(self.current_valid, root=0)
-        self.epoch = MPI.COMM_WORLD.bcast(self.epoch, root=0)
-        MPI.COMM_WORLD.Barrier()
+        self.comm_handler.barrier()
+        self.current_valid = self.comm_handler.bcast(self.current_valid, root=0)
+        self.epoch = self.comm_handler.bcast(self.epoch, root=0)
+        self.comm_handler.barrier()
 
         if self.color == 1:
             self.aims_calc.close()
@@ -1416,6 +1372,7 @@ class InitialDatasetPARSL(InitialDatasetFoundational):
             al_settings=al_settings,
             path_to_control=path_to_control,
             path_to_geometry=path_to_geometry,
+            use_mpi=False
         )
 
         if parsl is None:
@@ -1423,12 +1380,12 @@ class InitialDatasetPARSL(InitialDatasetFoundational):
                 "Parsl is not installed. Please install parsl to use this feature."
             )
 
-        if RANK == 0:
+        if self.rank == 0:
             logging.info(f"Setting up PARSL for initial dataset generation.")
             self._prepare_parsl()
             # parsl.load(self.config)
 
-        WORLD_COMM.barrier()
+        self.comm_handler.barrier()
 
     def _prepare_parsl(self):
         assert self.cluster_settings is not None, (
@@ -1456,11 +1413,8 @@ class InitialDatasetPARSL(InitialDatasetFoundational):
     def sample_points(self) -> list:
         self._md_w_foundational()
         recalculated_points = []
-        if RANK == 0:
+        if self.rank == 0:
             logging.info(f"Recalculating energies and forces with DFT.")
-            logging.info(
-                f"current dir: {self.calc_dir / f'calc_{self.calc_idx}'}"
-            )
             job_results = {}
             for i, atoms in enumerate(self.sampled_points):
                 self.calc_idx += 1
@@ -1494,26 +1448,35 @@ class InitialDatasetPARSL(InitialDatasetFoundational):
                 time.sleep(0.5)
 
             if self.clean_dirs:
-                for i in range(len(self.sampled_points)):
-                    try:
-                        shutil.rmtree(self.calc_dir / f"calc_{i}")
-                    except OSError as e:
-                        if RANK == 0:
-                            logging.info(
-                                f"Error: {e.strerror} - {self.calc_dir / f'calc_{i}'}"
-                            )
-
+                try:
+                    for calc_dir in self.calc_dir.glob("calc_*"):
+                        shutil.rmtree(calc_dir)
+                except Exception as e:
+                    logging.error(
+                        f"Error while cleaning directories: {e}. "
+                        "Please check the directories manually."
+                    )
+        
         return recalculated_points
 
     def run(self):
-        if RANK == 0:
+        if self.rank == 0:
             parsl.load(self.config)
         super().run()
+        if self.rank == 0:
+            if self.clean_dirs:
+                try:
+                    shutil.rmtree(self.calc_dir)
+                except Exception as e:
+                    logging.error(
+                        f"Error while cleaning directories: {e}. "
+                        "Please check the directories manually."
+                    )
 
     def setup_calcs(
         self,
     ) -> None:
-        if RANK == 0:
+        if self.rank == 0:
             logging.info(
                 f"Initial dataset generation with foundational model of size: {self.initial_foundational_size}."
             )
