@@ -21,19 +21,12 @@ def main():
             mace_settings=mace_settings,
             al_settings=al_settings
         )
-        
-    MPI.COMM_WORLD.Barrier()
 
     if not al.check_al_done():
-        monitor = GPUMonitor(1, 'gpu_utilization_AL.csv')
         start_time = perf_counter()
         al.run()
         end_time = perf_counter()
-        monitor.stop()
-        execution_time = end_time - start_time
-        if MPI.COMM_WORLD.Get_rank() == 0:
-            with open("AL_execution_time.txt", "a") as file:
-                file.write(f".run() Execution Time: {execution_time:.6f} seconds\n")
+
     
     if al_settings['ACTIVE_LEARNING'].get("converge_al", False):
         al.converge()

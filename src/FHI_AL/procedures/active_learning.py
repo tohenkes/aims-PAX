@@ -34,6 +34,7 @@ from FHI_AL.tools.utilities import (
     get_atomic_energies_from_pt,
     select_best_member,
     atoms_full_copy,
+    CommHandler,
     dtype_mapping,
     AIMSControlParser,
     ModifyMD
@@ -46,7 +47,6 @@ from FHI_AL.tools.train_epoch_mace import train_epoch, validate_epoch_ensemble
 import ase
 from ase.io import read, write
 import logging
-from mpi4py import MPI
 from asi4py.asecalc import ASI_ASE_calculator
 from ase.md.velocitydistribution import MaxwellBoltzmannDistribution
 from ase.md.langevin import Langevin
@@ -55,9 +55,6 @@ from ase.md.npt import NPT
 from ase import units
 from contextlib import nullcontext
 
-WORLD_COMM = MPI.COMM_WORLD
-WORLD_SIZE = WORLD_COMM.Get_size()
-RANK = WORLD_COMM.Get_rank()
 
 
 
@@ -73,9 +70,20 @@ class PrepareALProcedure:
         al_settings,
         path_to_control: str = "./control.in",
         path_to_geometry: str = "./geometry.in",
-        comm: MPI.Comm = MPI.COMM_WORLD
+        use_mpi: bool = True,
+        comm_handler: CommHandler = None
     ) -> None:
-        self.comm = comm
+        
+        if comm_handler is not None:
+            self.comm_handler = comm_handler
+        else:
+            self.comm_handler = CommHandler(
+                use_mpi=use_mpi,
+            )
+            self.rank = self.comm_handler.get_rank()
+            self.world_size = self.comm_handler.get_size()
+        
+        
         # basic logger is being set up here
         logger_level = logging.DEBUG if mace_settings["MISC"]["log_level"].lower() == "debug" else logging.INFO 
         
@@ -86,9 +94,9 @@ class PrepareALProcedure:
         )
         
  
-        if RANK == 0:
+        if self.rank == 0:
             logging.info("Initializing active learning procedure.")
-            logging.info(f"Procedure runs on {WORLD_SIZE} workers.")
+            logging.info(f"Procedure runs on {self.world_size} workers.")
 
         self.control_parser = AIMSControlParser()
         self.md_settings = al_settings["MD"]
@@ -126,7 +134,7 @@ class PrepareALProcedure:
         self.use_scheduler = False
         
         
-        if RANK == 0:
+        if self.rank == 0:
             self.ensemble = ensemble_from_folder(
                 path_to_models=self.model_dir,
                 device=self.device,
@@ -164,11 +172,11 @@ class PrepareALProcedure:
                         "train"
                     ]
                 )
-        if RANK != 0:
+        if self.rank != 0:
             self.train_dataset_len = None
-        MPI.COMM_WORLD.Barrier()
-        self.train_dataset_len = MPI.COMM_WORLD.bcast(self.train_dataset_len, root=0)
-        MPI.COMM_WORLD.Barrier()
+        self.comm_handler.comm.Barrier()
+        self.train_dataset_len = self.comm_handler.comm.bcast(self.train_dataset_len, root=0)
+        self.comm_handler.comm.Barrier()
         
         self.handle_atomic_energies()
         # this initializes the FHI aims process
@@ -273,7 +281,7 @@ class PrepareALProcedure:
                     trajectory: [] for trajectory in range(self.num_trajectories)
                 }
 
-        if RANK == 0:
+        if self.rank == 0:
             self.setup_mace_calc()
             for trajectory in self.trajectories.values():
                 trajectory.calc = self.mace_calc
@@ -336,12 +344,12 @@ class PrepareALProcedure:
         self.margin = self.al.get("margin", 0.001)
         self.converge_best = self.al.get("converge_best", True)
         self.mol_idxs = np.load(self.al['mol_idxs'],allow_pickle=True)['arr_0'].tolist() if self.al.get("mol_idxs", None) is not None else None
-        if RANK == 0:
+        if self.rank == 0:
             logging.info(f"Using molecular indices: {self.mol_idxs}")
         self.uncertainty_type = self.al.get("uncertainty_type", "max_atomic_sd")
         self.uncert_not_crossed_limit = self.al.get("uncert_not_crossed_limit", 500)
         self.freeze_threshold_dataset = self.al.get("freeze_threshold_dataset", np.inf)
-        if RANK == 0:
+        if self.rank == 0:
             if self.freeze_threshold_dataset != np.inf:
                 logging.info(f"Freezing threshold at dataset size of {self.freeze_threshold_dataset}")
         
@@ -406,14 +414,14 @@ class PrepareALProcedure:
         self.aims_settings = self.control_parser(path_to_control)
         self.aims_settings['compute_forces'] = True
         self.aims_settings['species_dir'] = self.species_dir
-        self.aims_settings['postprocess_anyway'] = True # this is necesssary to check for convergence
+        self.aims_settings['postprocess_anyway'] = True # this is necesssary to check for convergence with ASI
         
     def handle_atomic_energies(
             self,
         ):
             self.update_atomic_energies = False
             
-            if RANK==0:
+            if self.rank==0:
                 if self.atomic_energies_dict is None:
                     if self.restart:
                         logging.info("Loading atomic energies from checkpoint.")
@@ -482,7 +490,7 @@ class PrepareALProcedure:
             for attr in analysis_attributes:
                 setattr(self, attr, None)
 
-        if RANK == 0:
+        if self.rank == 0:
             logging.info("Restarting active learning procedure from checkpoint.")
             self.al_restart_dict = np.load(
                 "restart/al/al_restart.npy",
@@ -517,34 +525,34 @@ class PrepareALProcedure:
                 if self.mol_idxs is not None:
                     self.uncertainty_checks = []
 
-        MPI.COMM_WORLD.Barrier()
-        self.trajectory_status = MPI.COMM_WORLD.bcast(self.trajectory_status, root=0)
-        self.trajectory_MD_steps = MPI.COMM_WORLD.bcast(self.trajectory_MD_steps, root=0)
-        self.trajectory_total_epochs = MPI.COMM_WORLD.bcast(self.trajectory_total_epochs, root=0)
-        self.current_valid_error = MPI.COMM_WORLD.bcast(self.current_valid_error, root=0)
-        self.total_points_added = MPI.COMM_WORLD.bcast(self.total_points_added, root=0)
-        self.train_points_added = MPI.COMM_WORLD.bcast(self.train_points_added, root=0)
-        self.valid_points_added = MPI.COMM_WORLD.bcast(self.valid_points_added, root=0)
-        self.num_MD_limits_reached = MPI.COMM_WORLD.bcast(self.num_MD_limits_reached, root=0)
-        self.num_workers_training = MPI.COMM_WORLD.bcast(self.num_workers_training, root=0)
-        self.num_workers_waiting = MPI.COMM_WORLD.bcast(self.num_workers_waiting, root=0)
-        self.total_epoch = MPI.COMM_WORLD.bcast(self.total_epoch, root=0)
-        self.check = MPI.COMM_WORLD.bcast(self.check, root=0)
-        self.uncertainties = MPI.COMM_WORLD.bcast(self.uncertainties, root=0)
-        self.converge_best = MPI.COMM_WORLD.bcast(self.converge_best, root=0)
-        self.uncert_not_crossed = MPI.COMM_WORLD.bcast(self.uncert_not_crossed, root=0)
+        self.comm_handler.comm.Barrier()
+        self.trajectory_status = self.comm_handler.comm.bcast(self.trajectory_status, root=0)
+        self.trajectory_MD_steps = self.comm_handler.comm.bcast(self.trajectory_MD_steps, root=0)
+        self.trajectory_total_epochs = self.comm_handler.comm.bcast(self.trajectory_total_epochs, root=0)
+        self.current_valid_error = self.comm_handler.comm.bcast(self.current_valid_error, root=0)
+        self.total_points_added = self.comm_handler.comm.bcast(self.total_points_added, root=0)
+        self.train_points_added = self.comm_handler.comm.bcast(self.train_points_added, root=0)
+        self.valid_points_added = self.comm_handler.comm.bcast(self.valid_points_added, root=0)
+        self.num_MD_limits_reached = self.comm_handler.comm.bcast(self.num_MD_limits_reached, root=0)
+        self.num_workers_training = self.comm_handler.comm.bcast(self.num_workers_training, root=0)
+        self.num_workers_waiting = self.comm_handler.comm.bcast(self.num_workers_waiting, root=0)
+        self.total_epoch = self.comm_handler.comm.bcast(self.total_epoch, root=0)
+        self.check = self.comm_handler.comm.bcast(self.check, root=0)
+        self.uncertainties = self.comm_handler.comm.bcast(self.uncertainties, root=0)
+        self.converge_best = self.comm_handler.comm.bcast(self.converge_best, root=0)
+        self.uncert_not_crossed = self.comm_handler.comm.bcast(self.uncert_not_crossed, root=0)
         
         if self.md_settings['stat_ensemble'].lower() in ['nvt','npt']:
-            self.current_temperatures = MPI.COMM_WORLD.bcast(self.current_temperatures, root=0)
+            self.current_temperatures = self.comm_handler.comm.bcast(self.current_temperatures, root=0)
             
         if self.analysis:
-            self.t_intervals = MPI.COMM_WORLD.bcast(self.t_intervals, root=0)
-            self.analysis_checks = MPI.COMM_WORLD.bcast(self.analysis_checks, root=0)
-            self.collect_losses = MPI.COMM_WORLD.bcast(self.collect_losses, root=0)
-            self.collect_thresholds = MPI.COMM_WORLD.bcast(self.collect_thresholds, root=0)
+            self.t_intervals = self.comm_handler.comm.bcast(self.t_intervals, root=0)
+            self.analysis_checks = self.comm_handler.comm.bcast(self.analysis_checks, root=0)
+            self.collect_losses = self.comm_handler.comm.bcast(self.collect_losses, root=0)
+            self.collect_thresholds = self.comm_handler.comm.bcast(self.collect_thresholds, root=0)
             if self.mol_idxs is not None:
-                self.uncertainty_checks = MPI.COMM_WORLD.bcast(self.uncertainty_checks, root=0)
-        MPI.COMM_WORLD.Barrier()
+                self.uncertainty_checks = self.comm_handler.comm.bcast(self.uncertainty_checks, root=0)
+        self.comm_handler.comm.Barrier()
 
     def update_al_restart_dict(self, save_restart: str = None):
         self.al_restart_dict.update({
@@ -642,7 +650,7 @@ class PrepareALProcedure:
         calc = ASI_ASE_calculator(
             self.ASI_path,
             init_via_ase,
-            MPI.COMM_WORLD,
+            self.comm_handler.comm,
             atoms
             )
         return calc
@@ -659,7 +667,7 @@ class PrepareALProcedure:
                 current_point.arrays["REF_stress"] = self.aims_calculator.results["stress"]
             return current_point
         else:
-            if RANK == 0:
+            if self.rank == 0:
                 logging.info("SCF not converged.")
             return None
 
@@ -787,7 +795,7 @@ class PrepareALProcedure:
         if self.create_restart:
             check = self.al_restart_dict.get("al_done", False)
             if check:
-                if RANK == 0:
+                if self.rank == 0:
                     logging.info('Active learning procedure is already done. Closing')
             return check
         else:
@@ -800,22 +808,6 @@ class ALProcedure(PrepareALProcedure):
     of the datasets.
     """
 
-    def __init__(
-        self,
-        mace_settings,
-        al_settings,
-        path_to_control: str = "./control.in",
-        path_to_geometry: str = "./geometry.in",
-        comm: MPI.Comm = MPI.COMM_WORLD
-    ) -> None:
-        super().__init__(
-            mace_settings,
-            al_settings,
-            path_to_control=path_to_control,
-            path_to_geometry=path_to_geometry,
-            comm=comm
-        )   
-    
     def _al_loop(self):
         while True: 
             for trajectory_idx in range(self.num_trajectories):
@@ -841,24 +833,24 @@ class ALProcedure(PrepareALProcedure):
                 if (
                     self.num_workers_training == self.num_trajectories
                 ):  
-                    if RANK == 0:
+                    if self.rank == 0:
                         logging.info(
                             "All workers are in training mode."
                         )  
                 
                 if self.num_workers_waiting == self.num_trajectories:
-                    if RANK == 0:
+                    if self.rank == 0:
                         logging.info("All workers are waiting for jobs to finish.")
             
             if self.num_MD_limits_reached == self.num_trajectories:
-                if RANK == 0:
+                if self.rank == 0:
                     logging.info(
                         "All trajectories reached maximum MD steps."
                     )
                 break
             
             if self.train_dataset_len >= self.max_set_size:
-                if RANK == 0:
+                if self.rank == 0:
                     logging.info(
                         "Maximum size of training set reached."
                     )
@@ -866,7 +858,7 @@ class ALProcedure(PrepareALProcedure):
             
             
             if self.current_valid_error < self.desired_accuracy:
-                if RANK == 0:
+                if self.rank == 0:
                     logging.info(
                         "Desired accuracy reached."
                     )
@@ -968,13 +960,13 @@ class ALProcedure(PrepareALProcedure):
         if self.valid_points_added < self.valid_ratio * self.total_points_added:
             self.trajectory_status[idx] = "running"
             self.num_workers_waiting -= 1
-            if RANK == 0:
+            if self.rank == 0:
                 logging.info(
                     f"Trajectory worker {idx} is adding a point to the validation set."
                 )
             # while the initial datasets are different for each ensemble member we add the new points to
             # all ensemble member datasets
-            if RANK == 0:
+            if self.rank == 0:
                 for tag in self.ensemble_ase_sets.keys():
                     self.ensemble_ase_sets[tag]["valid"] += [self.point]
                     self.ensemble_mace_sets[tag]["valid"] += self.mace_point
@@ -984,7 +976,7 @@ class ALProcedure(PrepareALProcedure):
             self.trajectory_status[idx] = "training"
             self.num_workers_training += 1
             self.num_workers_waiting -= 1
-            if RANK == 0:
+            if self.rank == 0:
                 logging.info(
                     f"Trajectory worker {idx} is adding a point to the training set."
                 )
@@ -995,13 +987,13 @@ class ALProcedure(PrepareALProcedure):
                     self.ensemble_mace_sets[tag]["train"] += self.mace_point
                 self.train_dataset_len = len(self.ensemble_ase_sets[tag]["train"])
             
-            MPI.COMM_WORLD.Barrier()
-            self.train_dataset_len = MPI.COMM_WORLD.bcast(self.train_dataset_len, root=0)
-            MPI.COMM_WORLD.Barrier()
+            self.comm_handler.comm.Barrier()
+            self.train_dataset_len = self.comm_handler.comm.bcast(self.train_dataset_len, root=0)
+            self.comm_handler.comm.Barrier()
             
             if self.train_dataset_len > self.max_set_size:
                 return True
-            if RANK == 0:
+            if self.rank == 0:
                 logging.info(
                     f"Size of the training and validation set: {self.train_dataset_len}, {len(self.ensemble_ase_sets[tag]['valid'])}."
                 )
@@ -1164,7 +1156,7 @@ class ALProcedure(PrepareALProcedure):
         Args:
             idx (int): Index of the trajectory worker.
         """
-        if RANK == 0:
+        if self.rank == 0:
 
             self.ensemble_mace_sets = self._prepare_training(
                 mace_sets=self.ensemble_mace_sets
@@ -1178,23 +1170,23 @@ class ALProcedure(PrepareALProcedure):
             self._perform_training(idx)
                     
         # update calculators with the new models
-        MPI.COMM_WORLD.Barrier()
-        self.current_valid_error = MPI.COMM_WORLD.bcast(self.current_valid_error, root=0)
-        MPI.COMM_WORLD.Barrier()
-        if RANK == 0:
+        self.comm_handler.comm.Barrier()
+        self.current_valid_error = self.comm_handler.comm.bcast(self.current_valid_error, root=0)
+        self.comm_handler.comm.Barrier()
+        if self.rank == 0:
             for trajectory in self.trajectories.values():
                 trajectory.calc.models = [self.ensemble[tag] for tag in self.ensemble.keys()]
 
-        MPI.COMM_WORLD.Barrier()
-        self.total_epoch = MPI.COMM_WORLD.bcast(self.total_epoch, root=0)
-        self.trajectory_total_epochs[idx] = MPI.COMM_WORLD.bcast(self.trajectory_total_epochs[idx], root=0)
-        MPI.COMM_WORLD.Barrier()
+        self.comm_handler.comm.Barrier()
+        self.total_epoch = self.comm_handler.comm.bcast(self.total_epoch, root=0)
+        self.trajectory_total_epochs[idx] = self.comm_handler.comm.bcast(self.trajectory_total_epochs[idx], root=0)
+        self.comm_handler.comm.Barrier()
 
         if self.trajectory_total_epochs[idx] >= self.max_epochs_worker:
             self.trajectory_status[idx] = "running"
             self.num_workers_training -= 1
             self.trajectory_total_epochs[idx] = 0
-            if RANK == 0:
+            if self.rank == 0:
                 logging.info(f"Trajectory worker {idx} finished training.")
             # calculate true error and uncertainty on validation set
 
@@ -1257,7 +1249,7 @@ class ALProcedure(PrepareALProcedure):
             self._save_analysis()
 
         else:
-            if RANK == 0:
+            if self.rank == 0:
                 logging.info(
                     f"SCF not converged at worker {idx} for analysis. Discarding point."
                 )
@@ -1278,29 +1270,29 @@ class ALProcedure(PrepareALProcedure):
         if (
             current_MD_step % self.analysis_skip == 0
         ):  
-            if RANK == 0:
+            if self.rank == 0:
                 logging.info(f"Trajectory worker {idx} is sending a point to DFT for analysis.")
             
             if current_MD_step % self.skip_step == 0:
                 self.trajectories_analysis_prediction[idx] = prediction
             else:
-                if RANK == 0:
+                if self.rank == 0:
                     self.trajectories_analysis_prediction[idx] = ensemble_prediction(
                         models=list(self.ensemble.values()),
                         atoms_list=[self.point],
                         device=self.device,
                         dtype=self.mace_settings["GENERAL"]["default_dtype"],
                     )
-                self.comm.Barrier()
-                self.trajectories_analysis_prediction[idx] = self.comm.bcast(
+                self.comm_handler.comm.Barrier()
+                self.trajectories_analysis_prediction[idx] = self.comm_handler.comm.bcast(
                     self.trajectories_analysis_prediction[idx], root=0
                     )
-                self.comm.Barrier()
+                self.comm_handler.comm.Barrier()
 
             #TODO: sometimes already calculated above so we should not calculate it again
-            self.comm.Barrier()
+            self.comm_handler.comm.Barrier()
             converged = self._analysis_dft_call(point=self.point, idx=idx)
-            self.comm.Barrier()
+            self.comm_handler.comm.Barrier()
 
             self._process_analysis(
                 idx=idx,
@@ -1329,7 +1321,7 @@ class ALProcedure(PrepareALProcedure):
             current_MD_step > self.max_MD_steps
             and self.trajectory_status[idx] == "running"
         ):
-            if RANK == 0:
+            if self.rank == 0:
                 logging.info(
                     f"Trajectory worker {idx} reached maximum MD steps and is killed."
                 )
@@ -1346,7 +1338,7 @@ class ALProcedure(PrepareALProcedure):
             # MD engine we can adress this.
             
             if self.mod_md:
-                if RANK == 0:
+                if self.rank == 0:
                     modified = self.md_modifier(
                         driver=self.md_drivers[idx],
                         metric=self.get_md_mod_metric(),
@@ -1355,14 +1347,14 @@ class ALProcedure(PrepareALProcedure):
                     if modified and self.create_restart:
                         self.update_al_restart_dict()
 
-            if RANK == 0:
+            if self.rank == 0:
                 self.md_drivers[idx].run(self.skip_step)
                 self.trajectory_MD_steps[idx] += self.skip_step
                 current_MD_step += self.skip_step
 
             # somewhat arbitrary; i just want to save checkpoints if the MD phase
             # is super long
-            if RANK == 0:
+            if self.rank == 0:
                 if current_MD_step % (self.skip_step * 100) == 0:
                     self.update_al_restart_dict(
                         save_restart="restart/al/al_restart.npy"
@@ -1382,7 +1374,7 @@ class ALProcedure(PrepareALProcedure):
                     if (
                         self.train_dataset_len >= self.freeze_threshold_dataset
                         ) and not self.freeze_threshold:
-                        if RANK == 0:
+                        if self.rank == 0:
                             logging.info(f'Train data has reached size {self.train_dataset_len}: freezing threshold at {self.threshold:.3f}.')
                         self.freeze_threshold = True
                          
@@ -1398,24 +1390,24 @@ class ALProcedure(PrepareALProcedure):
                             idx
                             ].append(self.threshold)
         
-            if RANK != 0:
+            if self.rank != 0:
                 uncertainty = None
                 prediction = None
                 self.point = None
                 self.threshold = None
                 current_MD_step = None
                 
-            self.comm.Barrier()
-            self.threshold = self.comm.bcast(self.threshold, root=0)
-            self.point = self.comm.bcast(self.point, root=0)
-            uncertainty = self.comm.bcast(uncertainty, root=0)
-            prediction = self.comm.bcast(prediction, root=0)
-            current_MD_step = self.comm.bcast(current_MD_step, root=0)
-            self.comm.Barrier()
+            self.comm_handler.comm.Barrier()
+            self.threshold = self.comm_handler.comm.bcast(self.threshold, root=0)
+            self.point = self.comm_handler.comm.bcast(self.point, root=0)
+            uncertainty = self.comm_handler.comm.bcast(uncertainty, root=0)
+            prediction = self.comm_handler.comm.bcast(prediction, root=0)
+            current_MD_step = self.comm_handler.comm.bcast(current_MD_step, root=0)
+            self.comm_handler.comm.Barrier()
             
             if (uncertainty > self.threshold).any() or self.uncert_not_crossed[idx] > self.skip_step * self.uncert_not_crossed_limit:
                 self.uncert_not_crossed[idx] = 0
-                if RANK == 0:
+                if self.rank == 0:
                     if (uncertainty > self.threshold).any():
                         logging.info(
                             f"Uncertainty of point is beyond threshold {np.round(self.threshold,3)} at worker {idx}: {np.round(uncertainty,3)}."
@@ -1448,16 +1440,16 @@ class ALProcedure(PrepareALProcedure):
             self,
             idx
     ):
-        if RANK == 0:
+        if self.rank == 0:
             logging.info(
                 f"Trajectory worker {idx} is running DFT."
             )
         
-        MPI.COMM_WORLD.Barrier()
+        self.comm_handler.comm.Barrier()
         self.point = self.recalc_aims(self.point)
 
         if not self.aims_calculator.asi.is_scf_converged:
-            if RANK == 0:
+            if self.rank == 0:
                 logging.info(
                     f"SCF not converged at worker {idx}. Discarding point and restarting MD from last checkpoint."
                 )
@@ -1474,14 +1466,14 @@ class ALProcedure(PrepareALProcedure):
             # that the MD is restarted from a point that is inside the training set
             # so the MLFF should be able to handle this and lead to a better trajectory
             # that does not lead to convergence issues
-            if RANK == 0:
+            if self.rank == 0:
                 self.MD_checkpoints[idx] = atoms_full_copy(self.trajectories[idx])
             self.trajectory_status[idx] = "waiting"
             self.num_workers_waiting += 1
         
-            MPI.COMM_WORLD.Barrier()
+            self.comm_handler.comm.Barrier()
             self.waiting_task(idx)
-            if RANK == 0:
+            if self.rank == 0:
                 logging.info(
                     f"Trajectory worker {idx} is going to add point to the dataset."
                 )
@@ -1492,15 +1484,15 @@ class ALProcedure(PrepareALProcedure):
         controls the workers tasks.
         """
 
-        if RANK == 0:
+        if self.rank == 0:
             logging.info("Starting active learning procedure.")
 
 
-        MPI.COMM_WORLD.Barrier()
+        self.comm_handler.comm.Barrier()
         self._al_loop()
         # turn keys which are ints into strings
         # save the datasets and the intervals for analysis
-        if RANK == 0:
+        if self.rank == 0:
             logging.info(f"Active learning procedure finished. The best ensemble member based on validation loss is {self.best_member}.")
             save_datasets(
                 ensemble=self.ensemble,
@@ -1522,13 +1514,14 @@ class ALProcedure(PrepareALProcedure):
         Converges the ensemble on the acquired dataset. Trains the ensemble members
         until the validation loss does not improve anymore.
         """
-        if RANK == 0:
+        if self.rank == 0:
             if self.converge_best:
                 logging.info(f"Converging best model ({self.best_member}) on acquired dataset.")
                 self.ensemble = {self.best_member: self.ensemble[self.best_member]}
             else:
                 logging.info("Converging ensemble on acquired dataset.")
                 
+            temp_mace_sets = {}
             for _, (tag, model) in enumerate(self.ensemble.items()):
                 train_set = create_mace_dataset(
                     data=self.ensemble_ase_sets[tag]["train"],
@@ -1542,10 +1535,11 @@ class ALProcedure(PrepareALProcedure):
                     seed=self.seeds_tags_dict[tag],
                     r_max=self.r_max,
                 )
+                temp_mace_sets[tag] = {"train": train_set, "valid": valid_set}
 
-                self.ensemble_mace_sets = self._prepare_training(
-                    mace_sets={tag: {"train": train_set, "valid": valid_set}}
-                )
+            self.ensemble_mace_sets = self._prepare_training(
+                mace_sets=temp_mace_sets
+            )
 
             # resetting optimizer and scheduler
             self.training_setups_convergence = {}
@@ -1659,23 +1653,31 @@ class ALProcedureParallel(ALProcedure):
         path_to_control: str = "./control.in",
         path_to_geometry: str = "./geometry.in",
     ):
+        
+        self.comm_handler = CommHandler()
+        self.world_comm = self.comm_handler.comm
+        self.rank = self.comm_handler.get_rank()
+        self.world_size = self.comm_handler.get_size()
         # one for ML and one for DFT
-        if RANK == 0:
+        if self.rank == 0:
             self.color = 0
         else:
             self.color = 1
         
-        self.comm = MPI.COMM_WORLD.Split(
+        comm = self.comm_handler.comm.Split(
             color=self.color,
-            key=RANK
-            ) 
+            key=self.rank
+            )
+        self.comm_handler.comm = comm
+        self.comm_handler.size = comm.Get_size()
+        
         # this is necessary because of the way the MPI communicator is split
         super().__init__(
             mace_settings=mace_settings,
             al_settings=al_settings,
             path_to_control=path_to_control,
             path_to_geometry=path_to_geometry,
-            comm=self.comm
+            comm_handler=self.comm_handler
         )
 
 
@@ -1710,7 +1712,7 @@ class ALProcedureParallel(ALProcedure):
             calc = ASI_ASE_calculator(
                 self.ASI_path,
                 init_via_ase,
-                self.comm,
+                self.comm_handler.comm,
                 atoms
                 )
             return calc
@@ -1722,8 +1724,8 @@ class ALProcedureParallel(ALProcedure):
         Sends a kill signal
         """
 
-        for dest in range(1, WORLD_SIZE):
-            self.kill_send = WORLD_COMM.isend(True, dest=dest, tag=422)
+        for dest in range(1, self.world_size):
+            self.kill_send = self.world_comm.isend(True, dest=dest, tag=422)
             self.kill_send.Wait()
         
         #for trajectory_idx in range(self.num_trajectories):
@@ -1747,7 +1749,7 @@ class ALProcedureParallel(ALProcedure):
             self.analysis_worker_reqs = {idx: None for idx in range(self.num_trajectories)}
 
         if self.color == 1:
-            self.req_kill = WORLD_COMM.irecv(source=0, tag=422)
+            self.req_kill = self.world_comm.irecv(source=0, tag=422)
         
         while True:
             if self.color == 0: 
@@ -1779,17 +1781,17 @@ class ALProcedureParallel(ALProcedure):
                     if (
                         self.num_workers_training == self.num_trajectories
                     ):  
-                        if RANK == 0:
+                        if self.rank == 0:
                             logging.info(
                                 "All workers are in training mode."
                             )  
                     
                     #if self.num_workers_waiting == self.num_trajectories:
-                    #    if RANK == 0:
+                    #    if self.rank == 0:
                     #        logging.info("All workers are waiting for jobs to finish.")
                 
                 if self.num_MD_limits_reached == self.num_trajectories:
-                    if RANK == 0:
+                    if self.rank == 0:
                         logging.info(
                             "All trajectories reached maximum MD steps."
                         )
@@ -1797,7 +1799,7 @@ class ALProcedureParallel(ALProcedure):
                     break
                 
                 if self.train_dataset_len >= self.max_set_size:
-                    if RANK == 0:
+                    if self.rank == 0:
                         logging.info(
                             "Maximum size of training set reached."
                         )
@@ -1806,7 +1808,7 @@ class ALProcedureParallel(ALProcedure):
                 
                 
                 if self.current_valid_error < self.desired_accuracy:
-                    if RANK == 0:
+                    if self.rank == 0:
                         logging.info(
                             "Desired accuracy reached."
                         )
@@ -1823,30 +1825,30 @@ class ALProcedureParallel(ALProcedure):
                     break
                 
                 if self.req is None:
-                    self.req = WORLD_COMM.irecv(source=0, tag=1234)
+                    self.req = self.world_comm.irecv(source=0, tag=1234)
 
                 status, data = self.req.test()
                 
                 if status:
                     self.req = None
                     idx, point = data
-                    if RANK == 1:
+                    if self.rank == 1:
                         logging.info(f"Recieved point from worker {idx} and running DFT calculation.")
                     # change return from none to false when scf not converged
                     dft_result = self.recalc_aims(point)
                     if dft_result is not None:
-                        if RANK == 1:
+                        if self.rank == 1:
                             logging.info(f"DFT calculation for worker {idx} finished and sending point back.")
-                            self.req_send = WORLD_COMM.isend(dft_result, dest=0, tag=idx)
+                            self.req_send = self.world_comm.isend(dft_result, dest=0, tag=idx)
                             self.req_send.Wait()
                     else:
-                        if RANK == 1:
-                            self.req_send = WORLD_COMM.isend(False, dest=0, tag=idx)
+                        if self.rank == 1:
+                            self.req_send = self.world_comm.isend(False, dest=0, tag=idx)
                             self.req_send.Wait()
 
                 if self.analysis:
                     if self.req_analysis is None:
-                        self.req_analysis = WORLD_COMM.irecv(source=0, tag=80545)
+                        self.req_analysis = self.world_comm.irecv(source=0, tag=80545)
                     
                     status_analysis, data_analysis = self.req_analysis.test()
 
@@ -1856,13 +1858,13 @@ class ALProcedureParallel(ALProcedure):
                         dft_result_analysis = self.recalc_aims(point_analysis)
                         if dft_result_analysis is not None:
 
-                            if RANK == 1:
+                            if self.rank == 1:
                                 logging.info(f"DFT calculation for worker {idx} analysis finished and sending point back.")
-                                self.req_send_analysis = WORLD_COMM.isend(dft_result_analysis, dest=0, tag=idx)
+                                self.req_send_analysis = self.world_comm.isend(dft_result_analysis, dest=0, tag=idx)
                                 self.req_send_analysis.Wait()
                         else:
-                            if RANK == 1:
-                                self.req_send_analysis = WORLD_COMM.isend(False, dest=0, tag=idx)
+                            if self.rank == 1:
+                                self.req_send_analysis = self.world_comm.isend(False, dest=0, tag=idx)
                                 self.req_send_analysis.Wait()        
 
         if self.color == 1:
@@ -1881,7 +1883,7 @@ class ALProcedureParallel(ALProcedure):
         """
 
         if self.worker_reqs[idx] is None:
-            self.worker_reqs[idx] = WORLD_COMM.irecv(source=1, tag=idx)
+            self.worker_reqs[idx] = self.world_comm.irecv(source=1, tag=idx)
         
         status, recieved_points = self.worker_reqs[idx].test()
         
@@ -1890,7 +1892,7 @@ class ALProcedureParallel(ALProcedure):
             self.worker_reqs[idx] = None
 
             if not recieved_points: # DFT not converged
-                if RANK == 0:
+                if self.rank == 0:
                     logging.info(
                         f"SCF not converged at worker {idx}. Discarding point and restarting MD from last checkpoint."
                     )
@@ -1909,19 +1911,19 @@ class ALProcedureParallel(ALProcedure):
                 # that the MD is restarted from a point that is inside the training set
                 # so the MLFF should be able to handle this and lead to a better trajectory
                 # that does not lead to convergence issues
-                if RANK == 0:
+                if self.rank == 0:
                     self.MD_checkpoints[idx] = atoms_full_copy(self.trajectories[idx])
 
                 if self.valid_points_added < self.valid_ratio * self.total_points_added:
                     self.trajectory_status[idx] = "running"
                     self.num_workers_waiting -= 1
-                    if RANK == 0:
+                    if self.rank == 0:
                         logging.info(
                             f"Trajectory worker {idx} is adding a point to the validation set."
                         )
                     # while the initial datasets are different for each ensemble member we add the new points to
                     # all ensemble member datasets
-                    if RANK == 0:
+                    if self.rank == 0:
                         for tag in self.ensemble_ase_sets.keys():
                             self.ensemble_ase_sets[tag]["valid"] += [self.point]
                             self.ensemble_mace_sets[tag]["valid"] += self.mace_point
@@ -1931,7 +1933,7 @@ class ALProcedureParallel(ALProcedure):
                     self.trajectory_status[idx] = "training"
                     self.num_workers_training += 1
                     self.num_workers_waiting -= 1
-                    if RANK == 0:
+                    if self.rank == 0:
                         logging.info(
                             f"Trajectory worker {idx} is adding a point to the training set."
                         )
@@ -1942,14 +1944,14 @@ class ALProcedureParallel(ALProcedure):
                             self.ensemble_mace_sets[tag]["train"] += self.mace_point
                         self.train_dataset_len = len(self.ensemble_ase_sets[tag]["train"])
                     
-                    self.comm.Barrier()
-                    self.train_dataset_len = self.comm.bcast(self.train_dataset_len, root=0)
-                    self.comm.Barrier()
+                    self.comm_handler.comm.Barrier()
+                    self.train_dataset_len = self.comm_handler.comm.bcast(self.train_dataset_len, root=0)
+                    self.comm_handler.comm.Barrier()
                     
                     if self.train_dataset_len > self.max_set_size:
                         return True
                     self.train_points_added += 1
-                if RANK == 0:
+                if self.rank == 0:
                     logging.info(
                         f"Size of the training and validation set: {self.train_dataset_len}, {len(self.ensemble_ase_sets[tag]['valid'])}."
                     )
@@ -1959,19 +1961,19 @@ class ALProcedureParallel(ALProcedure):
             self,
             idx
     ):
-        self.comm.Barrier()
-        if RANK == 0:
+        self.comm_handler.comm.Barrier()
+        if self.rank == 0:
             logging.info(f"Trajectory worker {idx} is sending point to DFT.")
-            for dest in range(1, WORLD_SIZE):
-                self.point_send = MPI.COMM_WORLD.isend((idx, self.point), dest=dest, tag=1234)
+            for dest in range(1, self.world_size):
+                self.point_send = self.world_comm.isend((idx, self.point), dest=dest, tag=1234)
                 self.point_send.Wait()
 
-        self.comm.Barrier()
+        self.comm_handler.comm.Barrier()
         self.trajectory_status[idx] = "waiting"
         self.num_workers_waiting += 1
-        self.comm.Barrier()
+        self.comm_handler.comm.Barrier()
 
-        if RANK == 0:
+        if self.rank == 0:
             logging.info(
                 f"Trajectory worker {idx} is waiting for job to finish."
             )        
@@ -2007,7 +2009,7 @@ class ALProcedureParallel(ALProcedure):
             self.trajectory_status[idx] = "running"
             self.num_workers_training -= 1
             self.trajectory_total_epochs[idx] = 0
-            if RANK == 0:
+            if self.rank == 0:
                 logging.info(f"Trajectory worker {idx} finished training.")
             # calculate true error and uncertainty on validation set
 
@@ -2025,7 +2027,7 @@ class ALProcedureParallel(ALProcedure):
             idx: int
             ):
         if self.analysis_worker_reqs[idx] is None:
-            self.analysis_worker_reqs[idx] = WORLD_COMM.irecv(source=1, tag=idx)
+            self.analysis_worker_reqs[idx] = self.world_comm.irecv(source=1, tag=idx)
 
         status, recieved_points = self.analysis_worker_reqs[idx].test()        
 
@@ -2033,7 +2035,7 @@ class ALProcedureParallel(ALProcedure):
             self.analysis_worker_reqs[idx] = None
             
             if not recieved_points:
-                if RANK == 0:
+                if self.rank == 0:
                     logging.info(
                         f"SCF not converged at worker {idx} for analysis. Discarding point."
                     )
@@ -2056,347 +2058,353 @@ class ALProcedureParallel(ALProcedure):
                 self.trajectory_status[idx] = "running"
 
     def _analysis_dft_call(self, idx, point):
-        self.comm.Barrier()
-        if RANK == 0:
-            for dest in range(1, WORLD_SIZE):
-                self.point_send = MPI.COMM_WORLD.isend((idx, point), dest=dest, tag=80545)
+        self.comm_handler.comm.Barrier()
+        if self.rank == 0:
+            for dest in range(1, self.world_size):
+                self.point_send = self.world_comm.isend((idx, point), dest=dest, tag=80545)
                 self.point_send.Wait()
-        self.comm.Barrier()
+        self.comm_handler.comm.Barrier()
         self.trajectory_status[idx] = "analysis_waiting"
-        self.comm.Barrier()
-        if RANK == 0:
+        self.comm_handler.comm.Barrier()
+        if self.rank == 0:
             logging.info(
                 f"Trajectory worker {idx} is waiting for analysis job to finish."
             )
         return None
 
-class ALProcedureGPUParallel(ALProcedureParallel):
-    def __init__(
-        self,
-        mace_settings: dict,
-        al_settings: dict,
-        path_to_control: str = "./control.in",
-        path_to_geometry: str = "./geometry.in",
-    ):
-        super().__init__(
-            mace_settings=mace_settings,
-            al_settings=al_settings,
-            path_to_control=path_to_control,
-            path_to_geometry=path_to_geometry,
-        )
-        # get number of GPUs
-        self.num_gpus = torch.cuda.device_count()
-        self.devices = [torch.device(f"cuda:{i}") for i in range(self.num_gpus)]
-        # create one mpi communcatior per gpu and assign rest to extra communicator
-        self.world_size = WORLD_SIZE
-        self.gpu_world_size = self.num_gpus
-        self.gpu_world_comm = MPI.COMM_WORLD.Split(color=0, key=0)
-        self.extra_comm = MPI.COMM_WORLD.Split(color=1, key=0)
-        self.gpu_ranks = self.gpu_world_comm.Get_size()
-        self.extra_ranks = self.extra_comm.Get_size()
-        self.gpu_rank = self.gpu_world_comm.Get_rank()
-        self.extra_rank = self.extra_comm.Get_rank()
+if False:
 
-class ALProcedureParsl(ALProcedureParallel):
-    raise NotImplementedError(
-        "This class is not implemented yet. Please use ALProcedureParallel or ALProcedureGPUParallel."
-    )
-        
-        
-
-# TODO: This is not done yet
-class StandardMACEEnsembleProcedure:
-    """
-    Just a simple Class to train ensembles from scratch using existing
-    dataset in order to compare the continuous learning procedure with
-    learning from scratch.
-    """
-    def __init__(
-        self, 
-        mace_settings: dict,
-        active_learning_settings: dict,
-        train_set_dir: str = "data/final/training",
-        valid_set_dir: str = "data/final/validation",
-        ) -> None:
-
-        raise NotImplementedError("This is not done yet.")
-        self.handle_mace_settings(mace_settings)
-        logging.basicConfig(
-            filename="standard_ensemble.log",
-            encoding="utf-8",
-            level=logging.DEBUG,
-            force=True,
-        )
-        tools.setup_logger(
-            level=self.mace_settings["MISC"]["log_level"],
-            #    tag=tag,
-            directory=self.mace_settings["GENERAL"]["log_dir"],
-        )
-        self.create_folders()
-        self.z = Z_from_geometry_in()
-
-        if self.atomic_energies_dict is None:
-            self.atomic_energies_dict = {
-                z: 0 for z in np.unique(self.z)
-            }
-            self.update_atomic_energies = True
-
-        self.atomic_energies = np.array(
-            [
-                self.atomic_energies_dict[z]
-                for z in self.atomic_energies_dict.keys()
-            ]
-        )
-        self.z_table = tools.get_atomic_number_table_from_zs(
-            z for z in self.atomic_energies_dict.keys()
-        )
-
-        np.random.seed(self.seed)
-        #random.seed(self.seed)
-        self.ensemble_seeds = np.random.randint(
-            0, 1000, size=active_learning_settings["ACTIVE_LEARNING"]["ensemble_size"]
-        )
-    
-        (
-        self.seeds_tags_dict,
-        self.ensemble,
-        self.training_setups,
-        ) = setup_ensemble_dicts(
-            seeds=self.ensemble_seeds,
-            mace_settings=self.mace_settings,
-            atomic_energies_dict=self.atomic_energies_dict,
-            save_seeds_tags_dict=False
-        )
-        for tag in self.ensemble.keys():
-            train_set = read(train_set_dir + f"/train_set_{tag}.xyz",index=":")
-            valid_set = read(valid_set_dir + f"/valid_set_{tag}.xyz",index=":")
-            logging.info(
-                f"Training set {tag} contains {len(train_set)} structures."
-            )
-            self.ensemble_ase_sets = {
-                tag: {"train": train_set, "valid": valid_set} for tag in self.ensemble.keys()
-            }
-        self.ensemble_mace_sets = {
-            tag: {
-                    "train": create_mace_dataset(
-                    data=self.ensemble_ase_sets[tag]["train"],
-                    z_table=self.z_table,
-                    seed=self.seeds_tags_dict[tag],
-                    r_max=self.r_max
-                    ),
-                    "valid": create_mace_dataset(
-                    data=self.ensemble_ase_sets[tag]["valid"],
-                    z_table=self.z_table,
-                    seed=self.seeds_tags_dict[tag],
-                    r_max=self.r_max
-                    )
-                } for tag in self.ensemble.keys()
-        }
-            
-    def train(self):
-        
-        for _, (tag, model) in enumerate(self.ensemble.items()):
-            (
-                self.ensemble_mace_sets[tag]["train_loader"],
-                self.ensemble_mace_sets[tag]["valid_loader"],
-            ) = create_dataloader(
-                self.ensemble_mace_sets[tag]["train"],
-                self.ensemble_mace_sets[tag]["valid"],
-                self.set_batch_size,
-                self.set_valid_batch_size,
-            )
-
-            update_model_auxiliaries(
-                model=model,
-                mace_sets=self.ensemble_mace_sets[tag],
-                atomic_energies=self.atomic_energies,
-                scaling=self.scaling,
-                update_atomic_energies=self.update_atomic_energies,
-                z_table=self.z_table,
-                atomic_energies_dict=self.atomic_energies_dict,
-                dtype=self.dtype,
-                device=self.device,
-            )
-            
-        best_valid_loss = np.inf
-        epoch = 0
-        no_improvement = 0
-        ensemble_valid_losses = {tag: np.inf for tag in self.ensemble.keys()}
-        for j in range(self.max_num_epochs):
-            # ensemble_loss = 0
-            for tag, model in self.ensemble.items():
-                training_setup = self.training_setups[tag]
-                logger = tools.MetricsLogger(
-                    directory=self.mace_settings["GENERAL"]["results_dir"],
-                    tag=tag + "_standard_train",
-                )
-                train_epoch(
-                    model=model,
-                    train_loader=self.ensemble_mace_sets[tag]["train_loader"],
-                    loss_fn=training_setup["loss_fn"],
-                    optimizer=training_setup["optimizer"],
-                    lr_scheduler=training_setup["lr_scheduler"],
-                    valid_loss=ensemble_valid_losses[tag],
-                    epoch=epoch,
-                    start_epoch=0,
-                    logger=logger,
-                    device=training_setup["device"],
-                    max_grad_norm=training_setup["max_grad_norm"],
-                    output_args=training_setup["output_args"],
-                    ema=training_setup["ema"],
-                )
-                # ensemble_loss += loss
-            # ensemble_loss /= len(ensemble)
-
-            if epoch % self.eval_interval == 0 or epoch == self.max_num_epochs - 1:
-                (
-                    ensemble_valid_losses,
-                    valid_loss,
-                    _,
-                ) = validate_epoch_ensemble(
-                    ensemble=self.ensemble,
-                    training_setups=self.training_setups,
-                    ensemble_set=self.ensemble_mace_sets,
-                    logger=logger,
-                    log_errors=self.mace_settings["MISC"]["error_table"],
-                    epoch=epoch,
-                )
-                if best_valid_loss > valid_loss:
-                    best_valid_loss = valid_loss
-                    best_epoch = epoch
-                    no_improvement = 0
-                    for tag, model in self.ensemble.items():
-                        torch.save(
-                            model,
-                            self.standard_model_dir / (tag + ".model"),
-                        )
-                        save_checkpoint(
-                            checkpoint_handler=self.training_setups[tag][
-                                "checkpoint_handler_convergence"
-                            ],
-                            training_setup=self.training_setups[tag],
-                            model=model,
-                            epoch=epoch,
-                            keep_last=True,
-                        )
-                else:
-                    no_improvement += 1
-
-            epoch += 1
-            if no_improvement > self.patience:
-                logging.info(
-                    f"No improvements for {self.patience} epochs. Training converged. Best model (Epoch {best_epoch}) based on validation loss saved."
-                )
-                break
-            if j == self.max_num_epochs - 1:
-                logging.info(
-                    f"Maximum number of epochs reached. Best model (Epoch {best_epoch}) based on validation loss saved."
-                )
-
-    def handle_mace_settings(self, mace_settings: dict):
-        self.mace_settings = mace_settings
-        self.seed = self.mace_settings["GENERAL"]["seed"]
-        self.r_max = self.mace_settings["ARCHITECTURE"]["r_max"]
-        self.set_batch_size = self.mace_settings["TRAINING"]["batch_size"]
-        self.set_valid_batch_size = self.mace_settings["TRAINING"][
-            "valid_batch_size"
-        ]
-        self.scaling = self.mace_settings["TRAINING"]["scaling"]
-        self.model_dir = self.mace_settings["GENERAL"]["model_dir"]
-        self.eval_interval = self.mace_settings['TRAINING']['eval_interval']
-        self.max_num_epochs = self.mace_settings['TRAINING']['max_num_epochs']
-        self.patience = self.mace_settings['TRAINING']['patience']
-        self.device = self.mace_settings["MISC"]["device"]
-        self.dtype = self.mace_settings["GENERAL"]["default_dtype"]
-        self.atomic_energies_dict = self.mace_settings["ARCHITECTURE"].get("atomic_energies_dict", None)
-
-    
-    def create_folders(self):
-        
-        os.makedirs(self.model_dir, exist_ok=True)
-        self.standard_model_dir = Path(self.model_dir) / "standard"
-        self.standard_model_dir.mkdir(
-            parents=True, exist_ok=True
-        )
-
-    def setup_mace_calc(self):
-        """
-        Loads the models of the existing ensemble and creates the MACE calculator.
-        """
-        model_paths = list_files_in_directory(Path(self.model_dir) / "standard")
-        self.models = [
-            torch.load(f=model_path, map_location=self.device) for model_path in model_paths
-        ]
-        # the calculator needs to be updated consistently see below
-        self.mace_calc = MACECalculator(
-            models=self.models,
-            device=self.device,
-            default_dtype=self.dtype)
-        
-    def analysis_check(
-    #TODO: put this somewhere else and its ugly
+    class ALProcedureGPUParallel(ALProcedureParallel):
+        def __init__(
             self,
-            analysis_prediction: np.ndarray,
-            true_forces: np.ndarray
-            ) -> tuple[np.ndarray, np.ndarray]:
-        """
-        Calculates the force uncertainty and the maximum 
-        force error for a given prediction and true forces.
+            mace_settings: dict,
+            al_settings: dict,
+            path_to_control: str = "./control.in",
+            path_to_geometry: str = "./geometry.in",
+        ):
+            
+            raise NotImplementedError(
+                "This class is not implemented yet. Please use ALProcedureParallel."
+            )
+            super().__init__(
+                mace_settings=mace_settings,
+                al_settings=al_settings,
+                path_to_control=path_to_control,
+                path_to_geometry=path_to_geometry,
+            )
+            # get number of GPUs
+            self.num_gpus = torch.cuda.device_count()
+            self.devices = [torch.device(f"cuda:{i}") for i in range(self.num_gpus)]
+            # create one mpi communcatior per gpu and assign rest to extra communicator
+            self.world_size = self.world_size
+            self.gpu_world_size = self.num_gpus
+            self.gpu_world_comm = self.comm_handler.comm.Split(color=0, key=0)
+            self.extra_comm = self.comm_handler.comm.Split(color=1, key=0)
+            self.gpu_ranks = self.gpu_world_comm.Get_size()
+            self.extra_ranks = self.extra_comm.Get_size()
+            self.gpu_rank = self.gpu_world_comm.Get_rank()
+            self.extra_rank = self.extra_comm.Get_rank()
 
-        Args:
-            analysis_prediction (np.ndarray): Ensemble prediction. [n_members, n_points, n_atoms, 3]
-            true_forces (np.ndarray): True forces. [n_points, n_atoms, 3]
+    class ALProcedureParsl(ALProcedureParallel):
+        raise NotImplementedError(
+            "This class is not implemented yet. Please use ALProcedureParallel or ALProcedureGPUParallel."
+        )
+            
+            
 
-        Returns:
-            tuple[np.ndarray, np.ndarray]: force uncertainty, true force error
+    # TODO: This is not done yet
+    class StandardMACEEnsembleProcedure:
         """
-        uncertainty_via_max = max_sd_2(analysis_prediction)
-        uncertainty_via_avg = avg_sd(analysis_prediction)
-        atom_wise_uncertainty = atom_wise_sd(analysis_prediction)
-        mean_analysis_prediction = analysis_prediction.mean(0).squeeze()
-        difference = true_forces - mean_analysis_prediction
-        diff_sq = difference**2
-        diff_sq_mean = np.mean(diff_sq, axis=-1)
+        Just a simple Class to train ensembles from scratch using existing
+        dataset in order to compare the continuous learning procedure with
+        learning from scratch.
+        """
+        def __init__(
+            self, 
+            mace_settings: dict,
+            active_learning_settings: dict,
+            train_set_dir: str = "data/final/training",
+            valid_set_dir: str = "data/final/validation",
+            ) -> None:
+
+            raise NotImplementedError("This is not done yet.")
+            self.handle_mace_settings(mace_settings)
+            logging.basicConfig(
+                filename="standard_ensemble.log",
+                encoding="utf-8",
+                level=logging.DEBUG,
+                force=True,
+            )
+            tools.setup_logger(
+                level=self.mace_settings["MISC"]["log_level"],
+                #    tag=tag,
+                directory=self.mace_settings["GENERAL"]["log_dir"],
+            )
+            self.create_folders()
+            self.z = Z_from_geometry_in()
+
+            if self.atomic_energies_dict is None:
+                self.atomic_energies_dict = {
+                    z: 0 for z in np.unique(self.z)
+                }
+                self.update_atomic_energies = True
+
+            self.atomic_energies = np.array(
+                [
+                    self.atomic_energies_dict[z]
+                    for z in self.atomic_energies_dict.keys()
+                ]
+            )
+            self.z_table = tools.get_atomic_number_table_from_zs(
+                z for z in self.atomic_energies_dict.keys()
+            )
+
+            np.random.seed(self.seed)
+            #random.seed(self.seed)
+            self.ensemble_seeds = np.random.randint(
+                0, 1000, size=active_learning_settings["ACTIVE_LEARNING"]["ensemble_size"]
+            )
         
-        max_error = np.max(np.sqrt(diff_sq_mean), axis=-1)
-        mean_error = np.mean(np.sqrt(diff_sq_mean), axis=-1)
-        atom_wise_error = atom_wise_f_error(mean_analysis_prediction, true_forces)
+            (
+            self.seeds_tags_dict,
+            self.ensemble,
+            self.training_setups,
+            ) = setup_ensemble_dicts(
+                seeds=self.ensemble_seeds,
+                mace_settings=self.mace_settings,
+                atomic_energies_dict=self.atomic_energies_dict,
+                save_seeds_tags_dict=False
+            )
+            for tag in self.ensemble.keys():
+                train_set = read(train_set_dir + f"/train_set_{tag}.xyz",index=":")
+                valid_set = read(valid_set_dir + f"/valid_set_{tag}.xyz",index=":")
+                logging.info(
+                    f"Training set {tag} contains {len(train_set)} structures."
+                )
+                self.ensemble_ase_sets = {
+                    tag: {"train": train_set, "valid": valid_set} for tag in self.ensemble.keys()
+                }
+            self.ensemble_mace_sets = {
+                tag: {
+                        "train": create_mace_dataset(
+                        data=self.ensemble_ase_sets[tag]["train"],
+                        z_table=self.z_table,
+                        seed=self.seeds_tags_dict[tag],
+                        r_max=self.r_max
+                        ),
+                        "valid": create_mace_dataset(
+                        data=self.ensemble_ase_sets[tag]["valid"],
+                        z_table=self.z_table,
+                        seed=self.seeds_tags_dict[tag],
+                        r_max=self.r_max
+                        )
+                    } for tag in self.ensemble.keys()
+            }
+                
+        def train(self):
+            
+            for _, (tag, model) in enumerate(self.ensemble.items()):
+                (
+                    self.ensemble_mace_sets[tag]["train_loader"],
+                    self.ensemble_mace_sets[tag]["valid_loader"],
+                ) = create_dataloader(
+                    self.ensemble_mace_sets[tag]["train"],
+                    self.ensemble_mace_sets[tag]["valid"],
+                    self.set_batch_size,
+                    self.set_valid_batch_size,
+                )
 
-        return {
-            "atom_wise_uncertainty": atom_wise_uncertainty,
-            "uncertainty_via_max": uncertainty_via_max,
-            "uncertainty_via_avg": uncertainty_via_avg,
-            "max_error": max_error,
-            "mean_error": mean_error,
-            "atom_wise_error": atom_wise_error
-        }
+                update_model_auxiliaries(
+                    model=model,
+                    mace_sets=self.ensemble_mace_sets[tag],
+                    atomic_energies=self.atomic_energies,
+                    scaling=self.scaling,
+                    update_atomic_energies=self.update_atomic_energies,
+                    z_table=self.z_table,
+                    atomic_energies_dict=self.atomic_energies_dict,
+                    dtype=self.dtype,
+                    device=self.device,
+                )
+                
+            best_valid_loss = np.inf
+            epoch = 0
+            no_improvement = 0
+            ensemble_valid_losses = {tag: np.inf for tag in self.ensemble.keys()}
+            for j in range(self.max_num_epochs):
+                # ensemble_loss = 0
+                for tag, model in self.ensemble.items():
+                    training_setup = self.training_setups[tag]
+                    logger = tools.MetricsLogger(
+                        directory=self.mace_settings["GENERAL"]["results_dir"],
+                        tag=tag + "_standard_train",
+                    )
+                    train_epoch(
+                        model=model,
+                        train_loader=self.ensemble_mace_sets[tag]["train_loader"],
+                        loss_fn=training_setup["loss_fn"],
+                        optimizer=training_setup["optimizer"],
+                        lr_scheduler=training_setup["lr_scheduler"],
+                        valid_loss=ensemble_valid_losses[tag],
+                        epoch=epoch,
+                        start_epoch=0,
+                        logger=logger,
+                        device=training_setup["device"],
+                        max_grad_norm=training_setup["max_grad_norm"],
+                        output_args=training_setup["output_args"],
+                        ema=training_setup["ema"],
+                    )
+                    # ensemble_loss += loss
+                # ensemble_loss /= len(ensemble)
 
-    def test(
-        self,
-        path_to_ds: str,
-    ):
-        """
-        Tests the ensemble on a dataset.
+                if epoch % self.eval_interval == 0 or epoch == self.max_num_epochs - 1:
+                    (
+                        ensemble_valid_losses,
+                        valid_loss,
+                        _,
+                    ) = validate_epoch_ensemble(
+                        ensemble=self.ensemble,
+                        training_setups=self.training_setups,
+                        ensemble_set=self.ensemble_mace_sets,
+                        logger=logger,
+                        log_errors=self.mace_settings["MISC"]["error_table"],
+                        epoch=epoch,
+                    )
+                    if best_valid_loss > valid_loss:
+                        best_valid_loss = valid_loss
+                        best_epoch = epoch
+                        no_improvement = 0
+                        for tag, model in self.ensemble.items():
+                            torch.save(
+                                model,
+                                self.standard_model_dir / (tag + ".model"),
+                            )
+                            save_checkpoint(
+                                checkpoint_handler=self.training_setups[tag][
+                                    "checkpoint_handler_convergence"
+                                ],
+                                training_setup=self.training_setups[tag],
+                                model=model,
+                                epoch=epoch,
+                                keep_last=True,
+                            )
+                    else:
+                        no_improvement += 1
 
-        Args:
-            path_to_ds (str): Path to the dataset.
-        """
-        test_set = read(path_to_ds, index=":")
-        test_mace_ds = create_mace_dataset(
-            data=test_set,
-            z_table=self.z_table,
-            seed=None,
-            r_max=self.r_max,
-        )
-        logging.info("Created DS.")
-        ensemble_energies, ensemble_forces = ensemble_prediction_v2(
-            models=list(self.ensemble.values()),
-            mace_ds=test_mace_ds,
-            device=self.device,
-            dtype=self.dtype,
-            return_energies=True
-        )
-        reference_energies = np.array([atoms.info["energy"] for atoms in test_set])
-        reference_forces = np.array([atoms.arrays["forces"] for atoms in test_set])
-        check = self.analysis_check(ensemble_forces, reference_forces)
-        np.savez("check.npz", **check)
+                epoch += 1
+                if no_improvement > self.patience:
+                    logging.info(
+                        f"No improvements for {self.patience} epochs. Training converged. Best model (Epoch {best_epoch}) based on validation loss saved."
+                    )
+                    break
+                if j == self.max_num_epochs - 1:
+                    logging.info(
+                        f"Maximum number of epochs reached. Best model (Epoch {best_epoch}) based on validation loss saved."
+                    )
+
+        def handle_mace_settings(self, mace_settings: dict):
+            self.mace_settings = mace_settings
+            self.seed = self.mace_settings["GENERAL"]["seed"]
+            self.r_max = self.mace_settings["ARCHITECTURE"]["r_max"]
+            self.set_batch_size = self.mace_settings["TRAINING"]["batch_size"]
+            self.set_valid_batch_size = self.mace_settings["TRAINING"][
+                "valid_batch_size"
+            ]
+            self.scaling = self.mace_settings["TRAINING"]["scaling"]
+            self.model_dir = self.mace_settings["GENERAL"]["model_dir"]
+            self.eval_interval = self.mace_settings['TRAINING']['eval_interval']
+            self.max_num_epochs = self.mace_settings['TRAINING']['max_num_epochs']
+            self.patience = self.mace_settings['TRAINING']['patience']
+            self.device = self.mace_settings["MISC"]["device"]
+            self.dtype = self.mace_settings["GENERAL"]["default_dtype"]
+            self.atomic_energies_dict = self.mace_settings["ARCHITECTURE"].get("atomic_energies_dict", None)
+
+        
+        def create_folders(self):
+            
+            os.makedirs(self.model_dir, exist_ok=True)
+            self.standard_model_dir = Path(self.model_dir) / "standard"
+            self.standard_model_dir.mkdir(
+                parents=True, exist_ok=True
+            )
+
+        def setup_mace_calc(self):
+            """
+            Loads the models of the existing ensemble and creates the MACE calculator.
+            """
+            model_paths = list_files_in_directory(Path(self.model_dir) / "standard")
+            self.models = [
+                torch.load(f=model_path, map_location=self.device) for model_path in model_paths
+            ]
+            # the calculator needs to be updated consistently see below
+            self.mace_calc = MACECalculator(
+                models=self.models,
+                device=self.device,
+                default_dtype=self.dtype)
+            
+        def analysis_check(
+        #TODO: put this somewhere else and its ugly
+                self,
+                analysis_prediction: np.ndarray,
+                true_forces: np.ndarray
+                ) -> tuple[np.ndarray, np.ndarray]:
+            """
+            Calculates the force uncertainty and the maximum 
+            force error for a given prediction and true forces.
+
+            Args:
+                analysis_prediction (np.ndarray): Ensemble prediction. [n_members, n_points, n_atoms, 3]
+                true_forces (np.ndarray): True forces. [n_points, n_atoms, 3]
+
+            Returns:
+                tuple[np.ndarray, np.ndarray]: force uncertainty, true force error
+            """
+            uncertainty_via_max = max_sd_2(analysis_prediction)
+            uncertainty_via_avg = avg_sd(analysis_prediction)
+            atom_wise_uncertainty = atom_wise_sd(analysis_prediction)
+            mean_analysis_prediction = analysis_prediction.mean(0).squeeze()
+            difference = true_forces - mean_analysis_prediction
+            diff_sq = difference**2
+            diff_sq_mean = np.mean(diff_sq, axis=-1)
+            
+            max_error = np.max(np.sqrt(diff_sq_mean), axis=-1)
+            mean_error = np.mean(np.sqrt(diff_sq_mean), axis=-1)
+            atom_wise_error = atom_wise_f_error(mean_analysis_prediction, true_forces)
+
+            return {
+                "atom_wise_uncertainty": atom_wise_uncertainty,
+                "uncertainty_via_max": uncertainty_via_max,
+                "uncertainty_via_avg": uncertainty_via_avg,
+                "max_error": max_error,
+                "mean_error": mean_error,
+                "atom_wise_error": atom_wise_error
+            }
+
+        def test(
+            self,
+            path_to_ds: str,
+        ):
+            """
+            Tests the ensemble on a dataset.
+
+            Args:
+                path_to_ds (str): Path to the dataset.
+            """
+            test_set = read(path_to_ds, index=":")
+            test_mace_ds = create_mace_dataset(
+                data=test_set,
+                z_table=self.z_table,
+                seed=None,
+                r_max=self.r_max,
+            )
+            logging.info("Created DS.")
+            ensemble_energies, ensemble_forces = ensemble_prediction_v2(
+                models=list(self.ensemble.values()),
+                mace_ds=test_mace_ds,
+                device=self.device,
+                dtype=self.dtype,
+                return_energies=True
+            )
+            reference_energies = np.array([atoms.info["energy"] for atoms in test_set])
+            reference_forces = np.array([atoms.arrays["forces"] for atoms in test_set])
+            check = self.analysis_check(ensemble_forces, reference_forces)
+            np.savez("check.npz", **check)

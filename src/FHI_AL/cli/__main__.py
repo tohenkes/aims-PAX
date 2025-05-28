@@ -1,13 +1,15 @@
 from FHI_AL.procedures.initial_dataset import (
     InitialDatasetAIMD,
     InitialDatasetFoundational,
-    InitialDatasetFoundationalParallel
+    InitialDatasetFoundationalParallel,
+    InitialDatasetPARSL
     )
 from FHI_AL.procedures.active_learning import ALProcedure, ALProcedureParallel
 from yaml import safe_load
-from mpi4py import MPI
-from FHI_AL.tools.utilities import GPUMonitor
-
+try:
+    from mpi4py import MPI
+except ImportError:
+    MPI = None  
 
 def main():
     
@@ -31,13 +33,17 @@ def main():
                 mace_settings=mace_settings,
                 al_settings=al_settings
             )
+        elif al_settings.get('CLUSTER', False):
+            initial_ds = InitialDatasetPARSL(
+                mace_settings=mace_settings,
+                al_settings=al_settings
+            )
         else:
             initial_ds = InitialDatasetFoundational(
                 mace_settings=mace_settings,
                 al_settings=al_settings
             )
 
-    MPI.COMM_WORLD.Barrier()
     #check if initial_ds_done.txt exists
     if not initial_ds.check_initial_ds_done():
         initial_ds.run()
@@ -45,31 +51,25 @@ def main():
     if al_settings['ACTIVE_LEARNING'].get("converge_initial", False):
         initial_ds.converge() 
 
-    MPI.COMM_WORLD.Barrier()
-
     if al_settings['ACTIVE_LEARNING'].get('parallel', False):
         al = ALProcedureParallel(
             mace_settings=mace_settings,
             al_settings=al_settings
         )
+
     else:
         al = ALProcedure(
             mace_settings=mace_settings,
             al_settings=al_settings
         )
-
-    MPI.COMM_WORLD.Barrier()
-
+        
     if not al.check_al_done():
         al.run()
     if al_settings['ACTIVE_LEARNING'].get("converge_al", False):
         al.converge()
 
-    #if MPI.COMM_WORLD.Get_rank() == 0:
-    #    monitor.stop()
-    
-    MPI.COMM_WORLD.Barrier()
-    MPI.Finalize()
+    if MPI is not None:
+        MPI.Finalize()
 
 if __name__ == "__main__":
     main()
