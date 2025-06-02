@@ -31,7 +31,8 @@ from FHI_AL.tools.utilities import (
 import parsl
 from FHI_AL.tools.utilities_parsl import recalc_aims_parsl
 from FHI_AL.tools.utilities_parsl import (
-    create_parsl_config,
+    handle_parsl_logger,
+    prepare_parsl
 )
 from FHI_AL.tools.train_epoch_mace import train_epoch, validate_epoch_ensemble
 import ase
@@ -46,6 +47,7 @@ from ase.md.npt import NPT
 from ase import units
 from contextlib import nullcontext
 import sys
+from time import perf_counter
 sys.stdout.flush()
 
 class PrepareInitialDatasetProcedure:
@@ -82,6 +84,7 @@ class PrepareInitialDatasetProcedure:
         self.world_size = self.comm_handler.get_size()
         
         # basic logger is being set up here
+        self.log_dir = Path(mace_settings["GENERAL"]["log_dir"])
         logger_level = (
             logging.DEBUG
             if mace_settings["MISC"]["log_level"].lower() == "debug"
@@ -97,7 +100,7 @@ class PrepareInitialDatasetProcedure:
         self.logger = setup_logger(
             level=logger_level,
             tag="initial_dataset",
-            directory=mace_settings["GENERAL"]["log_dir"],
+            directory=self.log_dir,
         )
         if self.rank == 0:
             logging.info("Initializing initial dataset procedure.")
@@ -254,7 +257,7 @@ class PrepareInitialDatasetProcedure:
         self.al = al_settings["ACTIVE_LEARNING"]
         self.misc = al_settings["MISC"]
         self.md_settings = al_settings["MD"]
-        self.cluster_settings = al_settings.get("CLUSTER", {})
+        self.cluster_settings = al_settings.get("CLUSTER", None)
         self.ensemble_size = self.al["ensemble_size"]
         self.desired_acc = self.al["desired_acc"]
         self.lamb = self.al["lambda"]
@@ -1365,6 +1368,7 @@ class InitialDatasetPARSL(InitialDatasetFoundational):
         al_settings: dict,
         path_to_control: str = "./control.in",
         path_to_geometry: str = "./geometry.in",
+        close_parsl: bool = True,
     ):
 
         super().__init__(
@@ -1374,6 +1378,7 @@ class InitialDatasetPARSL(InitialDatasetFoundational):
             path_to_geometry=path_to_geometry,
             use_mpi=False
         )
+        self.close_parsl = close_parsl
 
         if parsl is None:
             raise ImportError(
@@ -1382,33 +1387,20 @@ class InitialDatasetPARSL(InitialDatasetFoundational):
 
         if self.rank == 0:
             logging.info(f"Setting up PARSL for initial dataset generation.")
-            self._prepare_parsl()
+            parsl_setup_dict = prepare_parsl(
+                cluster_settings=self.cluster_settings
+            )
+            self.config = parsl_setup_dict["config"]
+            self.calc_dir = parsl_setup_dict["calc_dir"]
+            self.clean_dirs = parsl_setup_dict["clean_dirs"]
+            self.launch_str = parsl_setup_dict["launch_str"]
+            self.calc_idx = parsl_setup_dict["calc_idx"]
+            handle_parsl_logger(
+                log_dir=self.log_dir / "parsl_initial_dataset.log",
+            )
             # parsl.load(self.config)
 
         self.comm_handler.barrier()
-
-    def _prepare_parsl(self):
-        assert self.cluster_settings is not None, (
-            "Cluster settings not found. Please provide a YAML file "
-            "with the cluster settings."
-        )
-        try:
-            self.launch_str = self.cluster_settings["launch_str"]
-        except KeyError:
-            exception_msg = "Launch string not found in YAML file. Closing."
-            raise KeyError(exception_msg)
-
-        self.config = create_parsl_config(
-            cluster_settings=self.cluster_settings
-        )
-        # get the path to the directory where the calculations will be run
-        # if none is provided use the current working directory
-        self.calc_dir = self.cluster_settings.get(
-            "calc_dir", os.getcwd() + "/" + "ase_aims_calcs/"
-        )
-        self.calc_dir = Path(self.calc_dir)
-        self.clean_dirs = self.cluster_settings.get("clean_dirs", True)
-        self.calc_idx = 0
 
     def sample_points(self) -> list:
         self._md_w_foundational()
@@ -1419,7 +1411,10 @@ class InitialDatasetPARSL(InitialDatasetFoundational):
             for i, atoms in enumerate(self.sampled_points):
                 self.calc_idx += 1
                 temp_result = recalc_aims_parsl(
-                    atoms,
+                    positions=atoms.get_positions(),
+                    species=atoms.get_chemical_symbols(),
+                    cell=atoms.get_cell(),
+                    pbc=atoms.pbc,
                     aims_settings=self.aims_settings,
                     directory=self.calc_dir / f"calc_{self.calc_idx}",
                     properties=self.properties,
@@ -1431,18 +1426,19 @@ class InitialDatasetPARSL(InitialDatasetFoundational):
                 for i in list(job_results.keys()):
                     result = job_results[i]
                     if result.done():
-                        # try:
                         temp = result.result()
+                        if temp is None:
+                            logging.warning(
+                                f"SCF not converged for point {i}. Skipping."
+                            )
+                            del job_results[i]
+                            continue
                         current_point = self.sampled_points[i]
                         current_point.info["REF_energy"] = temp["energy"]
                         current_point.arrays["REF_forces"] = temp["forces"]
                         if self.compute_stress:
                             current_point.arrays["REF_stress"] = temp["stress"]
                         recalculated_points.append(current_point)
-                        # except:
-                        #    logging.info(
-                        #        "SCF not converged. Omitting point."
-                        #        )
 
                         del job_results[i]
                 time.sleep(0.5)
@@ -1483,6 +1479,11 @@ class InitialDatasetPARSL(InitialDatasetFoundational):
             self.atoms.calc = self.setup_foundational()
 
     def close_aims(self):
-        parsl.dfk().cleanup()
-
+        if self.close_parsl:
+            logging.info("Closing PARSL.")
+            parsl.dfk().cleanup()
+        else:
+            logging.info(
+                "Not closing PARSL. Please close it manually if needed."
+            )
 

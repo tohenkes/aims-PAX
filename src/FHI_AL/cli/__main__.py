@@ -4,7 +4,11 @@ from FHI_AL.procedures.initial_dataset import (
     InitialDatasetFoundationalParallel,
     InitialDatasetPARSL
     )
-from FHI_AL.procedures.active_learning import ALProcedure, ALProcedureParallel
+from FHI_AL.procedures.active_learning import (
+    ALProcedure,
+    ALProcedureParallel,
+    ALProcedurePARSL
+    )
 from yaml import safe_load
 try:
     from mpi4py import MPI
@@ -36,7 +40,8 @@ def main():
         elif al_settings.get('CLUSTER', False):
             initial_ds = InitialDatasetPARSL(
                 mace_settings=mace_settings,
-                al_settings=al_settings
+                al_settings=al_settings,
+                close_parsl=False  # keep parsl open after IDG for AL
             )
         else:
             initial_ds = InitialDatasetFoundational(
@@ -53,6 +58,11 @@ def main():
 
     if al_settings['ACTIVE_LEARNING'].get('parallel', False):
         al = ALProcedureParallel(
+            mace_settings=mace_settings,
+            al_settings=al_settings
+        )
+    elif al_settings.get('CLUSTER', False):
+        al = ALProcedurePARSL(
             mace_settings=mace_settings,
             al_settings=al_settings
         )

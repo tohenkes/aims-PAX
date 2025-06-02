@@ -1,9 +1,47 @@
+import os
 from parsl.config import Config
 from parsl.executors import WorkQueueExecutor
 from parsl.providers import SlurmProvider
 from parsl import python_app
+import numpy as np
 import re
 import logging
+from ase.io import ParseError
+from pathlib import Path
+
+
+def prepare_parsl(
+    cluster_settings: dict = None
+):
+    assert cluster_settings is not None, (
+        "Cluster settings not found. Please provide a YAML file "
+        "with the cluster settings."
+    )
+    try:
+        launch_str = cluster_settings["launch_str"]
+    except KeyError:
+        exception_msg = "Launch string not found in YAML file. Closing."
+        raise KeyError(exception_msg)
+
+    config = create_parsl_config(
+        cluster_settings=cluster_settings
+    )
+    # get the path to the directory where the calculations will be run
+    # if none is provided use the current working directory
+    calc_dir = cluster_settings.get(
+        "calc_dir", os.getcwd() + "/" + "ase_aims_calcs/"
+    )
+    calc_dir = Path(calc_dir)
+    clean_dirs = cluster_settings.get("clean_dirs", True)
+    calc_idx = 0
+    
+    return {
+        "config": config,
+        "calc_dir": calc_dir,
+        "clean_dirs": clean_dirs,
+        "launch_str": launch_str,
+        "calc_idx": calc_idx,
+    }
 
 def create_parsl_config(
     cluster_settings
@@ -39,7 +77,6 @@ def create_parsl_config(
         logging.error("Partition not found. Closing.")
         raise KeyError("Partition not found in slurm options string.")
 
-
     config = Config(
         executors=[
             WorkQueueExecutor(
@@ -62,6 +99,14 @@ def create_parsl_config(
     )
     return config
 
+def handle_parsl_logger(
+        log_dir: Path = Path("./")
+):
+    parsl_logger = logging.getLogger("parsl")
+    parsl_handler = logging.FileHandler(log_dir)
+    parsl_logger.handlers.clear()
+    parsl_logger.addHandler(parsl_handler)
+    parsl_logger.propagate = False
 
 @python_app
 def parsl_test_app():
@@ -73,7 +118,10 @@ def parsl_test_app():
 
 @python_app
 def recalc_aims_parsl(
-    atoms,
+    positions: np.ndarray,
+    species: np.ndarray,
+    cell: np.ndarray,
+    pbc: bool,
     aims_settings: dict,
     directory: str = "./",
     properties: list = ["energy", "forces"],
@@ -82,7 +130,15 @@ def recalc_aims_parsl(
 
     from ase.calculators.aims import Aims, AimsProfile
     import os
+    from ase import Atoms
 
+    # Convert inputs to ASE Atoms object
+    atoms = Atoms(
+        positions=positions,
+        symbols=species,
+        cell=cell,
+        pbc=pbc,  
+    )
     # create output directory
     if not os.path.exists(directory):
         os.makedirs(directory)
@@ -94,6 +150,9 @@ def recalc_aims_parsl(
         directory=directory,
         **aims_settings,
     )
-
-    calc.calculate(atoms=atoms, properties=properties, system_changes=None)
-    return calc.results
+    try:
+        calc.calculate(atoms=atoms, properties=properties, system_changes=None)
+        return calc.results
+    except ParseError:
+        return None
+    

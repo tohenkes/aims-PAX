@@ -38,7 +38,11 @@ def main():
             )
 
     if not initial_ds.check_initial_ds_done():
+        start_time = perf_counter()
         initial_ds.run()
+        end_time = perf_counter()
+        with open("./initial_ds_time.txt", "w") as f:
+            f.write(f"Initial Dataset Generation Time: {end_time - start_time} seconds\n")
     if al_settings['ACTIVE_LEARNING'].get("converge_initial", False):
         initial_ds.converge() 
 

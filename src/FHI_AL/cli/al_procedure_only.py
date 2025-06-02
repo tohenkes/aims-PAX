@@ -1,6 +1,5 @@
-from FHI_AL.procedures.active_learning import ALProcedure, ALProcedureParallel
+from FHI_AL.procedures.active_learning import ALProcedure, ALProcedureParallel, ALProcedurePARSL
 from yaml import safe_load
-from mpi4py import MPI
 from FHI_AL.tools.utilities import GPUMonitor
 from time import perf_counter
 
@@ -15,7 +14,11 @@ def main():
             mace_settings=mace_settings,
             al_settings=al_settings
         )
-
+    elif al_settings.get('CLUSTER', False):
+        al = ALProcedurePARSL(
+            mace_settings=mace_settings,
+            al_settings=al_settings
+        )
     else:
         al = ALProcedure(
             mace_settings=mace_settings,
@@ -26,6 +29,8 @@ def main():
         start_time = perf_counter()
         al.run()
         end_time = perf_counter()
+        with open("./al_procedure_time.txt", "w") as f:
+            f.write(f"Active Learning Procedure Time: {end_time - start_time} seconds\n")
 
     
     if al_settings['ACTIVE_LEARNING'].get("converge_al", False):

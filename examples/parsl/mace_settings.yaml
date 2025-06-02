@@ -61,7 +61,7 @@ TRAINING:
   eval_interval: 5
 
 MISC:
-  device: cpu
+  device: cuda
   keep_checkpoints: False
   restart_latest: False
   error_table: PerAtomMAE
