@@ -8,8 +8,13 @@ import re
 import logging
 from ase.io import ParseError
 from pathlib import Path
+import socket
 
-
+def get_free_port():
+    with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
+        s.bind(('', 0))  # let OS pick an available port
+        return s.getsockname()[1]
+    
 def prepare_parsl(
     cluster_settings: dict = None
 ):
@@ -55,7 +60,13 @@ def create_parsl_config(
     init_blocks = parsl_options.get("init_blocks", 1)
     min_blocks = parsl_options.get("min_blocks", 1)
     max_blocks = parsl_options.get("max_blocks", 1)
-    port = parsl_options.get("port", 9000)
+    parsl_info_dir = Path(parsl_options.get("parsl_info_dir", "./parsl_info"))
+    # create a parent folder for all the parsl stuff
+    if not os.path.exists(parsl_info_dir):
+        os.makedirs(parsl_info_dir)
+    run_dir = parsl_options.get("run_dir", parsl_info_dir / "run_dir")
+    function_dir = parsl_options.get("function_dir", parsl_info_dir / "function_dir")
+    port = parsl_options.get("port", get_free_port())  # 0 means automatically choose a free port
     label = parsl_options.get("label", "workqueue")
 
     try:
@@ -84,6 +95,7 @@ def create_parsl_config(
                 port=port,
                 project_name=project_name,
                 shared_fs=True,  # assumes shared file system
+                function_dir=str(function_dir),
                 provider=SlurmProvider(
                     partition=partition,
                     nodes_per_block=nodes_per_block,
@@ -95,7 +107,8 @@ def create_parsl_config(
 
                 ),
             )
-        ]
+        ],
+        run_dir=str(run_dir),
     )
     return config
 

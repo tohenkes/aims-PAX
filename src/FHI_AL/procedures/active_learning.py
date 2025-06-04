@@ -2095,7 +2095,7 @@ class ALProcedurePARSL(ALProcedure):
             self.launch_str = parsl_setup_dict["launch_str"]
             
             handle_parsl_logger(
-                log_dir=self.log_dir / "al_parsl.log"
+                log_dir=self.log_dir / "parsl_al.log"
             )
             parsl.load(self.config)
                         
@@ -2219,8 +2219,6 @@ class ALProcedurePARSL(ALProcedure):
             with self.results_lock:
                 # remove the job from the results dict to avoid double counting
                 del self.ab_intio_results[idx]
-                
-                
                 
                 
                 
