@@ -327,7 +327,7 @@ class PrepareALProcedure:
         torch.set_default_dtype(dtype_mapping[self.dtype])
         self.device = self.mace_settings["MISC"]["device"]
         self.atomic_energies_dict = self.mace_settings["ARCHITECTURE"].get("atomic_energies", None)
-        self.compute_stress = self.mace_settings.get("compute_stress", False)
+        self.compute_stress = self.mace_settings["GENERAL"].get("compute_stress", False)
         self.properties = ['energy', 'forces']
         if self.compute_stress:
             self.properties.append('stress')
@@ -677,7 +677,7 @@ class PrepareALProcedure:
             current_point.info["REF_energy"] = self.aims_calculator.results["energy"]
             current_point.arrays["REF_forces"] = self.aims_calculator.results["forces"]
             if self.compute_stress:
-                current_point.arrays["REF_stress"] = self.aims_calculator.results["stress"]
+                current_point.info["REF_stress"] = self.aims_calculator.results["stress"]
             return current_point
         else:
             if self.rank == 0:
@@ -1444,7 +1444,7 @@ class ALProcedure(PrepareALProcedure):
                 if self.rank == 0:
                     if (uncertainty > self.threshold).any():
                         logging.info(
-                            f"Uncertainty of point is beyond threshold {np.round(self.threshold,3)} at worker {idx}: {np.round(uncertainty,3)}."
+                            f"Uncertainty of point is beyond threshold {np.round(self.threshold,3)} at worker {idx}: {np.round(uncertainty,3):.3f}."
                         )
                     else:
                         logging.info(
@@ -1777,6 +1777,12 @@ class ALProcedureParallel(ALProcedure):
             'forces': {idx: None for idx in range(self.num_trajectories)},
             'stress': {idx: None for idx in range(self.num_trajectories)},
         }
+        self.worker_reqs_bufs = {
+            'energy': {idx: None for idx in range(self.num_trajectories)},
+            'forces': {idx: None for idx in range(self.num_trajectories)},
+            'stress': {idx: None for idx in range(self.num_trajectories)},
+        }
+        
         self.req_idx_pbc_cell = None
         self.req_positions_species = None
         self.req = None
@@ -1964,7 +1970,7 @@ class ALProcedureParallel(ALProcedure):
                             )
                             dft_forces = dft_result.arrays["REF_forces"]
                             if self.compute_stress:
-                                dft_stress = dft_result.arrays["REF_stress"]
+                                dft_stress = dft_result.info["REF_stress"]
                         else:
                             dft_energies_num_atoms = np.array(
                                 [np.nan, np.nan],
@@ -2047,38 +2053,37 @@ class ALProcedureParallel(ALProcedure):
 
 
         if self.worker_reqs['energy'][idx] is None:
-            self.received_energy_num_atoms_buf = np.empty(
+            self.worker_reqs_bufs['energy'][idx] = np.empty(
                 shape=(2, ), dtype=np.float64
                 )
             self.worker_reqs['energy'][idx] = self.world_comm.Irecv(
-                buf=self.received_energy_num_atoms_buf,
+                buf=self.worker_reqs_bufs['energy'][idx],
                 source=1,
                 tag=idx
             )
         status, _ = self.worker_reqs['energy'][idx].test()
 
         if status:
-            scf_failed = np.isnan(self.received_energy_num_atoms_buf[0])
+            scf_failed = np.isnan(self.worker_reqs_bufs['energy'][idx][0])
             # check if the energy is NaN
-            
             if not scf_failed:
                 if self.worker_reqs['forces'][idx] is None:
-                    self.received_forces_buf = np.empty(
-                        shape=(int(self.received_energy_num_atoms_buf[1]), 3),
+                    self.worker_reqs_bufs['forces'][idx] = np.empty(
+                        shape=(int(self.worker_reqs_bufs['energy'][idx][1]), 3),
                         dtype=np.float64
                     )
                     self.worker_reqs['forces'][idx] = self.world_comm.Irecv(
-                        buf=self.received_forces_buf,
+                        buf=self.worker_reqs_bufs['forces'][idx],
                         source=1,
                         tag=idx + 10000
                     )
                     if self.compute_stress:
-                        self.received_stress_buf = np.empty(
+                        self.worker_reqs_bufs['stress'][idx] = np.empty(
                             shape=(6, ),
                             dtype=np.float64
                         )
                         self.worker_reqs['stress'][idx] = self.world_comm.Irecv(
-                            buf=self.received_stress_buf,
+                            buf=self.worker_reqs_bufs['stress'][idx],
                             source=1,
                             tag=idx + 20000
                         )
@@ -2093,25 +2098,22 @@ class ALProcedureParallel(ALProcedure):
 
                     if self.rank == 0:
                         logging.info(f"Worker {idx} recieved a point from DFT.")
+                    # we are updating the MD checkpoint here because then we make sure
+                    # that the MD is restarted from a point that is inside the training set
+                    # so the MLFF should be able to handle this and lead to a better trajectory
+                    if self.rank == 0:
+                        self.MD_checkpoints[idx] = atoms_full_copy(self.trajectories[idx])
                     
-                    if not np.isnan(self.received_energy_num_atoms_buf[0]):
+                    received_point = self.trajectories[idx].copy()
+                    received_point.info["REF_energy"] = self.worker_reqs_bufs['energy'][idx][0]
+                    received_point.arrays["REF_forces"] = self.worker_reqs_bufs['forces'][idx]
+                    if self.compute_stress:
+                        received_point.info["REF_stress"] = self.worker_reqs_bufs['stress'][idx]
                     
-                        # we are updating the MD checkpoint here because then we make sure
-                        # that the MD is restarted from a point that is inside the training set
-                        # so the MLFF should be able to handle this and lead to a better trajectory
-                        if self.rank == 0:
-                            self.MD_checkpoints[idx] = atoms_full_copy(self.trajectories[idx])
-                        
-                        received_point = self.trajectories[idx].copy()
-                        received_point.info["REF_energy"] = self.received_energy_num_atoms_buf[0]
-                        received_point.arrays["REF_forces"] = self.received_forces_buf
-                        if self.compute_stress:
-                            received_point.arrays["REF_stress"] = self.received_stress_buf
-                        
-                        self._handle_received_point(
-                            idx=idx,
-                            received_point=received_point
-                        )
+                    self._handle_received_point(
+                        idx=idx,
+                        received_point=received_point
+                    )
             else:
                 if self.rank == 0:
                     logging.info(
@@ -2454,7 +2456,7 @@ class ALProcedurePARSL(ALProcedure):
                 recieved_point.info["REF_energy"] = job_result['energy']
                 recieved_point.arrays["REF_forces"] = job_result['forces']
                 if self.compute_stress:
-                    recieved_point.arrays["REF_stress"] = job_result['stress']
+                    recieved_point.info["REF_stress"] = job_result['stress']
                 self.MD_checkpoints[idx] = atoms_full_copy(recieved_point)
                 
                 self._handle_received_point(

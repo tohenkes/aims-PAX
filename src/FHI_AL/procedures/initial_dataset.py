@@ -1026,7 +1026,7 @@ class InitialDatasetFoundational(InitialDatasetProcedure):
                 "forces"
             ]
             if self.compute_stress:
-                current_point.arrays["REF_stress"] = self.aims_calc.results[
+                current_point.info["REF_stress"] = self.aims_calc.results[
                     "stress"
                 ]
             return current_point
@@ -1437,7 +1437,7 @@ class InitialDatasetPARSL(InitialDatasetFoundational):
                         current_point.info["REF_energy"] = temp["energy"]
                         current_point.arrays["REF_forces"] = temp["forces"]
                         if self.compute_stress:
-                            current_point.arrays["REF_stress"] = temp["stress"]
+                            current_point.info["REF_stress"] = temp["stress"]
                         recalculated_points.append(current_point)
 
                         del job_results[i]
