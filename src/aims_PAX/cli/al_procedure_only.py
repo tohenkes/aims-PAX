@@ -1,6 +1,5 @@
-from FHI_AL.procedures.active_learning import ALProcedure, ALProcedureParallel, ALProcedurePARSL
+from aims_PAX.procedures.active_learning import ALProcedure, ALProcedureParallel, ALProcedurePARSL
 from yaml import safe_load
-from FHI_AL.tools.utilities import GPUMonitor
 from time import perf_counter
 
 def main():

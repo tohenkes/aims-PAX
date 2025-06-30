@@ -1,4 +1,4 @@
-from FHI_AL.procedures.active_learning import StandardMACEEnsembleProcedure
+from aims_PAX.procedures.active_learning import StandardMACEEnsembleProcedure
 from yaml import safe_load
 
 

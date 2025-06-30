@@ -1,4 +1,4 @@
-from FHI_AL.procedures.atomic_energies import E0Calculator
+from aims_PAX.procedures.atomic_energies import E0Calculator
 from mpi4py import MPI
 import argparse
 

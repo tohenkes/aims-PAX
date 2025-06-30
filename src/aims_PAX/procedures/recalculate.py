@@ -1,6 +1,6 @@
 import ase.build
 from mace import tools
-from FHI_AL.tools.utilities import (
+from aims_PAX.tools.utilities import (
     AIMSControlParser,
 )
 import ase

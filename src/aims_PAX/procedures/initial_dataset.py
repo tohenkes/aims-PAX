@@ -7,7 +7,7 @@ import time
 import shutil
 from mace import tools
 from mace.calculators import mace_mp
-from FHI_AL.tools.utilities import (
+from aims_PAX.tools.utilities import (
     create_dataloader,
     ensemble_training_setups,
     setup_ensemble_dicts,
@@ -29,12 +29,12 @@ from FHI_AL.tools.utilities import (
     dtype_mapping,
 )
 import parsl
-from FHI_AL.tools.utilities_parsl import recalc_aims_parsl
-from FHI_AL.tools.utilities_parsl import (
+from aims_PAX.tools.utilities_parsl import recalc_aims_parsl
+from aims_PAX.tools.utilities_parsl import (
     handle_parsl_logger,
     prepare_parsl
 )
-from FHI_AL.tools.train_epoch_mace import train_epoch, validate_epoch_ensemble
+from aims_PAX.tools.train_epoch_mace import train_epoch, validate_epoch_ensemble
 import ase
 from ase.io import read
 import logging

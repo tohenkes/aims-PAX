@@ -5,13 +5,13 @@ import torch
 import numpy as np
 from mace import tools
 from mace.calculators import MACECalculator
-from FHI_AL.tools.uncertainty import (
+from aims_PAX.tools.uncertainty import (
     HandleUncertainty,
     MolForceUncertainty,
     get_threshold
 )
-#from FHI_AL.tools import utilities
-from FHI_AL.tools.utilities import (
+#from aims_PAX.tools import utilities
+from aims_PAX.tools.utilities import (
     create_dataloader,
     ensemble_training_setups,
     ensemble_from_folder,
@@ -40,17 +40,17 @@ from FHI_AL.tools.utilities import (
     AIMSControlParser,
     ModifyMD
 )
-from FHI_AL.tools.utilities_parsl import (
+from aims_PAX.tools.utilities_parsl import (
     prepare_parsl,
     recalc_aims_parsl,
     handle_parsl_logger
 )
 import shutil
-from FHI_AL.tools.setup_MACE_training import (
+from aims_PAX.tools.setup_MACE_training import (
     setup_mace_training,
     reset_optimizer
     )
-from FHI_AL.tools.train_epoch_mace import train_epoch, validate_epoch_ensemble
+from aims_PAX.tools.train_epoch_mace import train_epoch, validate_epoch_ensemble
 import ase
 from ase.io import read, write
 import logging
@@ -1309,7 +1309,6 @@ class ALProcedure(PrepareALProcedure):
         ):  
             if self.rank == 0:
                 logging.info(f"Trajectory worker {idx} is sending a point to DFT for analysis.")
-                logging.info(f'Current MD step is {current_MD_step}.')
             
             if current_MD_step % self.skip_step == 0:
                 self.trajectories_analysis_prediction[idx] = prediction
@@ -2683,7 +2682,7 @@ class ALProcedurePARSL(ALProcedure):
 
         while True:
             if self.analysis_kill_thread and not kill_requested:
-                logging.info("Analysis manager kill switch triggered. Waiting for pending futures...")
+                logging.info("Analysis manager kill switch triggered. Waiting for pending analysis jobs...")
                 kill_requested = True
 
             # Try to get new data unless kill has been requested
@@ -2736,10 +2735,6 @@ class ALProcedurePARSL(ALProcedure):
                         self.collect_thresholds[job_idx].append(self.threshold)
                         self.check += 1
                         self._save_analysis()
-                        logging.info(
-                            f"Analysis for worker {job_idx} no {job_no} at MD step {current_md_steps[job_idx][job_no]} saved."
-                        )
-
                 # Remove only the completed job
                 del futures[job_idx][job_no]
                 del predicted_forces[job_idx][job_no]
@@ -2747,7 +2742,7 @@ class ALProcedurePARSL(ALProcedure):
 
             # Check for final shutdown
             if kill_requested and not any(futures.values()):
-                logging.info("All pending analysis futures completed. Shutting down thread.")
+                logging.info("All pending analysis jobs completed. Shutting down thread.")
                 self.analysis_done = True
                 break
 

@@ -1,4 +1,4 @@
-from FHI_AL.procedures.recalculate import ReCalculator
+from aims_PAX.procedures.recalculate import ReCalculator
 from mpi4py import MPI
 import argparse
 

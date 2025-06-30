@@ -12,8 +12,8 @@ from mace import tools, modules
 from mace.tools import AtomicNumberTable, torch_geometric, torch_tools, utils
 from mace.data.utils import compute_average_E0s
 from ase.io import read
-from FHI_AL.setup_MACE import setup_mace
-from FHI_AL.setup_MACE_training import setup_mace_training
+from aims_PAX.setup_MACE import setup_mace
+from aims_PAX.setup_MACE_training import setup_mace_training
 from dataclasses import dataclass
 import ase.data
 import ase.io

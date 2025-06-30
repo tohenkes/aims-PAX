@@ -14,8 +14,8 @@ from mace import tools, modules
 from mace.tools import AtomicNumberTable, torch_geometric, torch_tools, utils
 from mace.tools.train import evaluate
 from mace.data.utils import compute_average_E0s, config_from_atoms_list, load_from_xyz
-from FHI_AL.tools.setup_MACE import setup_mace
-from FHI_AL.tools.setup_MACE_training import setup_mace_training
+from aims_PAX.tools.setup_MACE import setup_mace
+from aims_PAX.tools.setup_MACE_training import setup_mace_training
 from dataclasses import dataclass
 from mace.tools.utils import (
     MetricsLogger,

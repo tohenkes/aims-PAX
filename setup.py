@@ -1,14 +1,14 @@
 from setuptools import setup, find_packages
 
 setup(
-    name='FHI_AL',
+    name='aims_PAX',
     version='0.1',
     author='Tobias Henkes',
     author_email='tobias.henkes@uni.lu',
     description='Active learning for FHI-aims',
     long_description=open('README.md').read(),
     long_description_content_type='text/markdown',
-    url='https://github.com/tohenkes/FHI_AL',
+    url='https://github.com/tohenkes/aims_PAX',
     packages=find_packages(where='src'),
     package_dir={'': 'src'},
     classifiers=[
@@ -28,13 +28,13 @@ setup(
     },
     entry_points={
         'console_scripts': [
-            'FHI_AL=FHI_AL.cli.__main__:main',
-            'FHI_AL-initial-ds=FHI_AL.cli.create_initial_ds:main',
-            'FHI_AL-al=FHI_AL.cli.al_procedure_only:main',
-            "FHI_AL-scratch=FHI_AL.cli.scratch_train:main",
-            "FHI_AL-atomic-energies=FHI_AL.cli.get_atomic_energies:main",
-            "FHI_AL-test_ensemble=FHI_AL.cli.test_ensemble:main",
-            "FHI_AL-recalculate=FHI_AL.cli.recalculate_data:main",
+            'aims_PAX=aims_PAX.cli.__main__:main',
+            'aims_PAX-initial-ds=aims_PAX.cli.create_initial_ds:main',
+            'aims_PAX-al=aims_PAX.cli.al_procedure_only:main',
+            "aims_PAX-scratch=aims_PAX.cli.scratch_train:main",
+            "aims_PAX-atomic-energies=aims_PAX.cli.get_atomic_energies:main",
+            "aims_PAX-test_ensemble=aims_PAX.cli.test_ensemble:main",
+            "aims_PAX-recalculate=aims_PAX.cli.recalculate_data:main",
         ],
     },
 )

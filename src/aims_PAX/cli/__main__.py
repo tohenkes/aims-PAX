@@ -1,10 +1,10 @@
-from FHI_AL.procedures.initial_dataset import (
+from aims_PAX.procedures.initial_dataset import (
     InitialDatasetAIMD,
     InitialDatasetFoundational,
     InitialDatasetFoundationalParallel,
     InitialDatasetPARSL
     )
-from FHI_AL.procedures.active_learning import (
+from aims_PAX.procedures.active_learning import (
     ALProcedure,
     ALProcedureParallel,
     ALProcedurePARSL

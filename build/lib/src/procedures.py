@@ -6,8 +6,8 @@ import torch
 sys.path.append(os.path.dirname(os.path.dirname(os.path.realpath(__file__))))
 import numpy as np
 from mace import tools
-from FHI_AL.custom_MACECalculator import MACECalculator
-from FHI_AL.utilities import (
+from aims_PAX.custom_MACECalculator import MACECalculator
+from aims_PAX.utilities import (
     create_dataloader,
     ensemble_training_setups,
     ensemble_from_folder,
@@ -27,7 +27,7 @@ from FHI_AL.utilities import (
     list_files_in_directory,
     AIMSControlParser,
 )
-from FHI_AL.src.train_epoch_mace import train_epoch, validate_epoch_ensemble
+from aims_PAX.src.train_epoch_mace import train_epoch, validate_epoch_ensemble
 import ase
 from ase.io import read
 import logging

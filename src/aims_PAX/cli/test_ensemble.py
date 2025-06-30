@@ -1,4 +1,4 @@
-from FHI_AL.tools.utilities import test_ensemble, ensemble_from_folder
+from aims_PAX.tools.utilities import test_ensemble, ensemble_from_folder
 from ase.io import read
 import argparse
 import numpy as np

@@ -7,8 +7,8 @@ CLUSTER:
     min_blocks: 1
     max_blocks: 4
     label: 'EXAMPLE'
-    # run_dir: "/home/users/u101418/al_aims/asi/FHI_AL/examples/parsl/parsl1/parsl_run_dir1"
-    #function_dir: "/home/users/u101418/al_aims/asi/FHI_AL/examples/parsl/parsl1/parsl_function_dir1"
+    # run_dir: "/home/users/u101418/al_aims/asi/aims_PAX/examples/parsl/parsl1/parsl_run_dir1"
+    #function_dir: "/home/users/u101418/al_aims/asi/aims_PAX/examples/parsl/parsl1/parsl_function_dir1"
 
   slurm_str: |
     #SBATCH --job-name=EXAMPLE
@@ -31,7 +31,7 @@ CLUSTER:
 
   launch_str: srun -n 128 /project/home/p200243/tcp_software/fhi-aims.250320/build/aims.250320.scalapack.mpi.x >> aims.out
   clean_dirs: False
-  calc_dir: "/home/users/u101418/al_aims/asi/FHI_AL/examples/parsl/parsl1/calcs"
+  calc_dir: "/home/users/u101418/al_aims/asi/aims_PAX/examples/parsl/parsl1/calcs"
 
 ACTIVE_LEARNING:
   desired_acc: 0

@@ -1,7 +1,7 @@
 import ase.build
 import numpy as np
 from mace import tools
-from FHI_AL.tools.utilities import (
+from aims_PAX.tools.utilities import (
     Z_from_geometry_in,
     AIMSControlParser,
 )

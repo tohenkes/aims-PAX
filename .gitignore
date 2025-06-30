@@ -10,7 +10,7 @@
 *.ipynb
 *.ase
 *.sh
-src/FHI_AL.egg-info
+src/aims_PAX.egg-info
 /build
 
 

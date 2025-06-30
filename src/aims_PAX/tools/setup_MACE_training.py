@@ -1,5 +1,5 @@
-import FHI_AL.tools
-import FHI_AL.tools.utilities
+import aims_PAX.tools
+import aims_PAX.tools.utilities
 import torch
 from typing import Optional
 import torch.nn.functional
@@ -11,7 +11,7 @@ from mace.modules.loss import (
     weighted_mean_squared_error_energy,
     mean_squared_error_forces
 )
-import FHI_AL
+import aims_PAX
 import numpy as np
 import os
 

@@ -125,7 +125,7 @@ def handle_parsl_logger(
 def parsl_test_app():
     import time
     time.sleep(1)
-    with open("/home/users/u101418/al_aims/asi/FHI_AL/examples/parsl/parsl_test.txt", "a") as f:
+    with open("/home/users/u101418/al_aims/asi/aims_PAX/examples/parsl/parsl_test.txt", "a") as f:
         f.write("Hello from PARSL!\n")
     return 0
 
