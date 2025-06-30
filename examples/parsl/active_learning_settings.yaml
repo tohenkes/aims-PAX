@@ -1,35 +1,37 @@
 CLUSTER:
   type: slurm
-  project_name: 'fhi_aims_dft'
+  project_name: 'EXAMPLE'
   parsl_options:
     nodes_per_block: 1
     init_blocks: 1
     min_blocks: 1
-    max_blocks: 10
-    label: 'test'
+    max_blocks: 4
+    label: 'EXAMPLE'
+    # run_dir: "/home/users/u101418/al_aims/asi/FHI_AL/examples/parsl/parsl1/parsl_run_dir1"
+    #function_dir: "/home/users/u101418/al_aims/asi/FHI_AL/examples/parsl/parsl1/parsl_function_dir1"
 
   slurm_str: |
-    #SBATCH --job-name=parsl_test
+    #SBATCH --job-name=EXAMPLE
     #SBATCH --partition=cpu
     #SBATCH --nodes=1
     #SBATCH --ntasks-per-node=128
     #SBATCH --time=48:00:00
-    #SBATCH --account=p200716
+    #SBATCH --account=p200243
     #SBATCH --qos=default
 
   worker_str: |
     module load env/release/2023
     source /project/home/p200243/thenkes/miniconda3/bin/activate mace
-    module load CUDA/12.2.0
     module load intel
     ulimit -s unlimited
     export OMP_NUM_THREADS=1
     export MKL_NUM_THREADS=1
     export MKL_DYNAMIC='FALSE'
+    export WORK_QUEUE_DISABLE_SHARED_PORT=1
 
   launch_str: srun -n 128 /project/home/p200243/tcp_software/fhi-aims.250320/build/aims.250320.scalapack.mpi.x >> aims.out
   clean_dirs: False
-  calc_dir: "/home/users/u101418/al_aims/asi/FHI_AL/examples/parsl/calcs"
+  calc_dir: "/home/users/u101418/al_aims/asi/FHI_AL/examples/parsl/parsl1/calcs"
 
 ACTIVE_LEARNING:
   desired_acc: 0
@@ -45,19 +47,19 @@ ACTIVE_LEARNING:
   max_final_epochs: 500
   intermediate_epochs: 5
   patience: 50
-  max_MD_steps: 10000000
-  max_set_size: 12
+  max_MD_steps: 500
+  max_set_size: 5000
   valid_skip: 5
   analysis_skip: 50
   ensemble_size: 4
-  c_x: 0.
+  c_x: 0.3 
   dataset_dir: "./data"
   skip_step_initial: 25 # step to skip in sampling initial MD
   skip_step_mlff: 25 # step to skip in sampling MLFF MD
-  num_trajectories: 4 # number of trajectories to from sample in parallel
-  species_dir: "/project/home/p200243/tcp_software/aims_master_090824/FHIaims/species_defaults/defaults_2020/light"
+  num_trajectories: 2 # number of trajectories to from sample in parallel
+  species_dir: "/mnt/tier2/project/p200243/tcp_software/FHIaims_master_branch/FHIaims/species_defaults/defaults_2020/light"
   aims_lib_path: "/project/home/p200243/tcp_software/aims_master_090824/libaims.241114.scalapack.mpi.so"
-  analysis: False
+  analysis: True
   initial_sampling: mace-mp0
   initial_foundational_size: "small"
   parallel: False

@@ -1,6 +1,10 @@
+# core requirements
 ase
 numpy
-torch
 mace-torch
 asi4py
-pyYaml
+torch
+pyyaml
+
+# optional
+# parsl

@@ -10,6 +10,7 @@ from FHI_AL.tools.uncertainty import (
     MolForceUncertainty,
     get_threshold
 )
+#from FHI_AL.tools import utilities
 from FHI_AL.tools.utilities import (
     create_dataloader,
     ensemble_training_setups,
@@ -269,7 +270,8 @@ class PrepareALProcedure:
                         "mean_error": [],
                         "atom_wise_error": [],
                         "threshold": [],
-                        "train_set_length": []
+                        "train_set_length": [],
+                        "current_md_step": [],
                         } for trajectory in range(self.num_trajectories)
                 }
                 if self.mol_idxs is not None:
@@ -887,7 +889,8 @@ class ALProcedure(PrepareALProcedure):
     #TODO: update docstring
             self,
             analysis_prediction: np.ndarray,
-            true_forces: np.ndarray
+            true_forces: np.ndarray,
+            current_md_step: int,
             ) -> tuple[np.ndarray, np.ndarray]:
         """
         Calculates the force uncertainty and the maximum 
@@ -925,6 +928,7 @@ class ALProcedure(PrepareALProcedure):
         check_results['max_error'] = max_error
         check_results['mean_error'] = mean_error
         check_results['train_set_length'] = self.train_dataset_len
+        check_results['current_md_step'] = current_md_step
         
         if self.mol_idxs is not None:
             total_certainty = self.get_uncertainty(analysis_prediction)
@@ -1032,8 +1036,6 @@ class ALProcedure(PrepareALProcedure):
             received_point=self.point  #TODO: change self.point, i dont like it
         )
 
-
-    
     def _check_batch_size(self, set_batch_size, tag):
         batch_size = (
             1
@@ -1268,6 +1270,7 @@ class ALProcedure(PrepareALProcedure):
     ):
         if converged:
             check_results = self.analysis_check(
+                current_md_step=self.trajectory_MD_steps[idx],
                 analysis_prediction=analysis_prediction,
                 true_forces = self.aims_calculator.results["forces"]
             )
@@ -1306,6 +1309,7 @@ class ALProcedure(PrepareALProcedure):
         ):  
             if self.rank == 0:
                 logging.info(f"Trajectory worker {idx} is sending a point to DFT for analysis.")
+                logging.info(f'Current MD step is {current_MD_step}.')
             
             if current_MD_step % self.skip_step == 0:
                 self.trajectories_analysis_prediction[idx] = prediction
@@ -1325,7 +1329,10 @@ class ALProcedure(PrepareALProcedure):
 
             #TODO: sometimes already calculated above so we should not calculate it again
             self.comm_handler.barrier()
-            converged = self._analysis_dft_call(point=self.point, idx=idx)
+            send_point = atoms_full_copy(self.point)
+            send_point.arrays["forces_comm"] = self.trajectories_analysis_prediction[idx]
+            send_point.info["current_MD_step"] = current_MD_step
+            converged = self._analysis_dft_call(point=send_point, idx=idx)
             self.comm_handler.barrier()
 
             self._process_analysis(
@@ -1450,10 +1457,6 @@ class ALProcedure(PrepareALProcedure):
                         logging.info(
                             f"Threshold not crossed at trajectory worker {idx} for {self.skip_step*self.uncert_not_crossed_limit} steps."
                         )
-
-                # at the moment the process waits for the calculation to finish
-                # ideally it should calculate in the background and the other
-                # workers sample/train in the meantime
                 
                 self._handle_dft_call(
                     idx
@@ -1674,9 +1677,8 @@ class ALProcedure(PrepareALProcedure):
                     )
 
 
-
-
 class ALProcedureParallel(ALProcedure):
+    
     def __init__(                 
         self,
         mace_settings: dict,
@@ -1713,7 +1715,9 @@ class ALProcedureParallel(ALProcedure):
             path_to_geometry=path_to_geometry,
             comm_handler=self.comm_handler
         )
-
+        self.first_wait_after_restart = {
+            idx: True for idx in range(self.num_trajectories)
+        }
 
     def setup_aims_calculator(
         self,
@@ -1777,23 +1781,34 @@ class ALProcedureParallel(ALProcedure):
             'forces': {idx: None for idx in range(self.num_trajectories)},
             'stress': {idx: None for idx in range(self.num_trajectories)},
         }
+        
         self.worker_reqs_bufs = {
             'energy': {idx: None for idx in range(self.num_trajectories)},
             'forces': {idx: None for idx in range(self.num_trajectories)},
             'stress': {idx: None for idx in range(self.num_trajectories)},
         }
         
-        self.req_idx_pbc_cell = None
-        self.req_positions_species = None
-        self.req = None
-        current_num_atoms = None
-        received = False
+        if self.analysis:
+            self.worker_reqs_analysis = {
+                'energy': {idx: None for idx in range(self.num_trajectories)},
+                'forces': {idx: None for idx in range(self.num_trajectories)},
+                'stress': {idx: None for idx in range(self.num_trajectories)},
+            }
+            self.worker_reqs_analysis_bufs = {
+                'energy': {idx: None for idx in range(self.num_trajectories)},
+                'forces': {idx: None for idx in range(self.num_trajectories)},
+                'stress': {idx: None for idx in range(self.num_trajectories)},
+            }
+        
+        self.req_sys_info = None
+        self.req_geo_info = None
+        self.current_num_atoms = None
 
         if self.analysis:
-            self.req_analysis = None
-
-
-        if self.analysis:
+            self.req_sys_info_analysis = None
+            self.req_geo_info_analysis = None
+            self.current_num_atoms_analysis = None
+            self.received_analysis = None
             self.analysis_worker_reqs = {idx: None for idx in range(self.num_trajectories)}
 
         if self.color == 1:
@@ -1809,16 +1824,14 @@ class ALProcedureParallel(ALProcedure):
 
                     if (
                         self.trajectory_status[trajectory_idx] == "training"
-                    ):  # and training_job: # the idea is to let a worker train only if new points
-                        # have been added. e.g. it can happen that one worker is
-                        # beyond its MD limit but there is no new point that has been added
-
+                    ): 
+                        
                         self.training_task(trajectory_idx)
 
                     if self.trajectory_status[trajectory_idx] == "waiting":
 
                         set_limit = self.waiting_task(trajectory_idx)
-                        if set_limit: # stops the process if the maximum dataset size is reached
+                        if set_limit:
                             self._send_kill()
                             break
                     
@@ -1833,10 +1846,6 @@ class ALProcedureParallel(ALProcedure):
                             logging.info(
                                 "All workers are in training mode."
                             )  
-                    
-                    #if self.num_workers_waiting == self.num_trajectories:
-                    #    if self.rank == 0:
-                    #        logging.info("All workers are waiting for jobs to finish.")
                 
                 if self.num_MD_limits_reached == self.num_trajectories:
                     if self.rank == 0:
@@ -1856,7 +1865,7 @@ class ALProcedureParallel(ALProcedure):
                 
                 
                 if self.current_valid_error < self.desired_accuracy:
-                    if self.rank == 0:
+                    if self.rank == 0:  
                         logging.info(
                             "Desired accuracy reached."
                         )
@@ -1864,177 +1873,104 @@ class ALProcedureParallel(ALProcedure):
                     break
                 
             if self.color == 1:
-                # TODO: put everything into a function
                 kill_signal = self.req_kill.Test()
                 if kill_signal:
                     self.aims_calculator.asi.close()
-                    #self.req.cancel() if self.req is not None else None
-                    #self.req_send.cancel() if self.req_send is not None and not self.req_send.Test() else None
                     break
                 
                 
                 if self.rank != 1:
-                    self.positions_species_buf = None
-                    self.idx_pbc_cell_buf = None
+                    self.geo_info_buf = None
+                    self.sys_info_buf = None
+                    received = False
+                    
                 if self.rank == 1:
-
-                    if self.req_idx_pbc_cell is None:
-                        self.idx_pbc_cell_buf = np.empty(
-                            shape=(14, ), dtype=np.float64
-                        )
-                        self.req_idx_pbc_cell = self.world_comm.Irecv(
-                            buf=self.idx_pbc_cell_buf,
-                            source=0,
-                            tag=1234
-                        )
-                        
-                    status, _ = self.req_idx_pbc_cell.test()
-                    if status:
-                        idx = int(self.idx_pbc_cell_buf[0])
-                        current_num_atoms = int(self.idx_pbc_cell_buf[1])
-                        self.req_idx_pbc_cell = None
-                        if self.req_positions_species is None:
-                            self.positions_species_buf = np.empty(
-                                    shape=(
-                                        2, current_num_atoms, 3
-                                    )
-                                    , dtype=np.float64
-                            )
-
-                            self.req_positions_species = self.world_comm.Irecv(
-                                buf=self.positions_species_buf,
-                                source=0,
-                                tag=1235
-                            )
-                        status_pos_spec = self.req_positions_species.Wait()
-                        if status_pos_spec:
-                            self.req_positions_species = None
-                            received = True
+                    received = self._listening_task()
                             
 
                 self.comm_handler.barrier()
                 received = self.comm_handler.bcast(received, root=0)  # global rank 1 is 0 of split comm
-                current_num_atoms = self.comm_handler.bcast(current_num_atoms, root=0)
+                self.current_num_atoms = self.comm_handler.bcast(self.current_num_atoms, root=0)
                 self.comm_handler.barrier()
+                
                 if received:
-                    
                     if self.rank != 1:
-                        self.idx_pbc_cell_buf = np.empty(
+                        self.sys_info_buf = np.empty(
                             shape=(14, ), dtype=np.float64
                         )
-                        self.positions_species_buf = np.empty(
+                        self.geo_info_buf = np.empty(
                             shape=(
-                                2, current_num_atoms, 3
+                                2, self.current_num_atoms, 3
                             )
                             , dtype=np.float64
                             )
                     self.comm_handler.barrier()
                     self.comm_handler.comm.Bcast(
-                        buf=self.idx_pbc_cell_buf,
+                        buf=self.sys_info_buf,
                         root=0
                     )
                     self.comm_handler.comm.Bcast(
-                        buf=self.positions_species_buf,
+                        buf=self.geo_info_buf,
                         root=0
                     )
                     self.comm_handler.barrier()
 
-                    current_idx = int(self.idx_pbc_cell_buf[0])
-                    current_num_atoms = int(self.idx_pbc_cell_buf[1])
-                    current_pbc = self.idx_pbc_cell_buf[2:5].astype(np.bool_).reshape(
-                        (3, )
-                    )
-                    current_species = self.positions_species_buf[0].astype(np.int32)
-                    # transform current_species to a list of species
-                    current_species = current_species[:, 0].tolist()
-                    current_positions = self.positions_species_buf[1]
-                    current_cell = self.idx_pbc_cell_buf[5:14].reshape((3, 3))
-                    
-                    received = False
-                    point = ase.Atoms(
-                        positions=current_positions,
-                        numbers=current_species,
-                        pbc=current_pbc,
-                        cell=current_cell
-                    )
                     self.comm_handler.barrier()
-                    dft_result = self.recalc_aims(point)
+                    dft_result = self._calculate_received()
 
                     if self.rank == 1:
-                        if dft_result is not None:
-                            logging.info(f"DFT calculation for worker {idx} finished and sending point back.")
-                            dft_energies = dft_result.info["REF_energy"]
-                            dft_energies_num_atoms = np.array(
-                                [dft_energies, current_num_atoms],
-                                dtype=np.float64
-                            )
-                            dft_forces = dft_result.arrays["REF_forces"]
-                            if self.compute_stress:
-                                dft_stress = dft_result.info["REF_stress"]
-                        else:
-                            dft_energies_num_atoms = np.array(
-                                [np.nan, np.nan],
-                                dtype=np.float64
-                                )
-                            dft_forces = np.empty(
-                                shape=(current_num_atoms, 3),
-                                dtype=np.float64
-                            ).fill(np.nan)
-                            if self.compute_stress:
-                                dft_stress = np.empty(
-                                    shape=(6, ),
-                                    dtype=np.float64
-                                ).fill(np.nan)
-                            logging.info(f"DFT calculation for worker {idx} failed. Sending NaN values back.")
-                        
-
-                                                            
-                        dft_energies_num_atoms_send = self.world_comm.Isend(
-                            buf=dft_energies_num_atoms,
-                            dest=0,
-                            tag=current_idx
-                            
+                        self._send_result_back(
+                            idx=int(self.sys_info_buf[0]),
+                            dft_result=dft_result,
+                            num_atoms=self.current_num_atoms
                         )
-                        dft_forces_send = self.world_comm.Isend(
-                            buf=np.asarray(
-                                dft_forces,
-                                dtype=np.float64
-                            ),
-                            dest=0,
-                            tag=current_idx + 10000
-                        )
-                        if self.compute_stress:
-                            dft_stress_send = self.world_comm.Isend(
-                                buf = np.asarray(
-                                    dft_stress,
-                                    dtype=np.float64
-                                ),
-                                dest=0,
-                                tag=current_idx + 20000
-                            )
-                    self.comm_handler.barrier()
 
                 
                 if self.analysis:
-                    if self.req_analysis is None:
-                        self.req_analysis = self.world_comm.irecv(source=0, tag=80545)
                     
-                    status_analysis, data_analysis = self.req_analysis.test()
+                    if self.rank != 1:
+                        self.geo_info_buf_analysis = None
+                        self.sys_info_buf_analysis = None
+                        received_analysis = False
+                        
+                    if self.rank == 1:
+                        received_analysis = self._analysis_listening_task()
 
-                    if status_analysis:
-                        self.req_analysis = None
-                        idx, point_analysis = data_analysis
-                        dft_result_analysis = self.recalc_aims(point_analysis)
-                        if dft_result_analysis is not None:
+                    self.comm_handler.barrier()
+                    received_analysis = self.comm_handler.bcast(received_analysis, root=0)  # global rank 1 is 0 of split comm
+                    self.current_num_atoms_analysis = self.comm_handler.bcast(self.current_num_atoms_analysis, root=0)
+                    self.comm_handler.barrier()
+                    
+                    if received_analysis:
+                        if self.rank != 1:
+                            self.sys_info_buf_analysis = np.empty(
+                                shape=(14, ), dtype=np.float64
+                            )
+                            self.geo_info_buf_analysis = np.empty(
+                                shape=(
+                                    2, self.current_num_atoms_analysis, 3
+                                )
+                                , dtype=np.float64
+                            )
+                        self.comm_handler.barrier()
+                        self.comm_handler.comm.Bcast(
+                            buf=self.sys_info_buf_analysis,
+                            root=0
+                        )
+                        self.comm_handler.comm.Bcast(
+                            buf=self.geo_info_buf_analysis,
+                            root=0
+                        )
+                        self.comm_handler.barrier()
 
-                            if self.rank == 1:
-                                logging.info(f"DFT calculation for worker {idx} analysis finished and sending point back.")
-                                self.req_send_analysis = self.world_comm.isend(dft_result_analysis, dest=0, tag=idx)
-                                self.req_send_analysis.Wait()
-                        else:
-                            if self.rank == 1:
-                                self.req_send_analysis = self.world_comm.isend(False, dest=0, tag=idx)
-                                self.req_send_analysis.Wait()        
+                        dft_result_analysis = self._analysis_calculate_received()
+
+                        if self.rank == 1:
+                            self._send_result_back(
+                                idx=int(self.sys_info_buf_analysis[0]),
+                                dft_result=dft_result_analysis,
+                                num_atoms=self.current_num_atoms_analysis
+                            )    
 
         if self.color == 1:
             self.aims_calculator.asi.close()
@@ -2051,7 +1987,14 @@ class ALProcedureParallel(ALProcedure):
 
         """
 
-
+        if self.restart and self.first_wait_after_restart[idx]:
+            # if the worker is waiting and we just restarted the 
+            # procedure, we have to relaunch the dft job and then
+            # leave the function
+            self._handle_dft_call(idx)
+            self.first_wait_after_restart[idx] = False
+            return None
+        
         if self.worker_reqs['energy'][idx] is None:
             self.worker_reqs_bufs['energy'][idx] = np.empty(
                 shape=(2, ), dtype=np.float64
@@ -2125,9 +2068,132 @@ class ALProcedureParallel(ALProcedure):
                         self.worker_reqs['stress'][idx] = None
                     self.trajectories[idx] = atoms_full_copy(self.MD_checkpoints[idx])
                 self.trajectory_status[idx] = "running"
-
-            
+  
+    def _listening_task(
+        self,
+    )-> bool:
+        """
+        Listens for incoming data from the DFT worker.
         
+        Returns:
+            bool: True if data was received, False otherwise.
+        """
+        received = False
+        if self.req_sys_info is None:
+            self.sys_info_buf = np.empty(
+                shape=(14, ), dtype=np.float64
+            )
+            self.req_sys_info = self.world_comm.Irecv(
+                buf=self.sys_info_buf,
+                source=0,
+                tag=1234
+            )
+            
+        status, _ = self.req_sys_info.test()
+        if status:
+            idx = int(self.sys_info_buf[0])
+            self.current_num_atoms = int(self.sys_info_buf[1])
+            self.req_sys_info = None
+            if self.req_geo_info is None:
+                self.geo_info_buf = np.empty(
+                        shape=(
+                            2, self.current_num_atoms, 3
+                        )
+                        , dtype=np.float64
+                )
+
+                self.req_geo_info = self.world_comm.Irecv(
+                    buf=self.geo_info_buf,
+                    source=0,
+                    tag=1235
+                )
+            status_pos_spec = self.req_geo_info.Wait()
+            if status_pos_spec:
+                self.req_geo_info = None
+                received = True
+            
+        return received
+            
+    def _calculate_received(
+        self
+    ):
+        current_idx = int(self.sys_info_buf[0])
+        current_num_atoms = int(self.sys_info_buf[1])
+        current_pbc = self.sys_info_buf[2:5].astype(np.bool_).reshape(
+            (3, )
+        )
+        current_species = self.geo_info_buf[0].astype(np.int32)
+        # transform current_species to a list of species
+        current_species = current_species[:, 0].tolist()
+        current_positions = self.geo_info_buf[1]
+        current_cell = self.sys_info_buf[5:14].reshape((3, 3))
+
+        point = ase.Atoms(
+            positions=current_positions,
+            numbers=current_species,
+            pbc=current_pbc,
+            cell=current_cell
+        )
+        self.comm_handler.barrier()
+        dft_result = self.recalc_aims(point)
+        return dft_result
+        
+    def _send_result_back(
+        self,
+        idx,
+        dft_result,
+        num_atoms
+    ):
+        if dft_result is not None:
+            logging.info(f"DFT calculation for worker {idx} finished and sending point back.")
+            dft_energies = dft_result.info["REF_energy"]
+            dft_energies_num_atoms = np.array(
+                [dft_energies, num_atoms],
+                dtype=np.float64
+            )
+            dft_forces = dft_result.arrays["REF_forces"]
+            if self.compute_stress:
+                dft_stress = dft_result.info["REF_stress"]
+        else:
+            dft_energies_num_atoms = np.array(
+                [np.nan, np.nan],
+                dtype=np.float64
+                )
+            dft_forces = np.empty(
+                shape=(num_atoms, 3),
+                dtype=np.float64
+            ).fill(np.nan)
+            if self.compute_stress:
+                dft_stress = np.empty(
+                    shape=(6, ),
+                    dtype=np.float64
+                ).fill(np.nan)
+            logging.info(f"DFT calculation for worker {idx} failed. Sending NaN values back.")
+                              
+        self.world_comm.Isend(
+            buf=dft_energies_num_atoms,
+            dest=0,
+            tag=idx
+            
+        )
+        self.world_comm.Isend(
+            buf=np.asarray(
+                dft_forces,
+                dtype=np.float64
+            ),
+            dest=0,
+            tag=idx + 10000
+        )
+        if self.compute_stress:
+            self.world_comm.Isend(
+                buf = np.asarray(
+                    dft_stress,
+                    dtype=np.float64
+                ),
+                dest=0,
+                tag=idx + 20000
+            )
+
     def _handle_dft_call(
             self,
             idx
@@ -2137,7 +2203,8 @@ class ALProcedureParallel(ALProcedure):
             logging.info(f"Trajectory worker {idx} is sending point to DFT.")
             self.send_points_non_blocking(
                 idx=idx,
-                point_data=self.trajectories[idx]
+                point_data=self.trajectories[idx],
+                tag=1234
             )
         self.comm_handler.barrier()
         self.trajectory_status[idx] = "waiting"
@@ -2197,43 +2264,92 @@ class ALProcedureParallel(ALProcedure):
             self,
             idx: int
             ):
-        if self.analysis_worker_reqs[idx] is None:
-            self.analysis_worker_reqs[idx] = self.world_comm.irecv(source=1, tag=idx)
-
-        status, recieved_points = self.analysis_worker_reqs[idx].test()        
-
+        
+        if self.restart and self.first_wait_after_restart[idx]:
+            # if the worker is waiting and we just restarted the 
+            # procedure, we have to relaunch the dft job and then
+            # leave the function
+            logging.info(
+                f"Trajectory worker {idx} is restarting DFT analysis."
+            )
+            self._analysis_dft_call(idx, self.trajectories[idx])
+            self.first_wait_after_restart[idx] = False
+            return None
+        
+        
+        if self.worker_reqs_analysis['energy'][idx] is None:
+            self.worker_reqs_analysis_bufs['energy'][idx] = np.empty(
+                shape=(2, ), dtype=np.float64
+                )
+            self.worker_reqs_analysis['energy'][idx] = self.world_comm.Irecv(
+                buf=self.worker_reqs_analysis_bufs['energy'][idx],
+                source=1,
+                tag=idx
+            )
+        status, _ = self.worker_reqs_analysis['energy'][idx].test()
+        
         if status:
-            self.analysis_worker_reqs[idx] = None
-            
-            if not recieved_points:
-                if self.rank == 0:
-                    logging.info(
-                        f"SCF not converged at worker {idx} for analysis. Discarding point."
+            scf_failed = np.isnan(self.worker_reqs_analysis_bufs['energy'][idx][0])
+            # check if the energy is NaN
+            if not scf_failed:
+                if self.worker_reqs_analysis['forces'][idx] is None:
+                    self.worker_reqs_analysis_bufs['forces'][idx] = np.empty(
+                        shape=(int(self.worker_reqs_analysis_bufs['energy'][idx][1]), 3),
+                        dtype=np.float64
                     )
-                self.trajectory_status[idx] = "running"
-            else:
-                self.analysis_true_forces = recieved_points.arrays["REF_forces"]
-
-                check_results = self.analysis_check(
-                    analysis_prediction=self.trajectories_analysis_prediction[idx],
-                    true_forces = self.analysis_true_forces
+                    self.worker_reqs_analysis['forces'][idx] = self.world_comm.Irecv(
+                        buf=self.worker_reqs_analysis_bufs['forces'][idx],
+                        source=1,
+                        tag=idx + 10000
                     )
+                    if self.compute_stress:
+                        self.worker_reqs_analysis_bufs['stress'][idx] = np.empty(
+                            shape=(6, ),
+                            dtype=np.float64
+                        )
+                        self.worker_reqs_analysis['stress'][idx] = self.world_comm.Irecv(
+                            buf=self.worker_reqs_analysis_bufs['stress'][idx],
+                            source=1,
+                            tag=idx + 20000
+                        )
+                status_forces = self.worker_reqs_analysis['forces'][idx].Wait()
+                if self.compute_stress:
+                    status_stress = self.worker_reqs_analysis['stress'][idx].Wait()
+                if status_forces or (self.compute_stress and status_stress):
+                    self.worker_reqs_analysis['energy'][idx] = None
+                    self.worker_reqs_analysis['forces'][idx] = None
+                    if self.compute_stress:
+                        self.worker_reqs_analysis['stress'][idx] = None
 
-                for key in check_results.keys():
-                    self.analysis_checks[idx][key].append(check_results[key])
-
-                self.analysis_checks[idx]['threshold'].append(self.threshold)
-                self.collect_thresholds[idx].append(self.threshold)
-                self.check += 1
-                self._save_analysis()
-                self.trajectory_status[idx] = "running"
+                    if self.rank == 0:
+                        logging.info(f"Worker {idx} recieved a point from DFT for analysis.")
+                    
+                    analysis_forces = self.worker_reqs_analysis_bufs['forces'][idx]
+                    analysis_predicted_forces = self.trajectories_analysis_prediction[idx]
+                    check_results = self.analysis_check(
+                        analysis_prediction=analysis_predicted_forces,
+                        true_forces=analysis_forces,
+                        current_md_step=self.trajectory_MD_steps[idx],
+                    )
+                    
+                    for key in check_results.keys():
+                        self.analysis_checks[idx][key].append(check_results[key])
+                    
+                    self.analysis_checks[idx]['threshold'].append(self.threshold)
+                    self.collect_thresholds[idx].append(self.threshold)
+                    self.check += 1
+                    self._save_analysis()
+                    self.trajectory_status[idx] = "running"
 
     def _analysis_dft_call(self, idx, point):
+        
         self.comm_handler.barrier()
         if self.rank == 0:
-            for dest in range(1, self.world_size):
-                self.point_send = self.world_comm.isend((idx, point), dest=dest, tag=80545)
-                self.point_send.Wait()
+            self.send_points_non_blocking(
+                idx=idx,
+                point_data=self.trajectories[idx],
+                tag=80545
+            )
         self.comm_handler.barrier()
         self.trajectory_status[idx] = "analysis_waiting"
         self.comm_handler.barrier()
@@ -2243,7 +2359,73 @@ class ALProcedureParallel(ALProcedure):
             )
         return None
     
-    def send_points_non_blocking(self, idx, point_data):
+    def _analysis_listening_task(
+            self
+    ):
+        received = False
+        if self.req_sys_info_analysis is None:
+            self.sys_info_buf_analysis = np.empty(
+                shape=(14, ), dtype=np.float64
+            )
+            self.req_sys_info_analysis = self.world_comm.Irecv(
+                buf=self.sys_info_buf_analysis,
+                source=0,
+                tag=80545
+            )
+            
+        status, _ = self.req_sys_info_analysis.test()
+        if status:
+            idx = int(self.sys_info_buf_analysis[0])
+            self.current_num_atoms_analysis = int(self.sys_info_buf_analysis[1])
+            self.req_sys_info_analysis = None
+            if self.req_geo_info_analysis is None:
+                self.geo_info_buf_analysis = np.empty(
+                        shape=(
+                            2, self.current_num_atoms_analysis, 3
+                        )
+                        , dtype=np.float64
+                )
+
+                self.req_geo_info_analysis = self.world_comm.Irecv(
+                    buf=self.geo_info_buf_analysis,
+                    source=0,
+                    tag=80546
+                )
+            status_pos_spec = self.req_geo_info_analysis.Wait()
+            if status_pos_spec:
+                self.req_geo_info_analysis = None
+                received = True
+            
+        return received    
+    
+    def _analysis_calculate_received(
+        self
+    ):
+        current_pbc = self.sys_info_buf_analysis[2:5].astype(np.bool_).reshape(
+            (3, )
+        )
+        current_species = self.geo_info_buf_analysis[0].astype(np.int32)
+        # transform current_species to a list of species
+        current_species = current_species[:, 0].tolist()
+        current_positions = self.geo_info_buf_analysis[1]
+        current_cell = self.sys_info_buf_analysis[5:14].reshape((3, 3))
+
+        point = ase.Atoms(
+            positions=current_positions,
+            numbers=current_species,
+            pbc=current_pbc,
+            cell=current_cell
+        )
+        self.comm_handler.barrier()
+        dft_result = self.recalc_aims(point)
+        return dft_result
+
+    def send_points_non_blocking(
+        self,
+        idx,
+        point_data,
+        tag
+        ):
         # send idx, pbc, cell, positions, species in a non-blocking way
         
         positions = np.asarray(point_data.get_positions(), dtype=np.float64)
@@ -2252,32 +2434,18 @@ class ALProcedureParallel(ALProcedure):
         cell = point_data.get_cell()
         num_atoms = len(positions)
         
-        self.send_requests_idx_pbc_cell = []
-        self.send_requests_positions_species = []
         
-        #logging.info(f"flattened celL: {point_data.get_cell().flatten()}")
-        
-        # prepare idx, pbc, cell array
         idx_num_atoms_pbc_cell = np.array(
             [idx,
              num_atoms,
-             *point_data.pbc.flatten(),
-             *point_data.get_cell().flatten()],
+             *pbc.flatten(),
+             *cell.flatten()],
             dtype=np.float64
         )
-        #logging.info(f"idx_num_atoms_pbc_cell: {idx_num_atoms_pbc_cell.shape}")
-        # create species array that now has shape (n_atoms, 3)
-        
         species_array = np.array(
             [[element, element, element] for element in species],
             dtype=np.float64    
         )
-        #logging.info(f"species_array: {species_array}")
-        #logging.info(f"species_array shape: {species_array.shape}")
-        # concatenate with positions
-        
-        #logging.info(f"positions: {positions.shape}")
-        
         
         positions_species = np.empty(
             shape=(2, positions.shape[0], 3),
@@ -2286,28 +2454,21 @@ class ALProcedureParallel(ALProcedure):
         positions_species[1] = positions
 
 
-        request = self.world_comm.Isend(
+        self.world_comm.Isend(
             buf=idx_num_atoms_pbc_cell,
             dest=1,
-            tag=1234
+            tag=tag
         )
-        self.send_requests_idx_pbc_cell.append(request)
-        request = self.world_comm.Isend(
+        self.world_comm.Isend(
             buf=positions_species,
             dest=1,
-            tag=1235
+            tag=tag + 1
         )
-        self.send_requests_positions_species.append(request)
-        
-    def ensure_all_sends_complete(self):
-        if self.outstanding_send_requests:
-            MPI.Request.Waitall(self.outstanding_send_requests)
-            self.outstanding_send_requests = [] # Clear the list after completion
+
 
 class ALProcedurePARSL(ALProcedure):
     """
-    This class is a placeholder for the PARSL implementation of the active learning procedure.
-    It is not implemented yet and will raise a NotImplementedError if used.
+    This class is for the PARSL implementation of the active learning procedure.
     """
 
     def __init__(
@@ -2344,19 +2505,38 @@ class ALProcedurePARSL(ALProcedure):
             handle_parsl_logger(
                 log_dir=self.log_dir / "parsl_al.log"
             )
-            parsl.load(self.config)
-                        
+            parsl.load(self.config)     
         logging.info("Launching ab initio manager thread for PARSL.")
         self.ab_initio_queue = queue.Queue()
         self.ab_intio_results = {}
+        self.ab_initio_counter = {
+            idx: 0 for idx in range(self.num_trajectories)
+        }
         self.results_lock = threading.Lock()
         self.kill_thread = False
         threading.Thread(
             target=self.ab_initio_manager,
             daemon=True
         ).start()
-    
+        self.first_wait_after_restart = {
+            idx: True for idx in range(self.num_trajectories)
+        }
         
+        if self.analysis:
+            logging.info("Launching analysis manager thread for PARSL.")
+            self.analysis_queue = queue.Queue()
+            self.analysis_kill_thread = False
+            self.analysis_done = False
+            self.analysis_results = {}
+            self.analysis_counter = {
+                idx: 0 for idx in range(self.num_trajectories)
+            }
+            threading.Thread(
+                target=self._analysis_manager,
+                daemon=True
+            ).start() 
+        
+  
     def _handle_dft_call(
         self,
         idx: int
@@ -2366,12 +2546,14 @@ class ALProcedurePARSL(ALProcedure):
         self.num_workers_waiting += 1
         self.ab_initio_queue.put((idx, self.trajectories[idx]))
         logging.info(f"Trajectory worker {idx} is waiting for job to finish.")
-    
+
     def ab_initio_manager(
         self
     ):
         # collect parsl futures
         futures = {}
+        for idx in range(self.num_trajectories):
+            futures[idx] = {}
         # constantly check the queue for new jobs
         while True:
             
@@ -2380,16 +2562,20 @@ class ALProcedurePARSL(ALProcedure):
                 break
             try:
                 idx, data = self.ab_initio_queue.get(timeout=1)
-                futures[idx] = recalc_aims_parsl(
+                with self.results_lock:
+                    curr_job_no = self.ab_initio_counter[idx]
+                futures[idx][curr_job_no] = recalc_aims_parsl(
                     positions=data.get_positions(),
                     species=data.get_chemical_symbols(),
                     cell=data.get_cell(),
                     pbc=data.pbc,
                     aims_settings=self.aims_settings,
-                    directory=self.calc_dir / f"worker_{idx}",
+                    directory=self.calc_dir / f"worker_{idx}_no_{curr_job_no}",
                     properties=self.properties,
                     ase_aims_command=self.launch_str
                 )
+                with self.results_lock:
+                    self.ab_initio_counter[idx] += 1
                 self.ab_initio_queue.task_done()
             
             # is raised when the queue is empty after the timeout
@@ -2397,33 +2583,36 @@ class ALProcedurePARSL(ALProcedure):
                 pass
             
             # goes through the futures and checks if they are done
-            done_jobs = [
-                job_idx for job_idx, future in futures.items() if future.done()
-            ]
+            done_jobs = []
+            for job_idx in futures.keys():
+                for job_no, future in futures[job_idx].items():
+                    if future.done():
+                        done_jobs.append((job_idx, job_no))
+            
             # if there are done jobs, get the results and store them in dict
-            for job_idx in done_jobs:
+            for job_idx, job_no in done_jobs:
                 with self.results_lock:
-                    temp_result = futures[job_idx].result()
+                    temp_result = futures[job_idx][job_no].result()
                     if temp_result is None:
                         # if the result is None, it means the DFT calculation did not converge
-                        self.ab_intio_results[job_idx] = False
+                        self.ab_intio_results[job_idx][job_no] = False
                     else:
                         # the DFT calculation converged
                         self.ab_intio_results[job_idx] = temp_result
-                        logging.info(f"DFT calculation for worker {job_idx} finished.")
+                        logging.info(f"DFT calculation number {job_no} for worker {job_idx} finished.")
                     # remove the job from the futures dict to avoid double counting
-                    del futures[job_idx]
+                    del futures[job_idx][job_no]
                     # remove folder with results
-                    try:
-                        shutil.rmtree(self.calc_dir / f"worker_{job_idx}")
-                    except FileNotFoundError:
-                        logging.warning(
-                            f"Directory {self.calc_dir / f'worker_{job_idx}'} not found. Skipping removal."
-                        )
+                    if self.clean_dirs:
+                        try:
+                            shutil.rmtree(self.calc_dir / f"worker_{job_idx}_no_{job_no}")
+                        except FileNotFoundError:
+                            logging.warning(
+                                f"Directory {self.calc_dir / f'worker_{job_idx}_{job_no}'} not found. Skipping removal."
+                            )
 
     def setup_aims_calculator(self, atoms):
         pass
-    
     
     def recalc_aims(self, current_point):
         pass
@@ -2431,13 +2620,26 @@ class ALProcedurePARSL(ALProcedure):
     def _finalize_ab_initio(self):
         with threading.Lock():
             self.kill_thread = True
+            if self.analysis:
+                self.analysis_kill_thread = True
+                while not self.analysis_done:
+                    time.sleep(0.1)
         time.sleep(5)
         parsl.dfk().cleanup()
     
     def waiting_task(self, idx):
         
-        with self.results_lock:
-            job_result = self.ab_intio_results.get(idx, "not_done")
+        if self.restart and self.first_wait_after_restart[idx]:
+            # if the worker is waiting and we just restarted the 
+            # procedure, we have to relaunch the dft job and then
+            # leave the function
+            logging.info(f"Worker {idx} is restarting DFT job after restart.")
+            self._handle_dft_call(idx)
+            self.first_wait_after_restart[idx] = False
+            return None
+            
+        #with self.results_lock:
+        job_result = self.ab_intio_results.get(idx, "not_done")
         
         if job_result == "not_done":
             # if the job is not done, we return None and wait for the next iteration
@@ -2466,345 +2668,107 @@ class ALProcedurePARSL(ALProcedure):
             with self.results_lock:
                 # remove the job from the results dict to avoid double counting
                 del self.ab_intio_results[idx]
-                
-                
-                
-            
-    
-    
-if False:
 
-    class ALProcedureGPUParallel(ALProcedureParallel):
-        def __init__(
-            self,
-            mace_settings: dict,
-            al_settings: dict,
-            path_to_control: str = "./control.in",
-            path_to_geometry: str = "./geometry.in",
-        ):
-            
-            raise NotImplementedError(
-                "This class is not implemented yet. Please use ALProcedureParallel."
-            )
-            super().__init__(
-                mace_settings=mace_settings,
-                al_settings=al_settings,
-                path_to_control=path_to_control,
-                path_to_geometry=path_to_geometry,
-            )
-            # get number of GPUs
-            self.num_gpus = torch.cuda.device_count()
-            self.devices = [torch.device(f"cuda:{i}") for i in range(self.num_gpus)]
-            # create one mpi communcatior per gpu and assign rest to extra communicator
-            self.world_size = self.world_size
-            self.gpu_world_size = self.num_gpus
-            self.gpu_world_comm = self.comm_handler.comm.Split(color=0, key=0)
-            self.extra_comm = self.comm_handler.comm.Split(color=1, key=0)
-            self.gpu_ranks = self.gpu_world_comm.Get_size()
-            self.extra_ranks = self.extra_comm.Get_size()
-            self.gpu_rank = self.gpu_world_comm.Get_rank()
-            self.extra_rank = self.extra_comm.Get_rank()
+    def _analysis_manager(self):
+        futures = {}
+        predicted_forces = {}
+        current_md_steps = {}
 
-    class ALProcedureParsl(ALProcedureParallel):
-        raise NotImplementedError(
-            "This class is not implemented yet. Please use ALProcedureParallel or ALProcedureGPUParallel."
-        )
-            
-            
+        for idx in range(self.num_trajectories):
+            predicted_forces[idx] = {}
+            futures[idx] = {}
+            current_md_steps[idx] = {}
 
-    # TODO: This is not done yet
-    class StandardMACEEnsembleProcedure:
-        """
-        Just a simple Class to train ensembles from scratch using existing
-        dataset in order to compare the continuous learning procedure with
-        learning from scratch.
-        """
-        def __init__(
-            self, 
-            mace_settings: dict,
-            active_learning_settings: dict,
-            train_set_dir: str = "data/final/training",
-            valid_set_dir: str = "data/final/validation",
-            ) -> None:
+        kill_requested = False
 
-            raise NotImplementedError("This is not done yet.")
-            self.handle_mace_settings(mace_settings)
-            logging.basicConfig(
-                filename="standard_ensemble.log",
-                encoding="utf-8",
-                level=logging.DEBUG,
-                force=True,
-            )
-            tools.setup_logger(
-                level=self.mace_settings["MISC"]["log_level"],
-                #    tag=tag,
-                directory=self.mace_settings["GENERAL"]["log_dir"],
-            )
-            self.create_folders()
-            self.z = Z_from_geometry_in()
+        while True:
+            if self.analysis_kill_thread and not kill_requested:
+                logging.info("Analysis manager kill switch triggered. Waiting for pending futures...")
+                kill_requested = True
 
-            if self.atomic_energies_dict is None:
-                self.atomic_energies_dict = {
-                    z: 0 for z in np.unique(self.z)
-                }
-                self.update_atomic_energies = True
+            # Try to get new data unless kill has been requested
+            if not kill_requested:
+                try:
+                    idx, data = self.analysis_queue.get(timeout=1)
+                    self.analysis_counter[idx] += 1
+                    current_idx = self.analysis_counter[idx]
+                    predicted_forces[idx][current_idx] = data.arrays["forces_comm"]
+                    current_md_steps[idx][current_idx] = data.info["current_MD_step"]
+                    futures[idx][current_idx] = recalc_aims_parsl(
+                        positions=data.get_positions(),
+                        species=data.get_chemical_symbols(),
+                        cell=data.get_cell(),
+                        pbc=data.pbc,
+                        aims_settings=self.aims_settings,
+                        directory=self.calc_dir / f"worker_analysis{idx}_no_{current_idx}",
+                        properties=self.properties,
+                        ase_aims_command=self.launch_str
+                    )
+                    self.analysis_queue.task_done()
+                except queue.Empty:
+                    pass
 
-            self.atomic_energies = np.array(
-                [
-                    self.atomic_energies_dict[z]
-                    for z in self.atomic_energies_dict.keys()
-                ]
-            )
-            self.z_table = tools.get_atomic_number_table_from_zs(
-                z for z in self.atomic_energies_dict.keys()
-            )
+            # Check all futures for completion
+            done_jobs = []
+            for job_idx in list(futures.keys()):
+                for job_no, future in list(futures[job_idx].items()):
+                    if future.done():
+                        done_jobs.append((job_idx, job_no))
 
-            np.random.seed(self.seed)
-            #random.seed(self.seed)
-            self.ensemble_seeds = np.random.randint(
-                0, 1000, size=active_learning_settings["ACTIVE_LEARNING"]["ensemble_size"]
-            )
-        
-            (
-            self.seeds_tags_dict,
-            self.ensemble,
-            self.training_setups,
-            ) = setup_ensemble_dicts(
-                seeds=self.ensemble_seeds,
-                mace_settings=self.mace_settings,
-                atomic_energies_dict=self.atomic_energies_dict,
-                save_seeds_tags_dict=False
-            )
-            for tag in self.ensemble.keys():
-                train_set = read(train_set_dir + f"/train_set_{tag}.xyz",index=":")
-                valid_set = read(valid_set_dir + f"/valid_set_{tag}.xyz",index=":")
-                logging.info(
-                    f"Training set {tag} contains {len(train_set)} structures."
-                )
-                self.ensemble_ase_sets = {
-                    tag: {"train": train_set, "valid": valid_set} for tag in self.ensemble.keys()
-                }
-            self.ensemble_mace_sets = {
-                tag: {
-                        "train": create_mace_dataset(
-                        data=self.ensemble_ase_sets[tag]["train"],
-                        z_table=self.z_table,
-                        seed=self.seeds_tags_dict[tag],
-                        r_max=self.r_max
-                        ),
-                        "valid": create_mace_dataset(
-                        data=self.ensemble_ase_sets[tag]["valid"],
-                        z_table=self.z_table,
-                        seed=self.seeds_tags_dict[tag],
-                        r_max=self.r_max
+            # Process done jobs
+            for job_idx, job_no in done_jobs:
+                with self.results_lock:
+                    temp_result = futures[job_idx][job_no].result()
+                if temp_result is None:
+                    logging.info(f"SCF during analysis for worker {job_idx} no {job_no} failed. Discarding point.")
+                else:
+                    analysis_forces = predicted_forces[job_idx][job_no]
+                    true_forces = temp_result['forces']
+                    check_results = self.analysis_check(
+                        analysis_prediction=analysis_forces,
+                        true_forces=true_forces,
+                        current_md_step=current_md_steps[job_idx][job_no],
+                    )
+                    with self.results_lock:
+                        for key in check_results:
+                            self.analysis_checks[job_idx][key].append(check_results[key])
+                        self.analysis_checks[job_idx]['threshold'].append(self.threshold)
+                        self.collect_thresholds[job_idx].append(self.threshold)
+                        self.check += 1
+                        self._save_analysis()
+                        logging.info(
+                            f"Analysis for worker {job_idx} no {job_no} at MD step {current_md_steps[job_idx][job_no]} saved."
                         )
-                    } for tag in self.ensemble.keys()
-            }
-                
-        def train(self):
-            
-            for _, (tag, model) in enumerate(self.ensemble.items()):
-                (
-                    self.ensemble_mace_sets[tag]["train_loader"],
-                    self.ensemble_mace_sets[tag]["valid_loader"],
-                ) = create_dataloader(
-                    self.ensemble_mace_sets[tag]["train"],
-                    self.ensemble_mace_sets[tag]["valid"],
-                    self.set_batch_size,
-                    self.set_valid_batch_size,
-                )
 
-                update_model_auxiliaries(
-                    model=model,
-                    mace_sets=self.ensemble_mace_sets[tag],
-                    atomic_energies=self.atomic_energies,
-                    scaling=self.scaling,
-                    update_atomic_energies=self.update_atomic_energies,
-                    z_table=self.z_table,
-                    atomic_energies_dict=self.atomic_energies_dict,
-                    dtype=self.dtype,
-                    device=self.device,
-                )
-                
-            best_valid_loss = np.inf
-            epoch = 0
-            no_improvement = 0
-            ensemble_valid_losses = {tag: np.inf for tag in self.ensemble.keys()}
-            for j in range(self.max_num_epochs):
-                # ensemble_loss = 0
-                for tag, model in self.ensemble.items():
-                    training_setup = self.training_setups[tag]
-                    logger = tools.MetricsLogger(
-                        directory=self.mace_settings["GENERAL"]["results_dir"],
-                        tag=tag + "_standard_train",
-                    )
-                    train_epoch(
-                        model=model,
-                        train_loader=self.ensemble_mace_sets[tag]["train_loader"],
-                        loss_fn=training_setup["loss_fn"],
-                        optimizer=training_setup["optimizer"],
-                        lr_scheduler=training_setup["lr_scheduler"],
-                        valid_loss=ensemble_valid_losses[tag],
-                        epoch=epoch,
-                        start_epoch=0,
-                        logger=logger,
-                        device=training_setup["device"],
-                        max_grad_norm=training_setup["max_grad_norm"],
-                        output_args=training_setup["output_args"],
-                        ema=training_setup["ema"],
-                    )
-                    # ensemble_loss += loss
-                # ensemble_loss /= len(ensemble)
+                # Remove only the completed job
+                del futures[job_idx][job_no]
+                del predicted_forces[job_idx][job_no]
+                del current_md_steps[job_idx][job_no]
 
-                if epoch % self.eval_interval == 0 or epoch == self.max_num_epochs - 1:
-                    (
-                        ensemble_valid_losses,
-                        valid_loss,
-                        _,
-                    ) = validate_epoch_ensemble(
-                        ensemble=self.ensemble,
-                        training_setups=self.training_setups,
-                        ensemble_set=self.ensemble_mace_sets,
-                        logger=logger,
-                        log_errors=self.mace_settings["MISC"]["error_table"],
-                        epoch=epoch,
-                    )
-                    if best_valid_loss > valid_loss:
-                        best_valid_loss = valid_loss
-                        best_epoch = epoch
-                        no_improvement = 0
-                        for tag, model in self.ensemble.items():
-                            torch.save(
-                                model,
-                                self.standard_model_dir / (tag + ".model"),
-                            )
-                            save_checkpoint(
-                                checkpoint_handler=self.training_setups[tag][
-                                    "checkpoint_handler_convergence"
-                                ],
-                                training_setup=self.training_setups[tag],
-                                model=model,
-                                epoch=epoch,
-                                keep_last=True,
-                            )
-                    else:
-                        no_improvement += 1
+            # Check for final shutdown
+            if kill_requested and not any(futures.values()):
+                logging.info("All pending analysis futures completed. Shutting down thread.")
+                self.analysis_done = True
+                break
 
-                epoch += 1
-                if no_improvement > self.patience:
-                    logging.info(
-                        f"No improvements for {self.patience} epochs. Training converged. Best model (Epoch {best_epoch}) based on validation loss saved."
-                    )
-                    break
-                if j == self.max_num_epochs - 1:
-                    logging.info(
-                        f"Maximum number of epochs reached. Best model (Epoch {best_epoch}) based on validation loss saved."
-                    )
+            time.sleep(0.1)
 
-        def handle_mace_settings(self, mace_settings: dict):
-            self.mace_settings = mace_settings
-            self.seed = self.mace_settings["GENERAL"]["seed"]
-            self.r_max = self.mace_settings["ARCHITECTURE"]["r_max"]
-            self.set_batch_size = self.mace_settings["TRAINING"]["batch_size"]
-            self.set_valid_batch_size = self.mace_settings["TRAINING"][
-                "valid_batch_size"
-            ]
-            self.scaling = self.mace_settings["TRAINING"]["scaling"]
-            self.model_dir = self.mace_settings["GENERAL"]["model_dir"]
-            self.eval_interval = self.mace_settings['TRAINING']['eval_interval']
-            self.max_num_epochs = self.mace_settings['TRAINING']['max_num_epochs']
-            self.patience = self.mace_settings['TRAINING']['patience']
-            self.device = self.mace_settings["MISC"]["device"]
-            self.dtype = self.mace_settings["GENERAL"]["default_dtype"]
-            self.atomic_energies_dict = self.mace_settings["ARCHITECTURE"].get("atomic_energies_dict", None)
 
+    def _analysis_dft_call(
+        self,
+        idx: int,
+        point: ase.Atoms
+    ):
+        # we can go back to running here as the analysis is not blocking
+        self.trajectory_status[idx] = "running"
+        self.analysis_queue.put((idx, point))   
         
-        def create_folders(self):
-            
-            os.makedirs(self.model_dir, exist_ok=True)
-            self.standard_model_dir = Path(self.model_dir) / "standard"
-            self.standard_model_dir.mkdir(
-                parents=True, exist_ok=True
-            )
-
-        def setup_mace_calc(self):
-            """
-            Loads the models of the existing ensemble and creates the MACE calculator.
-            """
-            model_paths = list_files_in_directory(Path(self.model_dir) / "standard")
-            self.models = [
-                torch.load(f=model_path, map_location=self.device) for model_path in model_paths
-            ]
-            # the calculator needs to be updated consistently see below
-            self.mace_calc = MACECalculator(
-                models=self.models,
-                device=self.device,
-                default_dtype=self.dtype)
-            
-        def analysis_check(
-        #TODO: put this somewhere else and its ugly
-                self,
-                analysis_prediction: np.ndarray,
-                true_forces: np.ndarray
-                ) -> tuple[np.ndarray, np.ndarray]:
-            """
-            Calculates the force uncertainty and the maximum 
-            force error for a given prediction and true forces.
-
-            Args:
-                analysis_prediction (np.ndarray): Ensemble prediction. [n_members, n_points, n_atoms, 3]
-                true_forces (np.ndarray): True forces. [n_points, n_atoms, 3]
-
-            Returns:
-                tuple[np.ndarray, np.ndarray]: force uncertainty, true force error
-            """
-            uncertainty_via_max = max_sd_2(analysis_prediction)
-            uncertainty_via_avg = avg_sd(analysis_prediction)
-            atom_wise_uncertainty = atom_wise_sd(analysis_prediction)
-            mean_analysis_prediction = analysis_prediction.mean(0).squeeze()
-            difference = true_forces - mean_analysis_prediction
-            diff_sq = difference**2
-            diff_sq_mean = np.mean(diff_sq, axis=-1)
-            
-            max_error = np.max(np.sqrt(diff_sq_mean), axis=-1)
-            mean_error = np.mean(np.sqrt(diff_sq_mean), axis=-1)
-            atom_wise_error = atom_wise_f_error(mean_analysis_prediction, true_forces)
-
-            return {
-                "atom_wise_uncertainty": atom_wise_uncertainty,
-                "uncertainty_via_max": uncertainty_via_max,
-                "uncertainty_via_avg": uncertainty_via_avg,
-                "max_error": max_error,
-                "mean_error": mean_error,
-                "atom_wise_error": atom_wise_error
-            }
-
-        def test(
+    def _process_analysis(
             self,
-            path_to_ds: str,
-        ):
-            """
-            Tests the ensemble on a dataset.
-
-            Args:
-                path_to_ds (str): Path to the dataset.
-            """
-            test_set = read(path_to_ds, index=":")
-            test_mace_ds = create_mace_dataset(
-                data=test_set,
-                z_table=self.z_table,
-                seed=None,
-                r_max=self.r_max,
-            )
-            logging.info("Created DS.")
-            ensemble_energies, ensemble_forces = ensemble_prediction_v2(
-                models=list(self.ensemble.values()),
-                mace_ds=test_mace_ds,
-                device=self.device,
-                dtype=self.dtype,
-                return_energies=True
-            )
-            reference_energies = np.array([atoms.info["energy"] for atoms in test_set])
-            reference_forces = np.array([atoms.arrays["forces"] for atoms in test_set])
-            check = self.analysis_check(ensemble_forces, reference_forces)
-            np.savez("check.npz", **check)
+            idx: int,
+            converged: bool,
+            analysis_prediction: np.ndarray
+    ):
+        # Dummy to overwrite the parent method
+        # processing is done in the analysis manager thread
+        return

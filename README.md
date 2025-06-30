@@ -2,7 +2,7 @@
 
 ## Installation 
 
-Make sure that the following packages are installed (see also requirements.txt):
+The required libraries for aims PAX are:
 
 1. ASE
 2. numpy
@@ -11,76 +11,107 @@ Make sure that the following packages are installed (see also requirements.txt):
 5. pyTorch
 6. pyYaml
 
-Also, you have to compile FHI AIMS as a library (BUILD_SHARED_LIBS has to be set to ON in the CMake file).
+Also, you have to compile FHI aims as a library (BUILD_SHARED_LIBS has to be set to ON in the CMake file).
 
-Afterwards, download or clone this repository and run
+If you want to use the automatic resource managment feature of aims PAX for computing multiple DFT runs in parallel you also need:
+
+7. PARSL
+
+For this you need to compile FHI AIMS as an executable (standard installion).
+
+
+To install the dependencies you can clone the repository and run inside the directory:
+
 ```
 pip install -r requirements.txt
 ```
+
+!!! Note: Make sure to uncomment PARSL in requirements.txt if you want to use the PARSL version of aims PAX.
+
+In order to install aims PAX itself, run:
+
 ```
 pip install .
 ```
-inside the directory.
+
 
 ## Running 
 
-To run the whole thing, one has to specify the settings for AIMS, the MACE model and active learning. 
+To run aims PAX, one has to specify the settings for FHI aims, the MACE model and active learning. 
 
 1. make sure the following files are in the working directory:
     - ```control.in```, 
     - ```geometry.in```,
     - ```mace_settings.yaml```,
-    - ```and active_learning_settings.yaml``` 
-2. ``` mpirun -n $CORES FHI_AL ``` (or using srun on a slurm system)
+    - ```active_learning_settings.yaml``` 
+2. ```FHI_AL ``` (for example)
 
-The settings are explained below and the script automatically runs the all the steps explained above. Both procedures, initial dataset acquisition and active learning, are classes that can be used independently from each other.
+!!! Note: Running the parallel procedure on one node using the MPI implementation, you need to run the command using e.g. ```mpirun``` or ```srun```.
+
+The settings are explained below and aims PAX automatically runs the all necessary steps. Both procedures, initial dataset acquisition and active learning, are classes that can be used independently from each other.
 
 To only create an initial dataset you can run ```FHI_AL-initial-ds ``` in the terminal. Equivalently, to only run the active learning procedure (given that the previous step has been done or all the necessary files are present), just run ```FHI_AL-al```.
 
 ## The workflow 
 
+![Image](readme_figs/aims_PAX_overview.png)
+
+We briefly explain the workflow that is performed automatically by aims PAX. For more details consult the publication (CITE).
+
 The overall workflow of the procedure and some comments thereupon are written here. For more details on specific parameters take a look at the settings glossary at the bottom.
 
 **Creating the initial ensemble and dataset.**
 
-In the beginning a set of MACE models is trained on a initial dataset to serve as a starting point for the actual active learning. Each ensemble member gets their own initial training and validation set. For that, *ab initio* MD is run (one trajectory) using FHI AIMS and ASI/ASE. Alternatively, the *foundational* model MACE-MP0 is used to sample strucutres, which are subsequently recomputed using DFT. This is recommended as one ideally wants to have uncorrelated structures and MACE-MP0 is much cheaper to evaluate and gives reasonable structures. After a set number of samples  is collected the models are trained on these and are validated. Afterwards, new points are sampled and this loop is repeated until a desired level of accurcay (or a different criterion like max number of epochs etc.) of the ensemble on the validation datasets is reached.   
-The model parameters are kept and updated throughout and are not reinitialized when new points are added (warm start/finetuning/continual learning).  
-In principle the training and sampling can be done in parallel. The major bottleneck is the AIMD/DFT but depending on the size of the model, number of epochs and system size the parellelization can provide a significant speedup.  
-Optionally, the model(s) can be converged on the dataset.
+In the beginning a set of MACE models is trained on a initial dataset to serve as a starting point for the actual active learning. Each ensemble member gets their own initial training and validation set. See a) in the figure above.
 
-![Image](readme_figs/parallel_algorithm_flowchart.drawio.png)
+For that, *ab initio* MD is run (one trajectory) using FHI AIMS and ASI/ASE. Alternatively, the *"foundational"* model MACE-MP0 is used to sample structures, which are subsequently recomputed using DFT. This is recommended as one ideally wants to have uncorrelated structures and MACE-MP0 is much cheaper to evaluate and gives reasonable structures. Also, when using PARSL, the calculations can be processed in parallel.
+ 
+After a set number of samples  is collected the models are trained. Afterwards, new points are sampled and this loop is repeated until a desired level of accurcay (or a different criterion like max number of epochs etc.) of the ensemble on the validation datasets is reached.
+
+The model parameters are kept and updated throughout, so they are not reinitialized when new points are added.
+
+Optionally, the model(s) can be converged on the dataset. This means that the models are trained on the initial dataset until there is no improvement anymore. 
+
+
 
 **Active Learning**
 
-During the active learning procedure, multiple MD trajectories (or one is) are launched and run with the MLFF model(s). At a specified interval the uncertainty of the forces are computed. After a warmup (currently 10 uncertainty estimations) the moving average of the uncertainties is calculated. Using this the uncertainty threshold (with c~x) is computed. If the threshold is crossed during MD the DFT energies and forces are calculated for that point. The point is then added to the training or validation set.  
-In the former case the MD is halted for the given trajectory and when the program loops back to it the models are trained for some epochs instead before continuing to the next trajectory. This state is kept until a maximum number of epochs is reached and the trajectory is propageted again.  
-Currently, everything waits until FHI AIMS is done. In theory, while FHI AIMS is running, the other trajectories can be propagated or models can be trained simultaneously. 
-Similarly to the creation of the initial dataset, the models are updated throughout the whole process and are not reinitialized. As we are only adding a few points at a time this can lead to models getting stuck on a local minimum. If this happens, the optimizer state is reinitialized, which is supposed to kick the model out of the local minimum. Albeit a bit drastic and resulting in error spikes, this makes the whole procedure work in the first place.  
-For an (fixed) interval, points from the MLFF MD are taken and computed using FHI AIMS if the ```analysis``` keyword is set to ```True```. The idea is that we want to check every so often if the uncertainty is too low while the actual error is very high. This is not really implemented yet, as in, it is not really doing anything with the information except saving it. Perhaps one could use a moving average of the actual error here to create a threshold and if it is crossed one adds this point to the training set. This can also be usefull in parallel mode, when all trajectories are in training mode or running the MDs the GPU is occupied and the CPU is idle.
+During the active learning procedure (c in the figure above), multiple MD trajectories are launched and run with the MLFF model(s). At a specified interval the uncertainty of the forces are computed. After a warmup (currently 10 uncertainty estimations) the moving average of the uncertainties is calculated. Using this the uncertainty threshold (with c~x) is computed. If the threshold is crossed during MD the DFT energies and forces are calculated for that point. The point is then added to the training or validation set.  
 
-![Image](readme_figs/al_flowchart_example.drawio.png)
+In the former case the MD is halted for the given trajectory and when the program loops back to it the models are trained for some epochs instead before continuing to the next trajectory. This state is kept until a maximum number of epochs is reached and the trajectory is propageted again.
 
-One major avenue in the future will be using an ensemble of foundational models and fine tune them using the same scheme. This would remove the necessity of creating an initial dataset but restricts the models architecture to the one of the foundational model.
+In the serial version of aims PAX, the whole workflow halts when a DFT calculation is being run. In contrast, using the MPI version on a single node, the other trajectories can be propagated. In that case, once all trajectories have crossed the uncertainty threshold, the workflow is halted again and all DFT calculations are processed sequentially. When using the recommended PARSL version, all these DFT calculations can be processed in parallel depending on the available resources.
 
+
+Similarly to the creation of the initial dataset, the models are updated throughout the whole process and are not reinitialized. As we are only adding a few points at a time this can lead to models getting stuck on a local minimum. If this happens, the optimizer state is reinitialized, which is supposed to kick the model out of the local minimum.
+
+If the ```analysis``` keyword is set to ```True```, points from the MLFF MD are taken at fixed intervals and re-computed using FHI AIMS. The results and other metrics are saved in a dictionary. This can be used to track how the uncertainty behaves etc. As this results in many more DFT calculations it is generally not recommended for production runs.
+
+
+<!---
 **Atomic Energies**
 
 ```THIS IS NOT IMPLEMENTED PROPERLY, RIGHT NOW!!!```
 
 It is recommended to use the isolated atomic energies of the elements in a given system as the *zero point* energy in MACE. This enables the model have the correct asymptotic behavior when dissocating molecules. The package includes a script that calculates the energies of all the elements found in a the ```geometry.in``` file. For this run ```FHI_AL-atomic-energies```. Make sure to have defined the path to aims, the species directory in the ```active_learning_settings.yaml``` and also that a ```control.in``` file is present. The results are saved in a log file. The energies can then be included in ```mace_settings.yaml```.
+-->
 
 ## Settings 
 
 ### FHI aims settings 
 
 The settings here are the same as for usual FHI aims calculations and are 
-parsed internally in the script. MD settings are not specified here.
+parsed internally in aims PAX. MD settings are not specified here.
 Currently only one system and geometry can serve as an input (```geometry.in```).
+
+As we are using ASE/ASI for running FHI aims, it is not needed to add the basis set information at the ned of the ```control.in``` file. That information is taken straight from the indicated species directory (see ```species_dir```) in the ```Active Learning Settings```.
 
 ### MACE settings 
 
-The settings for the MACE model(s) are specified in the YAML file called 'mace_settings.yaml'. Some settings are not used but I haven't come around to change this. In the future, we'll use the settings stuff from the original mace code.
+The settings for the MACE model(s) are specified in the YAML file called 'mace_settings.yaml'. In the future, we'll use the settings stuff from the original mace code.
 Inside the workflow, a dictionary is created with the 
 following subdictionaries and keys:
+
 - GENERAL:
     - **name_exp** *(str)*: This is the name given to the experiment and subsequently to the models and datasets.
     - **log_dir** *(str)*: Path to save the log files to.
@@ -147,7 +178,31 @@ For now we have only one MD setting for all trajectories and the selection for s
     - **seed** *(int)*: RNG seed for Langevin dynamics.
 
 - MISC
-    - **create_restart** *(bool)*: If True then each time a checkpoint for the model training is created and if the ensemble runs MD for a long time without interruption, important parameters are saved in a dictionary. The run can then be restarted using this by just running the respecitve command for the procedure again. 
+    - **create_restart** *(bool)*: If True then each time a checkpoint for the model training is created and if the ensemble runs MD for a long time without interruption, important parameters are saved in a dictionary. The run can then be restarted using this by just running the respecitve command for the procedure again.
+
+In case PARSL is used, one has to specifiy certain settings that are needed to perform the distributed jobs. Currently, this is only implemented for SLURM based systems.
+
+- CLUSTER
+
+    - **type** *(str)*: Cluster backend type. Must be `'slurm'` for SLURM-based job scheduling.
+    - **project_name** *(str)*: Name of the project or job label (e.g., `'EXAMPLE'`).
+
+    - **parsl_options** 
+
+        - **nodes_per_block** *(int)*: Number of nodes per Parsl block.
+        - **init_blocks** *(int)*: Initial number of blocks to launch.
+        - **min_blocks** *(int)*: Minimum number of blocks allowed.
+        - **max_blocks** *(int)*: Maximum number of blocks allowed.
+        - **label** *(str)*: Unique label for this Parsl configuration.
+        - **run_dir** *(str, optional)*: Directory to store runtime files. 
+        - **function_dir** *(str, optional)*: Directory for Parsl function storage.
+
+    - **slurm_str** *(str)*: SLURM job script header, specifying job resources and options.
+    - **worker_str** *(str)*: Shell commands to configure the environment for each worker process.
+    - **launch_str** *(str)*: Command to launch the simulation workload via `srun` or similar SLURM launcher.
+    - **clean_dirs** *(bool)*: Whether to remove calculation directories after the run.
+    - **calc_dir** *(str)*: Path to the directory used output of calculations.
+
 
 ## Folders & Files
 
@@ -163,35 +218,25 @@ For now we have only one MD setting for all trajectories and the selection for s
 
 
 # ToDo
+- [ ] update depencies and check for conflics
+- [ ] specify min version for dependencies
+- [ ] Rename repo
+- [ ] Merge PARSL features
+- [ ] Update README
+- [ ] hide non-working CLI commands
+- [ ] format code with BLACK
 - [ ] change epoch saved in AL for ckpt
-- [X] update mace calculator
-- [X] Change training setup reset to optimizer reset only
-- [X] energy error bug fix
-- [X] parallelism for FHI aims in AL procedure
 - [ ] copy original MACE input file
 - [ ] spin polarization for E0 calculations
 - [ ] energy, force weight swap in loss fn during convergence
-- [X] make it work with gpu
-- [X] analysis (save sanity checks, t_intervals, threshold evolution, uncertainties, loss over time)
 - [ ] multiple MD settings
-- [X] scf failsafe
-- [X] initial dataset train and MD in parallel
-- [X] AL train and MD in parallel
 - [ ] multi GPU parallelism for AL
 - [ ] multiple species at once
-- [X] add support for stress
 - [ ] refactor code, especially procedures.py and utilities.py and all the modified MACE parts
-- [ ] own MD engine using pytorch (or TorchMD?)
-- [ ] own asi wrapper
 - [ ] unit tests
-- [X] console scripts for initial dataset/active learning separately
 - [ ] implement default settings and create checks when reading the input
-- [X] make restarting the procedure possible
-- [X] separate skip_step for initial and al
 - [ ] compile models at the end
-- [X] foundation model initial geometries
 - [ ] fine-tuning of foundational models
-- [X] select best performing ensemble member
 - [ ] Start multiple trajectories from different starting geometries
 - [ ] Implement SO3LR (needed: (ensemble) calculator, model setup, training setup, one epoch function, update model auxiliaries)
 

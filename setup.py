@@ -23,6 +23,9 @@ setup(
         'torch',
         'pyYaml',
     ],
+    extras_require={
+        'parsl': ['parsl'],
+    },
     entry_points={
         'console_scripts': [
             'FHI_AL=FHI_AL.cli.__main__:main',

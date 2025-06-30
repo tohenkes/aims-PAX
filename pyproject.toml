@@ -22,8 +22,11 @@ dependencies = [
     "mace-torch",
     "asi4py",
     "torch",
-    "pyYaml",
+    "pyyaml",
 ]
+
+[project.optional-dependencies]
+parsl = ["parsl"]
 
 [project.urls]
 homepage = "https://github.com/tohenkes/FHI_AL"
