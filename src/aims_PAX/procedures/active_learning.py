@@ -2489,22 +2489,22 @@ class ALProcedurePARSL(ALProcedure):
             path_to_geometry=path_to_geometry,
             use_mpi=False
         )
+        parsl_setup_dict = prepare_parsl(
+            cluster_settings=self.cluster_settings
+        )
+        self.config = parsl_setup_dict["config"]
+        self.calc_dir = parsl_setup_dict["calc_dir"]
+        self.clean_dirs = parsl_setup_dict["clean_dirs"]
+        self.launch_str = parsl_setup_dict["launch_str"]
         try:
             parsl.dfk()
             logging.info("PARSL is already initialized. Using existing PARSL context.")
         except parsl.errors.NoDataFlowKernelError:
-            parsl_setup_dict = prepare_parsl(
-                cluster_settings=self.cluster_settings
-            )
-            self.config = parsl_setup_dict["config"]
-            self.calc_dir = parsl_setup_dict["calc_dir"]
-            self.clean_dirs = parsl_setup_dict["clean_dirs"]
-            self.launch_str = parsl_setup_dict["launch_str"]
-            
             handle_parsl_logger(
                 log_dir=self.log_dir / "parsl_al.log"
             )
-            parsl.load(self.config)     
+            parsl.load(self.config)   
+              
         logging.info("Launching ab initio manager thread for PARSL.")
         self.ab_initio_queue = queue.Queue()
         self.ab_intio_results = {}
