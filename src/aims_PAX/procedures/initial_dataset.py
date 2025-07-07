@@ -1,22 +1,23 @@
 import os
 from pathlib import Path
-import ase.build
 import torch
 import numpy as np
 import time
 import shutil
 from mace import tools
 from mace.calculators import mace_mp
-from aims_PAX.tools.utilities import (
+from aims_PAX.tools.utilities.data_handling import (
     create_dataloader,
-    ensemble_training_setups,
-    setup_ensemble_dicts,
     update_datasets,
-    update_model_auxiliaries,
-    save_checkpoint,
     save_datasets,
     load_ensemble_sets_from_folder,
     ase_to_mace_ensemble_sets,
+)
+from aims_PAX.tools.utilities.utilities import (
+    ensemble_training_setups,
+    setup_ensemble_dicts,
+    update_model_auxiliaries,
+    save_checkpoint,
     setup_mace_training,
     Z_from_geometry_in,
     get_atomic_energies_from_pt,
@@ -29,8 +30,11 @@ from aims_PAX.tools.utilities import (
     dtype_mapping,
 )
 import parsl
-from aims_PAX.tools.utilities_parsl import recalc_aims_parsl
-from aims_PAX.tools.utilities_parsl import handle_parsl_logger, prepare_parsl
+from aims_PAX.tools.utilities.parsl_tools import (
+    recalc_aims_parsl,
+    handle_parsl_logger,
+    prepare_parsl,
+)
 from aims_PAX.tools.train_epoch_mace import (
     train_epoch,
     validate_epoch_ensemble,
@@ -47,7 +51,6 @@ from ase.md.npt import NPT
 from ase import units
 from contextlib import nullcontext
 import sys
-from time import perf_counter
 
 sys.stdout.flush()
 
@@ -561,7 +564,7 @@ class PrepareInitialDatasetProcedure:
                 update_model_auxiliaries(
                     model=model,
                     mace_sets=self.ensemble_mace_sets[tag],
-                    atomic_energies=self.ensemble_atomic_energies[tag],
+                    atomic_energies_list=self.ensemble_atomic_energies[tag],
                     scaling=self.scaling,
                     update_atomic_energies=self.update_atomic_energies,
                     z_table=self.z_table,
@@ -770,7 +773,7 @@ class InitialDatasetProcedure(PrepareInitialDatasetProcedure):
                 update_model_auxiliaries(
                     model=model,
                     mace_sets=self.ensemble_mace_sets[tag],
-                    atomic_energies=self.ensemble_atomic_energies[tag],
+                    atomic_energies_list=self.ensemble_atomic_energies[tag],
                     scaling=self.scaling,
                     update_atomic_energies=self.update_atomic_energies,
                     z_table=self.z_table,

@@ -1,6 +1,5 @@
 import os
 from pathlib import Path
-import ase.build
 import torch
 import numpy as np
 from mace import tools
@@ -10,25 +9,21 @@ from aims_PAX.tools.uncertainty import (
     MolForceUncertainty,
     get_threshold,
 )
-
-# from aims_PAX.tools import utilities
-from aims_PAX.tools.utilities import (
+from aims_PAX.tools.utilities.data_handling import (
     create_dataloader,
-    ensemble_training_setups,
-    ensemble_from_folder,
-    setup_ensemble_dicts,
-    update_model_auxiliaries,
-    save_checkpoint,
     save_datasets,
     load_ensemble_sets_from_folder,
     ase_to_mace_ensemble_sets,
     create_mace_dataset,
+)
+from aims_PAX.tools.utilities.eval_tools import (
     ensemble_prediction,
-    ensemble_prediction_v2,
-    max_sd_2,
-    avg_sd,
-    atom_wise_sd,
-    atom_wise_f_error,
+)
+from aims_PAX.tools.utilities.utilities import (
+    ensemble_training_setups,
+    ensemble_from_folder,
+    update_model_auxiliaries,
+    save_checkpoint,
     Z_from_geometry_in,
     list_files_in_directory,
     get_atomic_energies_from_ensemble,
@@ -41,7 +36,7 @@ from aims_PAX.tools.utilities import (
     AIMSControlParser,
     ModifyMD,
 )
-from aims_PAX.tools.utilities_parsl import (
+from aims_PAX.tools.utilities.parsl_tools import (
     prepare_parsl,
     recalc_aims_parsl,
     handle_parsl_logger,
@@ -56,7 +51,7 @@ from aims_PAX.tools.train_epoch_mace import (
     validate_epoch_ensemble,
 )
 import ase
-from ase.io import read, write
+from ase.io import read
 import logging
 from asi4py.asecalc import ASI_ASE_calculator
 from ase.md.velocitydistribution import MaxwellBoltzmannDistribution
@@ -1200,7 +1195,7 @@ class ALProcedure(PrepareALProcedure):
             update_model_auxiliaries(
                 model=model,
                 mace_sets=mace_sets[tag],
-                atomic_energies=self.ensemble_atomic_energies[tag],
+                atomic_energies_list=self.ensemble_atomic_energies[tag],
                 scaling=self.scaling,
                 update_atomic_energies=self.update_atomic_energies,
                 z_table=self.z_table,

@@ -226,13 +226,16 @@ In case PARSL is used, one has to specifiy certain settings that are needed to p
 - [x] Update README
 - [x] hide non-working CLI commands
 - [x] format code with BLACK
+- [x] split up utilities into utilities, eval_tools, data_handling
 - [ ] manual reformatting
 - [ ] add more comments and docstrings
 - [ ] unit tests
-- [ ] refactor code, especially procedures.py and utilities.py and all the modified MACE parts
+- [ ] refactor code, especially procedures and utilities.py and all the modified MACE parts
 - [ ] implement default settings and create checks when reading the input
 - [ ] create container
 ### Low Priority:
+- [ ] check if scratch_train.py and test_ensemble.py still work
+- [ ] change recalculator to use parsl
 - [ ] change epoch saved in AL for ckpt
 - [ ] copy original MACE input file
 - [ ] spin polarization for E0 calculations
