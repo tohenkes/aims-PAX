@@ -9,14 +9,15 @@ def main():
         al_settings = safe_load(file)
 
     standard_ensemble = StandardMACEEnsembleProcedure(
-        mace_settings=mace_settings,
-        active_learning_settings=al_settings
+        mace_settings=mace_settings, active_learning_settings=al_settings
     )
 
     standard_ensemble.train()
     standard_ensemble.test(
         path_to_ds="/home/users/u101418/al_aims/data/naphtalene/nve_295K_extxyz/out-1/out1.xyz"
     )
+
+
 #
 
 if __name__ == "__main__":

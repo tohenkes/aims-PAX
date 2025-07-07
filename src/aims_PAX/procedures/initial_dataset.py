@@ -30,11 +30,11 @@ from aims_PAX.tools.utilities import (
 )
 import parsl
 from aims_PAX.tools.utilities_parsl import recalc_aims_parsl
-from aims_PAX.tools.utilities_parsl import (
-    handle_parsl_logger,
-    prepare_parsl
+from aims_PAX.tools.utilities_parsl import handle_parsl_logger, prepare_parsl
+from aims_PAX.tools.train_epoch_mace import (
+    train_epoch,
+    validate_epoch_ensemble,
 )
-from aims_PAX.tools.train_epoch_mace import train_epoch, validate_epoch_ensemble
 import ase
 from ase.io import read
 import logging
@@ -48,7 +48,9 @@ from ase import units
 from contextlib import nullcontext
 import sys
 from time import perf_counter
+
 sys.stdout.flush()
+
 
 class PrepareInitialDatasetProcedure:
     """
@@ -77,12 +79,10 @@ class PrepareInitialDatasetProcedure:
             ensemble_seeds (np.array, optional): Seeds for the individual ensemble members. Defaults to None.
         """
 
-        self.comm_handler = CommHandler(
-            use_mpi=use_mpi
-        )
+        self.comm_handler = CommHandler(use_mpi=use_mpi)
         self.rank = self.comm_handler.get_rank()
         self.world_size = self.comm_handler.get_size()
-        
+
         # basic logger is being set up here
         self.log_dir = Path(mace_settings["GENERAL"]["log_dir"])
         logger_level = (
@@ -894,7 +894,6 @@ class InitialDatasetProcedure(PrepareInitialDatasetProcedure):
 
         self.step += 1
         self.train()
-        
 
     def setup_calcs(self):
         """
@@ -1048,9 +1047,10 @@ class InitialDatasetFoundational(InitialDatasetProcedure):
                 f"Sampled {len(self.sampled_points)} points using foundational model."
             )
         self.comm_handler.barrier()
-        self.sampled_points = self.comm_handler.bcast(self.sampled_points, root=0)
+        self.sampled_points = self.comm_handler.bcast(
+            self.sampled_points, root=0
+        )
         self.comm_handler.barrier()
-        
 
     def sample_points(self) -> list:
         """
@@ -1114,7 +1114,9 @@ class InitialDatasetFoundationalParallel(InitialDatasetFoundational):
         else:
             self.color = 1
 
-        self.comm = self.comm_handler.comm.Split(color=self.color, key=self.rank)
+        self.comm = self.comm_handler.comm.Split(
+            color=self.color, key=self.rank
+        )
 
     def close_aims(self):
         # this is just to overwrite the function in the parent class
@@ -1192,7 +1194,9 @@ class InitialDatasetFoundationalParallel(InitialDatasetFoundational):
                 # TODO: also send cell and pbc
                 geometry = current_point.get_positions()
                 # using isend to create a queue of messages
-                sample_send = self.comm_handler.comm.Isend(geometry, dest=1, tag=96)
+                sample_send = self.comm_handler.comm.Isend(
+                    geometry, dest=1, tag=96
+                )
                 sample_send.Wait()
 
                 # checking if training data recieved
@@ -1263,9 +1267,13 @@ class InitialDatasetFoundationalParallel(InitialDatasetFoundational):
                             or self.epoch >= self.max_initial_epochs
                         )
                         if criterion_met:
-                            for dest in range(1, self.comm_handler.comm.Get_size()):
-                                self.criterion_send = self.comm_handler.comm.isend(
-                                    None, dest=dest, tag=2305
+                            for dest in range(
+                                1, self.comm_handler.comm.Get_size()
+                            ):
+                                self.criterion_send = (
+                                    self.comm_handler.comm.isend(
+                                        None, dest=dest, tag=2305
+                                    )
                                 )
                                 self.criterion_send.Wait()
                             break
@@ -1352,7 +1360,9 @@ class InitialDatasetFoundationalParallel(InitialDatasetFoundational):
                         temp_sampled_forces = []
 
         self.comm_handler.barrier()
-        self.current_valid = self.comm_handler.bcast(self.current_valid, root=0)
+        self.current_valid = self.comm_handler.bcast(
+            self.current_valid, root=0
+        )
         self.epoch = self.comm_handler.bcast(self.epoch, root=0)
         self.comm_handler.barrier()
 
@@ -1376,7 +1386,7 @@ class InitialDatasetPARSL(InitialDatasetFoundational):
             al_settings=al_settings,
             path_to_control=path_to_control,
             path_to_geometry=path_to_geometry,
-            use_mpi=False
+            use_mpi=False,
         )
         self.close_parsl = close_parsl
 
@@ -1452,7 +1462,7 @@ class InitialDatasetPARSL(InitialDatasetFoundational):
                         f"Error while cleaning directories: {e}. "
                         "Please check the directories manually."
                     )
-        
+
         return recalculated_points
 
     def run(self):
@@ -1486,4 +1496,3 @@ class InitialDatasetPARSL(InitialDatasetFoundational):
             logging.info(
                 "Not closing PARSL. Please close it manually if needed."
             )
-

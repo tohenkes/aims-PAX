@@ -8,9 +8,10 @@ from mace.calculators import MACECalculator
 from aims_PAX.tools.uncertainty import (
     HandleUncertainty,
     MolForceUncertainty,
-    get_threshold
+    get_threshold,
 )
-#from aims_PAX.tools import utilities
+
+# from aims_PAX.tools import utilities
 from aims_PAX.tools.utilities import (
     create_dataloader,
     ensemble_training_setups,
@@ -38,19 +39,22 @@ from aims_PAX.tools.utilities import (
     CommHandler,
     dtype_mapping,
     AIMSControlParser,
-    ModifyMD
+    ModifyMD,
 )
 from aims_PAX.tools.utilities_parsl import (
     prepare_parsl,
     recalc_aims_parsl,
-    handle_parsl_logger
+    handle_parsl_logger,
 )
 import shutil
 from aims_PAX.tools.setup_MACE_training import (
     setup_mace_training,
-    reset_optimizer
-    )
-from aims_PAX.tools.train_epoch_mace import train_epoch, validate_epoch_ensemble
+    reset_optimizer,
+)
+from aims_PAX.tools.train_epoch_mace import (
+    train_epoch,
+    validate_epoch_ensemble,
+)
 import ase
 from ase.io import read, write
 import logging
@@ -64,20 +68,20 @@ from contextlib import nullcontext
 import threading
 import queue
 import time
+
 try:
     import parsl
 except ImportError:
     parsl = None
 
 
-
-
-#TODO: refactor this. too much in one class. maybe restart class etc.
+# TODO: refactor this. too much in one class. maybe restart class etc.
 class PrepareALProcedure:
     """
     Class to prepare the active learning procedure. It handles all the input files,
     prepares the calculators, models, directories etc.
     """
+
     def __init__(
         self,
         mace_settings,
@@ -85,9 +89,9 @@ class PrepareALProcedure:
         path_to_control: str = "./control.in",
         path_to_geometry: str = "./geometry.in",
         use_mpi: bool = True,
-        comm_handler: CommHandler = None
+        comm_handler: CommHandler = None,
     ) -> None:
-        
+
         if comm_handler is not None:
             self.comm_handler = comm_handler
         else:
@@ -96,23 +100,27 @@ class PrepareALProcedure:
             )
             self.rank = self.comm_handler.get_rank()
             self.world_size = self.comm_handler.get_size()
-        
+
         # purge all existing loggers
         for handler in logging.root.handlers[:]:
             logging.root.removeHandler(handler)
         # basic logger is being set up here
-        logger_level = logging.DEBUG if mace_settings["MISC"]["log_level"].lower() == "debug" else logging.INFO 
+        logger_level = (
+            logging.DEBUG
+            if mace_settings["MISC"]["log_level"].lower() == "debug"
+            else logging.INFO
+        )
         self.log_dir = Path(mace_settings["GENERAL"]["log_dir"])
         tools.setup_logger(
             level=logger_level,
-            tag=f'active_learning',
+            tag=f"active_learning",
             directory=self.log_dir,
         )
-                
+
         if self.rank == 0:
             logging.info("Initializing active learning procedure.")
             logging.info(f"Procedure runs on {self.world_size} workers.")
-        
+
         self.control_parser = AIMSControlParser()
         self.md_settings = al_settings["MD"]
         self.handle_al_settings(al_settings)
@@ -121,22 +129,22 @@ class PrepareALProcedure:
         self.setup_uncertainty()
         np.random.seed(self.mace_settings["GENERAL"]["seed"])
         self.create_folders()
-        
-        #TODO: will break when using multiple settings for different trajectories and 
+
+        # TODO: will break when using multiple settings for different trajectories and
         # it should be adapted to the way the initial dataset procecure treats md settings
         self.setup_md_modify()
-        #TODO: this would change with multiple species
+        # TODO: this would change with multiple species
         self.z = Z_from_geometry_in()
         self.z_table = create_ztable(self.z)
         self.n_atoms = len(self.z)
         self.freeze_threshold = False
-        
+
         if self.seeds_tags_dict is None:
             try:
                 self.seeds_tags_dict = dict(
                     np.load(
                         self.dataset_dir / "seeds_tags_dict.npz",
-                        allow_pickle=True
+                        allow_pickle=True,
                     )
                 )
             except:
@@ -147,8 +155,7 @@ class PrepareALProcedure:
 
         # TODO: remove hardcode
         self.use_scheduler = False
-        
-        
+
         if self.rank == 0:
             self.ensemble = ensemble_from_folder(
                 path_to_models=self.model_dir,
@@ -183,31 +190,33 @@ class PrepareALProcedure:
                 seed=self.seed,
             )
             self.train_dataset_len = len(
-                    self.ensemble_ase_sets[list(self.ensemble.keys())[0]][
-                        "train"
-                    ]
-                )
+                self.ensemble_ase_sets[list(self.ensemble.keys())[0]]["train"]
+            )
         if self.rank != 0:
             self.train_dataset_len = None
         self.comm_handler.barrier()
-        self.train_dataset_len = self.comm_handler.bcast(self.train_dataset_len, root=0)
+        self.train_dataset_len = self.comm_handler.bcast(
+            self.train_dataset_len, root=0
+        )
         self.comm_handler.barrier()
-        
+
         self.handle_atomic_energies()
         # this initializes the FHI aims process
         self.aims_calculator = self.setup_aims_calculator(
             atoms=read(path_to_geometry)
         )
-        
+
         if self.restart:
             self.handle_al_restart()
         else:
-            #TODO: tidy up and put in a separate function/class?
+            # TODO: tidy up and put in a separate function/class?
             self.trajectories = {
-                trajectory: read(path_to_geometry) for trajectory in range(self.num_trajectories)
+                trajectory: read(path_to_geometry)
+                for trajectory in range(self.num_trajectories)
             }
             self.MD_checkpoints = {
-                trajectory: self.trajectories[trajectory] for trajectory in range(self.num_trajectories)
+                trajectory: self.trajectories[trajectory]
+                for trajectory in range(self.num_trajectories)
             }
             self.trajectory_status = {
                 trajectory: "running"
@@ -234,7 +243,7 @@ class PrepareALProcedure:
             self.ensemble_best_valid = {
                 tag: np.inf for tag in self.seeds_tags_dict.keys()
             }
-            
+
             self.current_valid_error = np.inf
             self.threshold = np.inf
             self.total_points_added = 0  # counts how many points have been added to the training set to decide when to add a point to the validation set
@@ -245,10 +254,12 @@ class PrepareALProcedure:
             self.num_workers_waiting = 0
             self.total_epoch = 0
             self.check = 0
-            self.uncertainties = []  # for moving average # This times self.skip_step sets the limit TODO: make this a setting
-            
-        #TODO: put this somewhere else:        
-        if self.analysis :
+            self.uncertainties = (
+                []
+            )  # for moving average # This times self.skip_step sets the limit TODO: make this a setting
+
+        # TODO: put this somewhere else:
+        if self.analysis:
 
             self.trajectories_analysis_prediction = {
                 idx: None for idx in range(self.num_trajectories)
@@ -256,7 +267,8 @@ class PrepareALProcedure:
             if not self.restart:
                 # this saves the intervals between points that cross the uncertainty threshold
                 self.t_intervals = {
-                    trajectory: [] for trajectory in range(self.num_trajectories)
+                    trajectory: []
+                    for trajectory in range(self.num_trajectories)
                 }
                 # this saves uncertainty and true errors for each trajectory
                 self.analysis_checks = {
@@ -272,19 +284,22 @@ class PrepareALProcedure:
                         "threshold": [],
                         "train_set_length": [],
                         "current_md_step": [],
-                        } for trajectory in range(self.num_trajectories)
+                    }
+                    for trajectory in range(self.num_trajectories)
                 }
                 if self.mol_idxs is not None:
                     for trajectory in range(self.num_trajectories):
-                        self.analysis_checks[trajectory].update({
-                            "mol_forces_prediction": [],
-                            "mol_forces_true": [],
-                            "total_uncertainty": [],
-                            "mol_forces_uncertainty": [],
-                            "mol_wise_error": [],
-                            "max_mol_error": [],
-                            "mean_mol_error": [],
-                        })
+                        self.analysis_checks[trajectory].update(
+                            {
+                                "mol_forces_prediction": [],
+                                "mol_forces_true": [],
+                                "total_uncertainty": [],
+                                "mol_forces_uncertainty": [],
+                                "mol_wise_error": [],
+                                "max_mol_error": [],
+                                "mean_mol_error": [],
+                            }
+                        )
                     self.uncertainty_checks = []
                 # this saves the validation losses for each trajectory
                 self.collect_losses = {
@@ -292,9 +307,10 @@ class PrepareALProcedure:
                     "avg_losses": [],
                     "ensemble_losses": [],
                 }
-                
+
                 self.collect_thresholds = {
-                    trajectory: [] for trajectory in range(self.num_trajectories)
+                    trajectory: []
+                    for trajectory in range(self.num_trajectories)
                 }
 
         if self.rank == 0:
@@ -302,17 +318,17 @@ class PrepareALProcedure:
             for trajectory in self.trajectories.values():
                 trajectory.calc = self.mace_calc
 
-            #TODO: make this more flexible, to allow different drivers per trajectory
+            # TODO: make this more flexible, to allow different drivers per trajectory
             # just make a dictionary of different md settings and pass them here
             self.md_drivers = {
                 trajectory: self.setup_md_al(
                     atoms=self.trajectories[trajectory],
                     md_settings=self.md_settings,
-                    idx=trajectory
-                ) for trajectory in range(self.num_trajectories)
+                    idx=trajectory,
+                )
+                for trajectory in range(self.num_trajectories)
             }
-        
-          
+
     def handle_mace_settings(self, mace_settings: dict):
         self.mace_settings = mace_settings
         self.seed = self.mace_settings["GENERAL"]["seed"]
@@ -321,25 +337,31 @@ class PrepareALProcedure:
         self.set_valid_batch_size = self.mace_settings["TRAINING"][
             "valid_batch_size"
         ]
-        self.checkpoints_dir = self.mace_settings["GENERAL"]["checkpoints_dir"] + "/al"
+        self.checkpoints_dir = (
+            self.mace_settings["GENERAL"]["checkpoints_dir"] + "/al"
+        )
         self.scaling = self.mace_settings["TRAINING"]["scaling"]
         self.device = self.mace_settings["MISC"]["device"]
         self.model_dir = self.mace_settings["GENERAL"]["model_dir"]
         self.dtype = self.mace_settings["GENERAL"]["default_dtype"]
         torch.set_default_dtype(dtype_mapping[self.dtype])
         self.device = self.mace_settings["MISC"]["device"]
-        self.atomic_energies_dict = self.mace_settings["ARCHITECTURE"].get("atomic_energies", None)
-        self.compute_stress = self.mace_settings["GENERAL"].get("compute_stress", False)
-        self.properties = ['energy', 'forces']
+        self.atomic_energies_dict = self.mace_settings["ARCHITECTURE"].get(
+            "atomic_energies", None
+        )
+        self.compute_stress = self.mace_settings["GENERAL"].get(
+            "compute_stress", False
+        )
+        self.properties = ["energy", "forces"]
         if self.compute_stress:
-            self.properties.append('stress')
-        
+            self.properties.append("stress")
+
     def handle_al_settings(self, al_settings):
-        
+
         # TODO: use setattr here
-        self.al = al_settings['ACTIVE_LEARNING']
-        self.cluster_settings = al_settings.get('CLUSTER', None)
-        self.misc = al_settings.get('MISC', {})
+        self.al = al_settings["ACTIVE_LEARNING"]
+        self.cluster_settings = al_settings.get("CLUSTER", None)
+        self.misc = al_settings.get("MISC", {})
         self.max_MD_steps = self.al["max_MD_steps"]
         self.max_epochs_worker = self.al["max_epochs_worker"]
         self.max_final_epochs = self.al["max_final_epochs"]
@@ -361,65 +383,79 @@ class PrepareALProcedure:
         self.seeds_tags_dict = self.al.get("seeds_tags_dict", None)
         self.margin = self.al.get("margin", 0.001)
         self.converge_best = self.al.get("converge_best", True)
-        self.mol_idxs = np.load(self.al['mol_idxs'],allow_pickle=True)['arr_0'].tolist() if self.al.get("mol_idxs", None) is not None else None
+        self.mol_idxs = (
+            np.load(self.al["mol_idxs"], allow_pickle=True)["arr_0"].tolist()
+            if self.al.get("mol_idxs", None) is not None
+            else None
+        )
         if self.rank == 0:
             logging.info(f"Using molecular indices: {self.mol_idxs}")
-        self.uncertainty_type = self.al.get("uncertainty_type", "max_atomic_sd")
-        self.uncert_not_crossed_limit = self.al.get("uncert_not_crossed_limit", 500)
-        self.freeze_threshold_dataset = self.al.get("freeze_threshold_dataset", np.inf)
+        self.uncertainty_type = self.al.get(
+            "uncertainty_type", "max_atomic_sd"
+        )
+        self.uncert_not_crossed_limit = self.al.get(
+            "uncert_not_crossed_limit", 500
+        )
+        self.freeze_threshold_dataset = self.al.get(
+            "freeze_threshold_dataset", np.inf
+        )
         if self.rank == 0:
             if self.freeze_threshold_dataset != np.inf:
-                logging.info(f"Freezing threshold at dataset size of {self.freeze_threshold_dataset}")
-        
-        
+                logging.info(
+                    f"Freezing threshold at dataset size of {self.freeze_threshold_dataset}"
+                )
+
         self.restart = os.path.exists("restart/al/al_restart.npy")
         self.create_restart = self.misc.get("create_restart", False)
 
-        #TODO: put this somewhere else
+        # TODO: put this somewhere else
         if self.create_restart:
             self.al_restart_dict = {
-                'trajectories': None,
-                'MD_checkppoints': None,
-                'trajectory_status': None,
-                'trajectory_MD_steps': None,
-                'trajectory_epochs': None,
-                'ensemble_reset_opt': None,
-                'ensemble_no_improvement': None,
-                'ensemble_best_valid': None,
-                'uncert_not_crossed': None,
-                'current_valid_error': None,
-                'threshold': None,
-                'total_points_added': None,
-                'train_points_added': None,
-                'valid_points_added': None,
-                'num_MD_limits_reached': None,
-                'num_workers_training': None,
-                'num_workers_waiting': None,
-                'total_epoch': None,
-                'check': None,
-                'uncertainties': None,
-                'al_done': False,
-                'best_member': None,
+                "trajectories": None,
+                "MD_checkppoints": None,
+                "trajectory_status": None,
+                "trajectory_MD_steps": None,
+                "trajectory_epochs": None,
+                "ensemble_reset_opt": None,
+                "ensemble_no_improvement": None,
+                "ensemble_best_valid": None,
+                "uncert_not_crossed": None,
+                "current_valid_error": None,
+                "threshold": None,
+                "total_points_added": None,
+                "train_points_added": None,
+                "valid_points_added": None,
+                "num_MD_limits_reached": None,
+                "num_workers_training": None,
+                "num_workers_waiting": None,
+                "total_epoch": None,
+                "check": None,
+                "uncertainties": None,
+                "al_done": False,
+                "best_member": None,
             }
-            self.save_restart = False # is set to true in training when checkpoint is saved
-            
-            if self.md_settings['stat_ensemble'].lower() in ['nvt', 'npt']:
-                self.al_restart_dict.update({
-                    'current_temperatures': None,
-                })
-            
-            if self.analysis:#
-                self.al_restart_dict.update({
-                    't_intervals': None,
-                    'analysis_checks': None,
-                    'collect_losses': None,
-                    'collect_thresholds': None
-                })
-                
-    def handle_aims_settings(
-        self,
-        path_to_control: str
-        ):
+            self.save_restart = (
+                False  # is set to true in training when checkpoint is saved
+            )
+
+            if self.md_settings["stat_ensemble"].lower() in ["nvt", "npt"]:
+                self.al_restart_dict.update(
+                    {
+                        "current_temperatures": None,
+                    }
+                )
+
+            if self.analysis:  #
+                self.al_restart_dict.update(
+                    {
+                        "t_intervals": None,
+                        "analysis_checks": None,
+                        "collect_losses": None,
+                        "collect_thresholds": None,
+                    }
+                )
+
+    def handle_aims_settings(self, path_to_control: str):
         """
         Loads and parses the AIMS control file to get the settings for the AIMS calculator.
 
@@ -428,115 +464,160 @@ class PrepareALProcedure:
             species_dir (str): Path to the species directory of AIMS.
 
         """
-        
+
         self.aims_settings = self.control_parser(path_to_control)
-        self.aims_settings['compute_forces'] = True
-        self.aims_settings['species_dir'] = self.species_dir
-        self.aims_settings['postprocess_anyway'] = True # this is necesssary to check for convergence with ASI
-        
+        self.aims_settings["compute_forces"] = True
+        self.aims_settings["species_dir"] = self.species_dir
+        self.aims_settings["postprocess_anyway"] = (
+            True  # this is necesssary to check for convergence with ASI
+        )
+
     def handle_atomic_energies(
-            self,
-        ):
-            self.update_atomic_energies = False
-            
-            if self.rank==0:
-                if self.atomic_energies_dict is None:
-                    if self.restart:
-                        logging.info("Loading atomic energies from checkpoint.")
-                        (
-                            self.ensemble_atomic_energies,
-                            self.ensemble_atomic_energies_dict
-                        ) = get_atomic_energies_from_pt(
-                            path_to_checkpoints=self.checkpoints_dir,
-                            z=self.z,
-                            seeds_tags_dict=self.seeds_tags_dict,
-                            dtype=self.dtype
-                        )
-                    else:
-                        logging.info("Loading atomic energies from existing ensemble.")
-                        (
-                            self.ensemble_atomic_energies,
-                            self.ensemble_atomic_energies_dict
-                        ) = get_atomic_energies_from_ensemble(
-                            ensemble=self.ensemble,
-                            z=self.z,
-                            dtype=self.dtype
-                        )
-                    self.update_atomic_energies = True
+        self,
+    ):
+        self.update_atomic_energies = False
 
+        if self.rank == 0:
+            if self.atomic_energies_dict is None:
+                if self.restart:
+                    logging.info("Loading atomic energies from checkpoint.")
+                    (
+                        self.ensemble_atomic_energies,
+                        self.ensemble_atomic_energies_dict,
+                    ) = get_atomic_energies_from_pt(
+                        path_to_checkpoints=self.checkpoints_dir,
+                        z=self.z,
+                        seeds_tags_dict=self.seeds_tags_dict,
+                        dtype=self.dtype,
+                    )
                 else:
-                    logging.info("Using specified atomic energies.")
-                    self.ensemble_atomic_energies_dict = {
-                        tag: self.atomic_energies_dict for tag in self.seeds_tags_dict.keys()
-                    }
+                    logging.info(
+                        "Loading atomic energies from existing ensemble."
+                    )
+                    (
+                        self.ensemble_atomic_energies,
+                        self.ensemble_atomic_energies_dict,
+                    ) = get_atomic_energies_from_ensemble(
+                        ensemble=self.ensemble, z=self.z, dtype=self.dtype
+                    )
+                self.update_atomic_energies = True
 
-                    self.ensemble_atomic_energies = {tag: np.array(
+            else:
+                logging.info("Using specified atomic energies.")
+                self.ensemble_atomic_energies_dict = {
+                    tag: self.atomic_energies_dict
+                    for tag in self.seeds_tags_dict.keys()
+                }
+
+                self.ensemble_atomic_energies = {
+                    tag: np.array(
                         [
                             self.ensemble_atomic_energies_dict[tag][z]
-                            for z in self.ensemble_atomic_energies_dict[tag].keys()
+                            for z in self.ensemble_atomic_energies_dict[
+                                tag
+                            ].keys()
                         ],
-                        dtype=self.dtype
-                    ) for tag in self.seeds_tags_dict.keys()}
+                        dtype=self.dtype,
+                    )
+                    for tag in self.seeds_tags_dict.keys()
+                }
 
-                logging.info(f'{self.ensemble_atomic_energies_dict[list(self.seeds_tags_dict.keys())[0]]}')
-    
+            logging.info(
+                f"{self.ensemble_atomic_energies_dict[list(self.seeds_tags_dict.keys())[0]]}"
+            )
+
     def handle_al_restart(self):
 
         attributes = [
-            'trajectories','MD_checkpoints', 'trajectory_intermediate_epochs', 'ensemble_reset_opt',
-            'ensemble_no_improvement', 'ensemble_best_valid', 'threshold',
-            'trajectory_status', 'trajectory_MD_steps', 'trajectory_total_epochs',
-            'current_valid_error', 'total_points_added', 'train_points_added',
-            'valid_points_added', 'num_MD_limits_reached', 'num_workers_training',
-            'num_workers_waiting', 'total_epoch', 'check', 'uncertainties', 'converge_best',
-            'uncert_not_crossed'
+            "trajectories",
+            "MD_checkpoints",
+            "trajectory_intermediate_epochs",
+            "ensemble_reset_opt",
+            "ensemble_no_improvement",
+            "ensemble_best_valid",
+            "threshold",
+            "trajectory_status",
+            "trajectory_MD_steps",
+            "trajectory_total_epochs",
+            "current_valid_error",
+            "total_points_added",
+            "train_points_added",
+            "valid_points_added",
+            "num_MD_limits_reached",
+            "num_workers_training",
+            "num_workers_waiting",
+            "total_epoch",
+            "check",
+            "uncertainties",
+            "converge_best",
+            "uncert_not_crossed",
         ]
-        if self.md_settings['stat_ensemble'].lower() in ['nvt', 'npt']:
-            attributes.append('current_temperatures')
-            
+        if self.md_settings["stat_ensemble"].lower() in ["nvt", "npt"]:
+            attributes.append("current_temperatures")
+
         for attr in attributes:
             setattr(self, attr, None)
-        
+
         if self.analysis:
             analysis_attributes = [
-            't_intervals', 'analysis_checks', 'collect_losses',
-            'collect_thresholds'
+                "t_intervals",
+                "analysis_checks",
+                "collect_losses",
+                "collect_thresholds",
             ]
             if self.mol_idxs is not None:
-                analysis_attributes.append('uncertainty_checks')
-                
+                analysis_attributes.append("uncertainty_checks")
+
             for attr in analysis_attributes:
                 setattr(self, attr, None)
 
         if self.rank == 0:
-            logging.info("Restarting active learning procedure from checkpoint.")
+            logging.info(
+                "Restarting active learning procedure from checkpoint."
+            )
             self.al_restart_dict = np.load(
-                "restart/al/al_restart.npy",
-                allow_pickle=True
+                "restart/al/al_restart.npy", allow_pickle=True
             ).item()
             restart_keys = [
-                'trajectories', 'MD_checkpoints', 'trajectory_intermediate_epochs', 'ensemble_reset_opt',
-                'ensemble_no_improvement', 'ensemble_best_valid', 'threshold',
-                'trajectory_status', 'trajectory_MD_steps', 'trajectory_total_epochs',
-                'current_valid_error', 'total_points_added', 'train_points_added',
-                'valid_points_added', 'num_MD_limits_reached', 'num_workers_training',
-                'num_workers_waiting', 'total_epoch', 'check', 'uncertainties', 'converge_best',
-                'uncert_not_crossed'
+                "trajectories",
+                "MD_checkpoints",
+                "trajectory_intermediate_epochs",
+                "ensemble_reset_opt",
+                "ensemble_no_improvement",
+                "ensemble_best_valid",
+                "threshold",
+                "trajectory_status",
+                "trajectory_MD_steps",
+                "trajectory_total_epochs",
+                "current_valid_error",
+                "total_points_added",
+                "train_points_added",
+                "valid_points_added",
+                "num_MD_limits_reached",
+                "num_workers_training",
+                "num_workers_waiting",
+                "total_epoch",
+                "check",
+                "uncertainties",
+                "converge_best",
+                "uncert_not_crossed",
             ]
-            if self.md_settings['stat_ensemble'].lower() in ['nvt', 'npt']:
-                restart_keys.append('current_temperatures')
+            if self.md_settings["stat_ensemble"].lower() in ["nvt", "npt"]:
+                restart_keys.append("current_temperatures")
 
             for key in restart_keys:
                 setattr(self, key, self.al_restart_dict[key])
 
             if self.analysis:
                 restart_analysis_keys = [
-                    't_intervals', 'analysis_checks', 'collect_losses',
-                    'collect_thresholds'
+                    "t_intervals",
+                    "analysis_checks",
+                    "collect_losses",
+                    "collect_thresholds",
                 ]
                 if self.mol_idxs is not None:
-                    restart_analysis_keys.append('uncertainty_checks')
-                    
+                    restart_analysis_keys.append("uncertainty_checks")
+
                 for key in restart_analysis_keys:
                     setattr(self, key, self.al_restart_dict[key])
 
@@ -544,90 +625,133 @@ class PrepareALProcedure:
                     self.uncertainty_checks = []
 
         self.comm_handler.barrier()
-        self.trajectory_status = self.comm_handler.bcast(self.trajectory_status, root=0)
-        self.trajectory_MD_steps = self.comm_handler.bcast(self.trajectory_MD_steps, root=0)
-        self.trajectory_total_epochs = self.comm_handler.bcast(self.trajectory_total_epochs, root=0)
-        self.current_valid_error = self.comm_handler.bcast(self.current_valid_error, root=0)
-        self.total_points_added = self.comm_handler.bcast(self.total_points_added, root=0)
-        self.train_points_added = self.comm_handler.bcast(self.train_points_added, root=0)
-        self.valid_points_added = self.comm_handler.bcast(self.valid_points_added, root=0)
-        self.num_MD_limits_reached = self.comm_handler.bcast(self.num_MD_limits_reached, root=0)
-        self.num_workers_training = self.comm_handler.bcast(self.num_workers_training, root=0)
-        self.num_workers_waiting = self.comm_handler.bcast(self.num_workers_waiting, root=0)
+        self.trajectory_status = self.comm_handler.bcast(
+            self.trajectory_status, root=0
+        )
+        self.trajectory_MD_steps = self.comm_handler.bcast(
+            self.trajectory_MD_steps, root=0
+        )
+        self.trajectory_total_epochs = self.comm_handler.bcast(
+            self.trajectory_total_epochs, root=0
+        )
+        self.current_valid_error = self.comm_handler.bcast(
+            self.current_valid_error, root=0
+        )
+        self.total_points_added = self.comm_handler.bcast(
+            self.total_points_added, root=0
+        )
+        self.train_points_added = self.comm_handler.bcast(
+            self.train_points_added, root=0
+        )
+        self.valid_points_added = self.comm_handler.bcast(
+            self.valid_points_added, root=0
+        )
+        self.num_MD_limits_reached = self.comm_handler.bcast(
+            self.num_MD_limits_reached, root=0
+        )
+        self.num_workers_training = self.comm_handler.bcast(
+            self.num_workers_training, root=0
+        )
+        self.num_workers_waiting = self.comm_handler.bcast(
+            self.num_workers_waiting, root=0
+        )
         self.total_epoch = self.comm_handler.bcast(self.total_epoch, root=0)
         self.check = self.comm_handler.bcast(self.check, root=0)
-        self.uncertainties = self.comm_handler.bcast(self.uncertainties, root=0)
-        self.converge_best = self.comm_handler.bcast(self.converge_best, root=0)
-        self.uncert_not_crossed = self.comm_handler.bcast(self.uncert_not_crossed, root=0)
-        
-        if self.md_settings['stat_ensemble'].lower() in ['nvt','npt']:
-            self.current_temperatures = self.comm_handler.bcast(self.current_temperatures, root=0)
-            
+        self.uncertainties = self.comm_handler.bcast(
+            self.uncertainties, root=0
+        )
+        self.converge_best = self.comm_handler.bcast(
+            self.converge_best, root=0
+        )
+        self.uncert_not_crossed = self.comm_handler.bcast(
+            self.uncert_not_crossed, root=0
+        )
+
+        if self.md_settings["stat_ensemble"].lower() in ["nvt", "npt"]:
+            self.current_temperatures = self.comm_handler.bcast(
+                self.current_temperatures, root=0
+            )
+
         if self.analysis:
-            self.t_intervals = self.comm_handler.bcast(self.t_intervals, root=0)
-            self.analysis_checks = self.comm_handler.bcast(self.analysis_checks, root=0)
-            self.collect_losses = self.comm_handler.bcast(self.collect_losses, root=0)
-            self.collect_thresholds = self.comm_handler.bcast(self.collect_thresholds, root=0)
+            self.t_intervals = self.comm_handler.bcast(
+                self.t_intervals, root=0
+            )
+            self.analysis_checks = self.comm_handler.bcast(
+                self.analysis_checks, root=0
+            )
+            self.collect_losses = self.comm_handler.bcast(
+                self.collect_losses, root=0
+            )
+            self.collect_thresholds = self.comm_handler.bcast(
+                self.collect_thresholds, root=0
+            )
             if self.mol_idxs is not None:
-                self.uncertainty_checks = self.comm_handler.bcast(self.uncertainty_checks, root=0)
+                self.uncertainty_checks = self.comm_handler.bcast(
+                    self.uncertainty_checks, root=0
+                )
         self.comm_handler.barrier()
 
     def update_al_restart_dict(self, save_restart: str = None):
-        self.al_restart_dict.update({
-            'trajectories': self.trajectories,
-            'MD_checkpoints': self.MD_checkpoints,
-            'trajectory_status': self.trajectory_status,
-            'trajectory_MD_steps': self.trajectory_MD_steps,
-            'trajectory_total_epochs': self.trajectory_total_epochs,
-            'trajectory_intermediate_epochs': self.trajectory_intermediate_epochs,
-            'ensemble_reset_opt': self.ensemble_reset_opt,
-            'ensemble_no_improvement': self.ensemble_no_improvement,
-            'ensemble_best_valid': self.ensemble_best_valid,
-            'current_valid_error': self.current_valid_error,
-            'threshold': self.threshold,
-            'total_points_added': self.total_points_added,
-            'train_points_added': self.train_points_added,
-            'valid_points_added': self.valid_points_added,
-            'num_MD_limits_reached': self.num_MD_limits_reached,
-            'num_workers_training': self.num_workers_training,
-            'num_workers_waiting': self.num_workers_waiting,
-            'total_epoch': self.total_epoch,
-            'check': self.check,
-            'uncertainties': self.uncertainties,
-            'converge_best': self.converge_best,
-            'uncert_not_crossed': self.uncert_not_crossed
-        })
-        
-        if self.md_settings['stat_ensemble'].lower() in ['nvt', 'npt']:
-            if self.md_settings['stat_ensemble'].lower() == 'nvt':
+        self.al_restart_dict.update(
+            {
+                "trajectories": self.trajectories,
+                "MD_checkpoints": self.MD_checkpoints,
+                "trajectory_status": self.trajectory_status,
+                "trajectory_MD_steps": self.trajectory_MD_steps,
+                "trajectory_total_epochs": self.trajectory_total_epochs,
+                "trajectory_intermediate_epochs": self.trajectory_intermediate_epochs,
+                "ensemble_reset_opt": self.ensemble_reset_opt,
+                "ensemble_no_improvement": self.ensemble_no_improvement,
+                "ensemble_best_valid": self.ensemble_best_valid,
+                "current_valid_error": self.current_valid_error,
+                "threshold": self.threshold,
+                "total_points_added": self.total_points_added,
+                "train_points_added": self.train_points_added,
+                "valid_points_added": self.valid_points_added,
+                "num_MD_limits_reached": self.num_MD_limits_reached,
+                "num_workers_training": self.num_workers_training,
+                "num_workers_waiting": self.num_workers_waiting,
+                "total_epoch": self.total_epoch,
+                "check": self.check,
+                "uncertainties": self.uncertainties,
+                "converge_best": self.converge_best,
+                "uncert_not_crossed": self.uncert_not_crossed,
+            }
+        )
+
+        if self.md_settings["stat_ensemble"].lower() in ["nvt", "npt"]:
+            if self.md_settings["stat_ensemble"].lower() == "nvt":
                 get_temp = lambda x: x.temp
-            elif self.md_settings['stat_ensemble'].lower() == 'npt':
+            elif self.md_settings["stat_ensemble"].lower() == "npt":
                 get_temp = lambda x: x.temperature
 
-            self.al_restart_dict.update({
-                'current_temperatures': {
-                    trajectory: (get_temp(self.md_drivers[trajectory]) / units.kB) for trajectory in self.trajectories.keys()
+            self.al_restart_dict.update(
+                {
+                    "current_temperatures": {
+                        trajectory: (
+                            get_temp(self.md_drivers[trajectory]) / units.kB
+                        )
+                        for trajectory in self.trajectories.keys()
+                    }
                 }
-            })
-            
-        
-        if self.analysis:
-            self.al_restart_dict.update({
-                't_intervals': self.t_intervals,
-                'analysis_checks': self.analysis_checks,
-                'collect_losses': self.collect_losses,
-                'collect_thresholds': self.collect_thresholds
-            })
-            if self.mol_idxs is not None:
-                self.al_restart_dict.update({
-                    'uncertainty_checks': self.uncertainty_checks
-                })
-        if save_restart is not None:
-            np.save(
-                save_restart,
-                self.al_restart_dict
             )
-        
+
+        if self.analysis:
+            self.al_restart_dict.update(
+                {
+                    "t_intervals": self.t_intervals,
+                    "analysis_checks": self.analysis_checks,
+                    "collect_losses": self.collect_losses,
+                    "collect_thresholds": self.collect_thresholds,
+                }
+            )
+            if self.mol_idxs is not None:
+                self.al_restart_dict.update(
+                    {"uncertainty_checks": self.uncertainty_checks}
+                )
+        if save_restart is not None:
+            np.save(save_restart, self.al_restart_dict)
+
     def create_folders(self):
         """
         Create the folders for the final datasets.
@@ -644,42 +768,47 @@ class PrepareALProcedure:
             os.makedirs("restart/al", exist_ok=True)
 
     def setup_aims_calculator(
-            self,
-            atoms: ase.Atoms,
-            ):
+        self,
+        atoms: ase.Atoms,
+    ):
         """
         Creates and returns the AIMS calculator for a given atoms object.
 
         Args:
             path_to_geometry (str, optional): Path to geometry file. Defaults to "./geometry.in".
         """
-        
+
         aims_settings = self.aims_settings.copy()
 
         def init_via_ase(asi):
             from ase.calculators.aims import Aims, AimsProfile
-            aims_settings["profile"] = AimsProfile(command="asi-doesnt-need-command")
+
+            aims_settings["profile"] = AimsProfile(
+                command="asi-doesnt-need-command"
+            )
             calc = Aims(**aims_settings)
             calc.write_inputfiles(asi.atoms, properties=self.properties)
 
         calc = ASI_ASE_calculator(
-            self.ASI_path,
-            init_via_ase,
-            self.comm_handler.comm,
-            atoms
-            )
+            self.ASI_path, init_via_ase, self.comm_handler.comm, atoms
+        )
         return calc
 
-    def recalc_aims(
-            self,
-            current_point: ase.Atoms
-            ) -> ase.Atoms:
-        self.aims_calculator.calculate(current_point, properties=self.properties)
+    def recalc_aims(self, current_point: ase.Atoms) -> ase.Atoms:
+        self.aims_calculator.calculate(
+            current_point, properties=self.properties
+        )
         if self.aims_calculator.asi.is_scf_converged:
-            current_point.info["REF_energy"] = self.aims_calculator.results["energy"]
-            current_point.arrays["REF_forces"] = self.aims_calculator.results["forces"]
+            current_point.info["REF_energy"] = self.aims_calculator.results[
+                "energy"
+            ]
+            current_point.arrays["REF_forces"] = self.aims_calculator.results[
+                "forces"
+            ]
             if self.compute_stress:
-                current_point.info["REF_stress"] = self.aims_calculator.results["stress"]
+                current_point.info["REF_stress"] = (
+                    self.aims_calculator.results["stress"]
+                )
             return current_point
         else:
             if self.rank == 0:
@@ -693,23 +822,16 @@ class PrepareALProcedure:
         model_paths = list_files_in_directory(self.model_dir)
         self.models = [
             torch.load(
-                f=model_path,
-                map_location=self.device,
-                weights_only=False
-                ) for model_path in model_paths
+                f=model_path, map_location=self.device, weights_only=False
+            )
+            for model_path in model_paths
         ]
         # the calculator needs to be updated consistently see below
         self.mace_calc = MACECalculator(
-            models=self.models,
-            device=self.device,
-            default_dtype=self.dtype)
-        
-    def setup_md_al(
-            self,
-            atoms: ase.Atoms,
-            md_settings: dict,
-            idx: None
-            ):
+            models=self.models, device=self.device, default_dtype=self.dtype
+        )
+
+    def setup_md_al(self, atoms: ase.Atoms, md_settings: dict, idx: None):
         """
         Sets up the ASE molecular dynamics object for the atoms object using
         the MD settings.
@@ -721,62 +843,69 @@ class PrepareALProcedure:
         Returns:
             ase.md.MolecularDynamics: ASE MD engine.
         """
-        #TODO: make this more flexible
-        if md_settings["stat_ensemble"].lower() in ['nvt', 'npt']:
+        # TODO: make this more flexible
+        if md_settings["stat_ensemble"].lower() in ["nvt", "npt"]:
             if not self.restart:
                 try:
-                    self.current_temperatures[idx] = md_settings['temperature']
+                    self.current_temperatures[idx] = md_settings["temperature"]
                 except AttributeError:
-                    self.current_temperatures = {idx: md_settings['temperature']}
-            
-            if md_settings["stat_ensemble"].lower() == 'nvt':
-                if md_settings['thermostat'].lower() == 'langevin':
+                    self.current_temperatures = {
+                        idx: md_settings["temperature"]
+                    }
+
+            if md_settings["stat_ensemble"].lower() == "nvt":
+                if md_settings["thermostat"].lower() == "langevin":
                     dyn = Langevin(
                         atoms,
-                        timestep=md_settings['timestep'] * units.fs,
-                        friction=md_settings['friction'] / units.fs,
+                        timestep=md_settings["timestep"] * units.fs,
+                        friction=md_settings["friction"] / units.fs,
                         temperature_K=self.current_temperatures[idx],
-                        rng=np.random.RandomState(md_settings['seed'])
-                    )  
-            elif md_settings["stat_ensemble"].lower() == 'npt':
-                if md_settings['barostat'].lower() == 'berendsen':
+                        rng=np.random.RandomState(md_settings["seed"]),
+                    )
+            elif md_settings["stat_ensemble"].lower() == "npt":
+                if md_settings["barostat"].lower() == "berendsen":
                     npt_settings = {
-                        'atoms': atoms,
-                        'timestep': md_settings['timestep'] * units.fs,
-                        'temperature': self.current_temperatures[idx],
-                        'pressure_au': md_settings['pressure_au'],
+                        "atoms": atoms,
+                        "timestep": md_settings["timestep"] * units.fs,
+                        "temperature": self.current_temperatures[idx],
+                        "pressure_au": md_settings["pressure_au"],
                     }
-                    
-                    if md_settings.get('taup',False):
-                        npt_settings['taup'] = md_settings['taup'] * units.fs
-                    if md_settings.get('taut', False):
-                        npt_settings['taut'] = md_settings['taut'] * units.fs
-                    if md_settings.get('compressibility_au', False):
-                        npt_settings['compressibility_au'] = md_settings['compressibility_au']
-                    if md_settings.get('fixcm', False):
-                        npt_settings['fixcm'] = md_settings['fixcm']
-                    
+
+                    if md_settings.get("taup", False):
+                        npt_settings["taup"] = md_settings["taup"] * units.fs
+                    if md_settings.get("taut", False):
+                        npt_settings["taut"] = md_settings["taut"] * units.fs
+                    if md_settings.get("compressibility_au", False):
+                        npt_settings["compressibility_au"] = md_settings[
+                            "compressibility_au"
+                        ]
+                    if md_settings.get("fixcm", False):
+                        npt_settings["fixcm"] = md_settings["fixcm"]
+
                     dyn = NPTBerendsen(**npt_settings)
-                if md_settings['barostat'].lower() == 'npt':
+                if md_settings["barostat"].lower() == "npt":
                     npt_settings = {
-                        'atoms': atoms,
-                        'timestep': md_settings['timestep'] * units.fs,
-                        'temperature_K': self.current_temperatures[idx],
-                        'externalstress': md_settings['externalstress'] * units.bar,
-                        'ttime': md_settings['ttime'] * units.fs,
-                        'pfactor': md_settings['pfactor'] * units.fs,
+                        "atoms": atoms,
+                        "timestep": md_settings["timestep"] * units.fs,
+                        "temperature_K": self.current_temperatures[idx],
+                        "externalstress": md_settings["externalstress"]
+                        * units.bar,
+                        "ttime": md_settings["ttime"] * units.fs,
+                        "pfactor": md_settings["pfactor"] * units.fs,
                     }
-                    
-                    if md_settings.get('mask', False):
-                        npt_settings['mask'] = md_settings['mask']
-                    
+
+                    if md_settings.get("mask", False):
+                        npt_settings["mask"] = md_settings["mask"]
+
                     dyn = NPT(**npt_settings)
-            
+
             if not self.restart:
-                MaxwellBoltzmannDistribution(atoms, temperature_K=md_settings['temperature'])    
-                
+                MaxwellBoltzmannDistribution(
+                    atoms, temperature_K=md_settings["temperature"]
+                )
+
             return dyn
-    
+
     def setup_md_modify(
         self,
     ):
@@ -784,38 +913,37 @@ class PrepareALProcedure:
         self.md_mod_settings = self.md_settings.get("MODIFY", None)
         if self.md_mod_settings is not None:
             self.md_mod_metric = self.md_mod_settings.get("metric", None)
-            assert self.md_mod_metric is not None, "No metric specified for MD modification."
-            
-            if  self.md_mod_metric == 'train_size':
+            assert (
+                self.md_mod_metric is not None
+            ), "No metric specified for MD modification."
+
+            if self.md_mod_metric == "train_size":
                 self.get_md_mod_metric = lambda: self.train_dataset_len
-            
-            self.md_modifier = ModifyMD(
-                settings=self.md_mod_settings
-            )
+
+            self.md_modifier = ModifyMD(settings=self.md_mod_settings)
             self.mod_md = True
         else:
             self.mod_md = False
-            
-    def setup_uncertainty(
-            self
-            ):
 
-            if self.mol_idxs is not None:
-                self.get_uncertainty = MolForceUncertainty(
-                    mol_idxs=self.mol_idxs,
-                    uncertainty_type=self.uncertainty_type
-                )
-            else:
-                self.get_uncertainty = HandleUncertainty(
-                    uncertainty_type=self.uncertainty_type
-                )
-    
+    def setup_uncertainty(self):
+
+        if self.mol_idxs is not None:
+            self.get_uncertainty = MolForceUncertainty(
+                mol_idxs=self.mol_idxs, uncertainty_type=self.uncertainty_type
+            )
+        else:
+            self.get_uncertainty = HandleUncertainty(
+                uncertainty_type=self.uncertainty_type
+            )
+
     def check_al_done(self):
         if self.create_restart:
             check = self.al_restart_dict.get("al_done", False)
             if check:
                 if self.rank == 0:
-                    logging.info('Active learning procedure is already done. Closing')
+                    logging.info(
+                        "Active learning procedure is already done. Closing"
+                    )
             return check
         else:
             return False
@@ -828,20 +956,19 @@ class ALProcedure(PrepareALProcedure):
     of the datasets.
     """
 
-    def _finalize_ab_initio(
-        self
-    ):
+    def _finalize_ab_initio(self):
         self.aims_calculator.asi.close()
-        
-    
+
     def _al_loop(self):
-        while True: 
+        while True:
             for trajectory_idx in range(self.num_trajectories):
 
                 if self.trajectory_status[trajectory_idx] == "waiting":
 
                     set_limit = self.waiting_task(trajectory_idx)
-                    if set_limit: # stops the process if the maximum dataset size is reached
+                    if (
+                        set_limit
+                    ):  # stops the process if the maximum dataset size is reached
                         break
 
                 if (
@@ -856,48 +983,36 @@ class ALProcedure(PrepareALProcedure):
 
                     self.running_task(trajectory_idx)
 
-                if (
-                    self.num_workers_training == self.num_trajectories
-                ):  
+                if self.num_workers_training == self.num_trajectories:
                     if self.rank == 0:
-                        logging.info(
-                            "All workers are in training mode."
-                        )  
-    
-            
+                        logging.info("All workers are in training mode.")
+
             if self.num_MD_limits_reached == self.num_trajectories:
                 if self.rank == 0:
-                    logging.info(
-                        "All trajectories reached maximum MD steps."
-                    )
+                    logging.info("All trajectories reached maximum MD steps.")
                 break
-            
+
             if self.train_dataset_len >= self.max_set_size:
                 if self.rank == 0:
-                    logging.info(
-                        "Maximum size of training set reached."
-                    )
+                    logging.info("Maximum size of training set reached.")
                 break
-            
-            
+
             if self.current_valid_error < self.desired_accuracy:
                 if self.rank == 0:
-                    logging.info(
-                        "Desired accuracy reached."
-                    )
-                break           
+                    logging.info("Desired accuracy reached.")
+                break
         self._finalize_ab_initio()
 
     def analysis_check(
-    #TODO: put this somewhere else and its ugly
-    #TODO: update docstring
-            self,
-            analysis_prediction: np.ndarray,
-            true_forces: np.ndarray,
-            current_md_step: int,
-            ) -> tuple[np.ndarray, np.ndarray]:
+        # TODO: put this somewhere else and its ugly
+        # TODO: update docstring
+        self,
+        analysis_prediction: np.ndarray,
+        true_forces: np.ndarray,
+        current_md_step: int,
+    ) -> tuple[np.ndarray, np.ndarray]:
         """
-        Calculates the force uncertainty and the maximum 
+        Calculates the force uncertainty and the maximum
         force error for a given prediction and true forces.
 
         Args:
@@ -907,75 +1022,84 @@ class ALProcedure(PrepareALProcedure):
         Returns:
             tuple[np.ndarray, np.ndarray]: force uncertainty, true force error
         """
-        
+
         check_results = {}
-        atom_wise_uncertainty = self.get_uncertainty.ensemble_sd(analysis_prediction)
-        uncertainty_via_max = self.get_uncertainty.max_atomic_sd(atom_wise_uncertainty)
-        uncertainty_via_mean = self.get_uncertainty.mean_atomic_sd(atom_wise_uncertainty)
-        
+        atom_wise_uncertainty = self.get_uncertainty.ensemble_sd(
+            analysis_prediction
+        )
+        uncertainty_via_max = self.get_uncertainty.max_atomic_sd(
+            atom_wise_uncertainty
+        )
+        uncertainty_via_mean = self.get_uncertainty.mean_atomic_sd(
+            atom_wise_uncertainty
+        )
+
         mean_analysis_prediction = analysis_prediction.mean(0).squeeze()
 
         diff_sq_mean = np.mean(
-            (true_forces - mean_analysis_prediction)**2,
-            axis=-1)
-        
+            (true_forces - mean_analysis_prediction) ** 2, axis=-1
+        )
+
         max_error = np.max(np.sqrt(diff_sq_mean), axis=-1)
         mean_error = np.mean(np.sqrt(diff_sq_mean), axis=-1)
         atom_wise_error = np.sqrt(diff_sq_mean)
-        
-        check_results['prediction'] = mean_analysis_prediction
-        check_results['true_forces'] = true_forces
-        check_results['atom_wise_uncertainty'] = atom_wise_uncertainty
-        check_results['uncertainty_via_max'] = uncertainty_via_max
-        check_results['uncertainty_via_mean'] = uncertainty_via_mean
-        check_results['atom_wise_error'] = atom_wise_error
-        check_results['max_error'] = max_error
-        check_results['mean_error'] = mean_error
-        check_results['train_set_length'] = self.train_dataset_len
-        check_results['current_md_step'] = current_md_step
-        
+
+        check_results["prediction"] = mean_analysis_prediction
+        check_results["true_forces"] = true_forces
+        check_results["atom_wise_uncertainty"] = atom_wise_uncertainty
+        check_results["uncertainty_via_max"] = uncertainty_via_max
+        check_results["uncertainty_via_mean"] = uncertainty_via_mean
+        check_results["atom_wise_error"] = atom_wise_error
+        check_results["max_error"] = max_error
+        check_results["mean_error"] = mean_error
+        check_results["train_set_length"] = self.train_dataset_len
+        check_results["current_md_step"] = current_md_step
+
         if self.mol_idxs is not None:
             total_certainty = self.get_uncertainty(analysis_prediction)
-            mol_forces_uncertainty = self.get_uncertainty.get_intermol_uncertainty(
-                analysis_prediction
+            mol_forces_uncertainty = (
+                self.get_uncertainty.get_intermol_uncertainty(
+                    analysis_prediction
+                )
             )
-            mol_forces_prediction = self.get_uncertainty.compute_mol_forces_ensemble(
-                analysis_prediction,
-                self.mol_idxs
-                ).mean(0).squeeze()
-            mol_forces_true =  self.get_uncertainty.compute_mol_forces_ensemble(
-                true_forces.reshape(1, *true_forces.shape),
-                self.mol_idxs
-                ).squeeze()
+            mol_forces_prediction = (
+                self.get_uncertainty.compute_mol_forces_ensemble(
+                    analysis_prediction, self.mol_idxs
+                )
+                .mean(0)
+                .squeeze()
+            )
+            mol_forces_true = self.get_uncertainty.compute_mol_forces_ensemble(
+                true_forces.reshape(1, *true_forces.shape), self.mol_idxs
+            ).squeeze()
             mol_diff_sq_mean = np.mean(
-                (mol_forces_true - mol_forces_prediction)**2,
-                axis=-1)
+                (mol_forces_true - mol_forces_prediction) ** 2, axis=-1
+            )
             max_mol_error = np.max(np.sqrt(mol_diff_sq_mean), axis=-1)
             mean_mol_error = np.mean(np.sqrt(mol_diff_sq_mean), axis=-1)
             mol_wise_error = np.sqrt(mol_diff_sq_mean)
-            
-            check_results['mol_forces_prediction'] = mol_forces_prediction
-            check_results['mol_forces_true'] = mol_forces_true
-            check_results['total_uncertainty'] = total_certainty
-            check_results['mol_forces_uncertainty'] = mol_forces_uncertainty
-            check_results['mol_wise_error'] = mol_wise_error
-            check_results['max_mol_error'] = max_mol_error
-            check_results['mean_mol_error'] = mean_mol_error
-        
+
+            check_results["mol_forces_prediction"] = mol_forces_prediction
+            check_results["mol_forces_true"] = mol_forces_true
+            check_results["total_uncertainty"] = total_certainty
+            check_results["mol_forces_uncertainty"] = mol_forces_uncertainty
+            check_results["mol_wise_error"] = mol_wise_error
+            check_results["max_mol_error"] = max_mol_error
+            check_results["mean_mol_error"] = mean_mol_error
+
         return check_results
-    
-    def _handle_received_point(
-            self,
-            idx,
-            received_point
-        ):
+
+    def _handle_received_point(self, idx, received_point):
         mace_point = create_mace_dataset(
-                    data=[received_point],
-                    z_table=self.z_table,
-                    seed=None,
-                    r_max=self.r_max,
-                )
-        if self.valid_points_added < self.valid_ratio * self.total_points_added:
+            data=[received_point],
+            z_table=self.z_table,
+            seed=None,
+            r_max=self.r_max,
+        )
+        if (
+            self.valid_points_added
+            < self.valid_ratio * self.total_points_added
+        ):
             self.trajectory_status[idx] = "running"
             self.num_workers_waiting -= 1
             if self.rank == 0:
@@ -1003,12 +1127,16 @@ class ALProcedure(PrepareALProcedure):
                 for tag in self.ensemble_ase_sets.keys():
                     self.ensemble_ase_sets[tag]["train"] += [received_point]
                     self.ensemble_mace_sets[tag]["train"] += mace_point
-                self.train_dataset_len = len(self.ensemble_ase_sets[tag]["train"])
-            
+                self.train_dataset_len = len(
+                    self.ensemble_ase_sets[tag]["train"]
+                )
+
             self.comm_handler.barrier()
-            self.train_dataset_len = self.comm_handler.bcast(self.train_dataset_len, root=0)
+            self.train_dataset_len = self.comm_handler.bcast(
+                self.train_dataset_len, root=0
+            )
             self.comm_handler.barrier()
-            
+
             if self.train_dataset_len > self.max_set_size:
                 return True
             if self.rank == 0:
@@ -1017,11 +1145,8 @@ class ALProcedure(PrepareALProcedure):
                 )
             self.train_points_added += 1
         self.total_points_added += 1
-        
-    def waiting_task(
-            self,
-            idx: int
-            ):
+
+    def waiting_task(self, idx: int):
         """
         Currently only adds the current point to the training or validation set.
 
@@ -1029,7 +1154,7 @@ class ALProcedure(PrepareALProcedure):
             idx (int): Index of the trajectory worker.
 
         """
-        
+
         # there is no waiting time here and if we do it sequentially there is not waiting either
         # thus the models directly continue training with the new point which could make quite the difference
         # same with adding a training point to each of the ensemble members which slows down things considerably
@@ -1037,28 +1162,28 @@ class ALProcedure(PrepareALProcedure):
         # if calculation is finished:
         self._handle_received_point(
             idx,
-            received_point=self.point  #TODO: change self.point, i dont like it
+            received_point=self.point,  # TODO: change self.point, i dont like it
         )
 
     def _check_batch_size(self, set_batch_size, tag):
         batch_size = (
             1
-            if len(self.ensemble_mace_sets[tag]["train"])
-            < set_batch_size
+            if len(self.ensemble_mace_sets[tag]["train"]) < set_batch_size
             else set_batch_size
-                )
+        )
         return batch_size
 
     def _prepare_training(
-            self,
-            mace_sets: dict,
-            
+        self,
+        mace_sets: dict,
     ):
-        for _, (tag, model) in enumerate(self.ensemble.items()):            
-            
+        for _, (tag, model) in enumerate(self.ensemble.items()):
+
             train_batch_size = self._check_batch_size(self.set_batch_size, tag)
-            valid_batch_size = self._check_batch_size(self.set_valid_batch_size, tag)
-            
+            valid_batch_size = self._check_batch_size(
+                self.set_valid_batch_size, tag
+            )
+
             (
                 mace_sets[tag]["train_loader"],
                 mace_sets[tag]["valid_loader"],
@@ -1068,7 +1193,7 @@ class ALProcedure(PrepareALProcedure):
                 train_batch_size,
                 valid_batch_size,
             )
-            # because the dataset size is dynamically changing 
+            # because the dataset size is dynamically changing
             # we have to update the average number of neighbors,
             # shifts and the scaling factor for the models
             # usually they converge pretty fast
@@ -1085,15 +1210,14 @@ class ALProcedure(PrepareALProcedure):
             )
         return mace_sets
 
-    def _perform_training(
-            self,
-            idx: int = 0
-    ):
-        while self.trajectory_intermediate_epochs[idx] < self.intermediate_epochs:
+    def _perform_training(self, idx: int = 0):
+        while (
+            self.trajectory_intermediate_epochs[idx] < self.intermediate_epochs
+        ):
             for tag, model in self.ensemble.items():
 
                 if self.ensemble_reset_opt[tag]:
-                    logging.info(f'Resetting optimizer for model {tag}.')
+                    logging.info(f"Resetting optimizer for model {tag}.")
                     self.training_setups[tag] = reset_optimizer(
                         model=self.ensemble[tag],
                         training_setup=self.training_setups[tag],
@@ -1110,7 +1234,11 @@ class ALProcedure(PrepareALProcedure):
                     train_loader=self.ensemble_mace_sets[tag]["train_loader"],
                     loss_fn=self.training_setups[tag]["loss_fn"],
                     optimizer=self.training_setups[tag]["optimizer"],
-                    lr_scheduler=self.training_setups[tag]['lr_scheduler'] if self.use_scheduler else None,  # no scheduler used here
+                    lr_scheduler=(
+                        self.training_setups[tag]["lr_scheduler"]
+                        if self.use_scheduler
+                        else None
+                    ),  # no scheduler used here
                     epoch=self.trajectory_intermediate_epochs[idx],
                     start_epoch=None,
                     valid_loss=None,
@@ -1122,38 +1250,51 @@ class ALProcedure(PrepareALProcedure):
                 )
             if (
                 self.trajectory_intermediate_epochs[idx] % self.valid_skip == 0
-                or self.trajectory_intermediate_epochs[idx] == self.intermediate_epochs - 1
+                or self.trajectory_intermediate_epochs[idx]
+                == self.intermediate_epochs - 1
             ):
-                ensemble_valid_loss, valid_loss, metrics = validate_epoch_ensemble(
-                    ensemble=self.ensemble,
-                    training_setups=self.training_setups,
-                    ensemble_set=self.ensemble_mace_sets,
-                    logger=logger,
-                    log_errors=self.mace_settings["MISC"]["error_table"],
-                    epoch=self.trajectory_total_epochs[idx],
+                ensemble_valid_loss, valid_loss, metrics = (
+                    validate_epoch_ensemble(
+                        ensemble=self.ensemble,
+                        training_setups=self.training_setups,
+                        ensemble_set=self.ensemble_mace_sets,
+                        logger=logger,
+                        log_errors=self.mace_settings["MISC"]["error_table"],
+                        epoch=self.trajectory_total_epochs[idx],
+                    )
                 )
                 self.best_member = select_best_member(ensemble_valid_loss)
                 if self.analysis:
                     self.collect_losses["epoch"].append(self.total_epoch)
-                    self.collect_losses['avg_losses'].append(valid_loss)
-                    self.collect_losses['ensemble_losses'].append(ensemble_valid_loss)
+                    self.collect_losses["avg_losses"].append(valid_loss)
+                    self.collect_losses["ensemble_losses"].append(
+                        ensemble_valid_loss
+                    )
 
                 self.current_valid_error = metrics["mae_f"]
 
                 for tag in ensemble_valid_loss.keys():
-                    if ensemble_valid_loss[tag] < self.ensemble_best_valid[tag]:
-                        self.ensemble_best_valid[tag] = ensemble_valid_loss[tag]
+                    if (
+                        ensemble_valid_loss[tag]
+                        < self.ensemble_best_valid[tag]
+                    ):
+                        self.ensemble_best_valid[tag] = ensemble_valid_loss[
+                            tag
+                        ]
                     else:
                         self.ensemble_no_improvement[tag] += 1
-                    
-                    if self.ensemble_no_improvement[tag] > self.max_epochs_worker:
+
+                    if (
+                        self.ensemble_no_improvement[tag]
+                        > self.max_epochs_worker
+                    ):
                         logging.info(
                             f"No improvements for {self.max_epochs_worker} epochs "
                             f"(maximum epochs per worker) at ensemble member {tag}."
                         )
                         self.ensemble_reset_opt[tag] = True
                         self.ensemble_no_improvement[tag] = 0
-                                        
+
                     save_checkpoint(
                         checkpoint_handler=self.training_setups[tag][
                             "checkpoint_handler"
@@ -1175,7 +1316,7 @@ class ALProcedure(PrepareALProcedure):
             self.trajectory_total_epochs[idx] += 1
             self.trajectory_intermediate_epochs[idx] += 1
             self.total_epoch += 1
-            
+
             if self.save_restart and self.create_restart:
                 self.update_al_restart_dict(
                     save_restart="restart/al/al_restart.npy"
@@ -1184,10 +1325,7 @@ class ALProcedure(PrepareALProcedure):
 
         self.trajectory_intermediate_epochs[idx] = 0
 
-    def training_task(
-            self,
-            idx: int
-            ):
+    def training_task(self, idx: int):
         """
         Creates the dataloader of the updated dataset, updates
         the average number of neighbors, shifts and scaling factor
@@ -1206,20 +1344,26 @@ class ALProcedure(PrepareALProcedure):
             # we train only for some epochs before we move to the next worker which may be running MD
             # all workers train on the same models with the respective training settings for
             # each ensemble member
-            
+
             self._perform_training(idx)
-                    
+
         # update calculators with the new models
         self.comm_handler.barrier()
-        self.current_valid_error = self.comm_handler.bcast(self.current_valid_error, root=0)
+        self.current_valid_error = self.comm_handler.bcast(
+            self.current_valid_error, root=0
+        )
         self.comm_handler.barrier()
         if self.rank == 0:
             for trajectory in self.trajectories.values():
-                trajectory.calc.models = [self.ensemble[tag] for tag in self.ensemble.keys()]
+                trajectory.calc.models = [
+                    self.ensemble[tag] for tag in self.ensemble.keys()
+                ]
 
         self.comm_handler.barrier()
         self.total_epoch = self.comm_handler.bcast(self.total_epoch, root=0)
-        self.trajectory_total_epochs[idx] = self.comm_handler.bcast(self.trajectory_total_epochs[idx], root=0)
+        self.trajectory_total_epochs[idx] = self.comm_handler.bcast(
+            self.trajectory_total_epochs[idx], root=0
+        )
         self.comm_handler.barrier()
 
         if self.trajectory_total_epochs[idx] >= self.max_epochs_worker:
@@ -1230,63 +1374,37 @@ class ALProcedure(PrepareALProcedure):
                 logging.info(f"Trajectory worker {idx} finished training.")
             # calculate true error and uncertainty on validation set
 
-    def _analysis_dft_call(
-            self,
-            point: ase.Atoms,
-            idx: int = None
-    ):
-        self.aims_calculator.calculate(
-            point,
-            properties=self.properties
-        )
+    def _analysis_dft_call(self, point: ase.Atoms, idx: int = None):
+        self.aims_calculator.calculate(point, properties=self.properties)
         return self.aims_calculator.asi.is_scf_converged
-    
-    def _save_analysis(
-            self
-    ):
-        np.savez(
-            "analysis/analysis_checks.npz",
-            self.analysis_checks
-        )
-        np.savez(
-            "analysis/t_intervals.npz",
-            self.t_intervals
-        )
-        np.savez(
-            "analysis/al_losses.npz",
-            **self.collect_losses
-        )
-        np.savez(
-            "analysis/thresholds.npz",
-            self.collect_thresholds
-        )
+
+    def _save_analysis(self):
+        np.savez("analysis/analysis_checks.npz", self.analysis_checks)
+        np.savez("analysis/t_intervals.npz", self.t_intervals)
+        np.savez("analysis/al_losses.npz", **self.collect_losses)
+        np.savez("analysis/thresholds.npz", self.collect_thresholds)
         if self.mol_idxs is not None:
             np.savez(
-                "analysis/uncertainty_checks.npz",
-                self.uncertainty_checks
+                "analysis/uncertainty_checks.npz", self.uncertainty_checks
             )
 
     def _process_analysis(
-            self,
-            idx: int,
-            converged: bool,
-            analysis_prediction: np.ndarray
+        self, idx: int, converged: bool, analysis_prediction: np.ndarray
     ):
         if converged:
             check_results = self.analysis_check(
                 current_md_step=self.trajectory_MD_steps[idx],
                 analysis_prediction=analysis_prediction,
-                true_forces = self.aims_calculator.results["forces"]
+                true_forces=self.aims_calculator.results["forces"],
             )
             for key in check_results.keys():
                 self.analysis_checks[idx][key].append(check_results[key])
-            self.analysis_checks[idx]['threshold'].append(self.threshold)
+            self.analysis_checks[idx]["threshold"].append(self.threshold)
 
-            
             self.collect_thresholds[idx].append(self.threshold)
-            
+
             self.check += 1
-            
+
             self._save_analysis()
 
         else:
@@ -1296,44 +1414,50 @@ class ALProcedure(PrepareALProcedure):
                 )
 
     def _perform_analysis(
-            self,
-            idx,
-            prediction,
-            current_MD_step,
-            uncertainty,
-            ):
+        self,
+        idx,
+        prediction,
+        current_MD_step,
+        uncertainty,
+    ):
 
-        self.t_intervals[idx].append(current_MD_step)           
+        self.t_intervals[idx].append(current_MD_step)
         if self.mol_idxs is not None:
-            self.uncertainty_checks.append(
-                uncertainty > self.threshold
-                )
-        if (
-            current_MD_step % self.analysis_skip == 0
-        ):  
+            self.uncertainty_checks.append(uncertainty > self.threshold)
+        if current_MD_step % self.analysis_skip == 0:
             if self.rank == 0:
-                logging.info(f"Trajectory worker {idx} is sending a point to DFT for analysis.")
-            
+                logging.info(
+                    f"Trajectory worker {idx} is sending a point to DFT for analysis."
+                )
+
             if current_MD_step % self.skip_step == 0:
                 self.trajectories_analysis_prediction[idx] = prediction
             else:
                 if self.rank == 0:
-                    self.trajectories_analysis_prediction[idx] = ensemble_prediction(
-                        models=list(self.ensemble.values()),
-                        atoms_list=[self.point],
-                        device=self.device,
-                        dtype=self.mace_settings["GENERAL"]["default_dtype"],
+                    self.trajectories_analysis_prediction[idx] = (
+                        ensemble_prediction(
+                            models=list(self.ensemble.values()),
+                            atoms_list=[self.point],
+                            device=self.device,
+                            dtype=self.mace_settings["GENERAL"][
+                                "default_dtype"
+                            ],
+                        )
                     )
                 self.comm_handler.barrier()
-                self.trajectories_analysis_prediction[idx] = self.comm_handler.bcast(
-                    self.trajectories_analysis_prediction[idx], root=0
+                self.trajectories_analysis_prediction[idx] = (
+                    self.comm_handler.bcast(
+                        self.trajectories_analysis_prediction[idx], root=0
                     )
+                )
                 self.comm_handler.barrier()
 
-            #TODO: sometimes already calculated above so we should not calculate it again
+            # TODO: sometimes already calculated above so we should not calculate it again
             self.comm_handler.barrier()
             send_point = atoms_full_copy(self.point)
-            send_point.arrays["forces_comm"] = self.trajectories_analysis_prediction[idx]
+            send_point.arrays["forces_comm"] = (
+                self.trajectories_analysis_prediction[idx]
+            )
             send_point.info["current_MD_step"] = current_MD_step
             converged = self._analysis_dft_call(point=send_point, idx=idx)
             self.comm_handler.barrier()
@@ -1341,13 +1465,10 @@ class ALProcedure(PrepareALProcedure):
             self._process_analysis(
                 idx=idx,
                 converged=converged,
-                analysis_prediction=self.trajectories_analysis_prediction[idx]
+                analysis_prediction=self.trajectories_analysis_prediction[idx],
             )
 
-    def running_task(
-            self,
-            idx: int
-            ):
+    def running_task(self, idx: int):
         """
         Runs the molecular dynamics simulation using the MLFF and
         checks the uncertainty. If the uncertainty is above the threshold
@@ -1359,7 +1480,7 @@ class ALProcedure(PrepareALProcedure):
         """
 
         current_MD_step = self.trajectory_MD_steps[idx]
-        
+
         # kill the worker if the maximum number of MD steps is reached
         if (
             current_MD_step > self.max_MD_steps
@@ -1375,18 +1496,18 @@ class ALProcedure(PrepareALProcedure):
 
         else:
             # TODO:
-            # ideally we would first check the uncertainty, then optionally 
+            # ideally we would first check the uncertainty, then optionally
             # calculate the aims forces and use them to propagate
             # currently the mace forces are used even if the uncertainty is too high
-            # but ase is weird and i don't want to change it so whatever. when we have our own 
+            # but ase is weird and i don't want to change it so whatever. when we have our own
             # MD engine we can adress this.
-            
+
             if self.mod_md:
                 if self.rank == 0:
                     modified = self.md_modifier(
                         driver=self.md_drivers[idx],
                         metric=self.get_md_mod_metric(),
-                        idx=idx
+                        idx=idx,
                     )
                     if modified and self.create_restart:
                         self.update_al_restart_dict()
@@ -1407,40 +1528,40 @@ class ALProcedure(PrepareALProcedure):
                 logging.info(
                     f"Trajectory worker {idx} at MD step {current_MD_step}."
                 )
-                
+
                 self.point = self.trajectories[idx].copy()
                 prediction = self.trajectories[idx].calc.results["forces_comm"]
                 uncertainty = self.get_uncertainty(prediction)
 
                 self.uncertainties.append(uncertainty)
 
-                if len(self.uncertainties) > 10: #TODO: remove hardcode
+                if len(self.uncertainties) > 10:  # TODO: remove hardcode
                     if (
                         self.train_dataset_len >= self.freeze_threshold_dataset
-                        ) and not self.freeze_threshold:
+                    ) and not self.freeze_threshold:
                         if self.rank == 0:
-                            logging.info(f'Train data has reached size {self.train_dataset_len}: freezing threshold at {self.threshold:.3f}.')
+                            logging.info(
+                                f"Train data has reached size {self.train_dataset_len}: freezing threshold at {self.threshold:.3f}."
+                            )
                         self.freeze_threshold = True
-                         
+
                     if not self.freeze_threshold:
                         self.threshold = get_threshold(
                             uncertainties=self.uncertainties,
-                            c_x = self.c_x,
-                            max_len = 400 #TODO: remove hardcode
+                            c_x=self.c_x,
+                            max_len=400,  # TODO: remove hardcode
                         )
-                    
+
                     if self.analysis:
-                        self.collect_thresholds[
-                            idx
-                            ].append(self.threshold)
-        
+                        self.collect_thresholds[idx].append(self.threshold)
+
             if self.rank != 0:
                 uncertainty = None
                 prediction = None
                 self.point = None
                 self.threshold = None
                 current_MD_step = None
-                
+
             self.comm_handler.barrier()
             self.threshold = self.comm_handler.bcast(self.threshold, root=0)
             self.point = self.comm_handler.bcast(self.point, root=0)
@@ -1448,8 +1569,10 @@ class ALProcedure(PrepareALProcedure):
             prediction = self.comm_handler.bcast(prediction, root=0)
             current_MD_step = self.comm_handler.bcast(current_MD_step, root=0)
             self.comm_handler.barrier()
-            
-            if (uncertainty > self.threshold).any() or self.uncert_not_crossed[idx] > self.skip_step * self.uncert_not_crossed_limit:
+
+            if (uncertainty > self.threshold).any() or self.uncert_not_crossed[
+                idx
+            ] > self.skip_step * self.uncert_not_crossed_limit:
                 self.uncert_not_crossed[idx] = 0
                 if self.rank == 0:
                     if (uncertainty > self.threshold).any():
@@ -1460,31 +1583,24 @@ class ALProcedure(PrepareALProcedure):
                         logging.info(
                             f"Threshold not crossed at trajectory worker {idx} for {self.skip_step*self.uncert_not_crossed_limit} steps."
                         )
-                
-                self._handle_dft_call(
-                    idx
-                )
-      
+
+                self._handle_dft_call(idx)
+
             else:
                 self.uncert_not_crossed[idx] += 1
-            
+
             if self.analysis:
                 self._perform_analysis(
                     idx=idx,
                     prediction=prediction,
                     current_MD_step=current_MD_step,
-                    uncertainty=uncertainty
+                    uncertainty=uncertainty,
                 )
-    
-    def _handle_dft_call(
-            self,
-            idx
-    ):
+
+    def _handle_dft_call(self, idx):
         if self.rank == 0:
-            logging.info(
-                f"Trajectory worker {idx} is running DFT."
-            )
-        
+            logging.info(f"Trajectory worker {idx} is running DFT.")
+
         self.comm_handler.barrier()
         self.point = self.recalc_aims(self.point)
 
@@ -1493,7 +1609,9 @@ class ALProcedure(PrepareALProcedure):
                 logging.info(
                     f"SCF not converged at worker {idx}. Discarding point and restarting MD from last checkpoint."
                 )
-                self.trajectories[idx] = atoms_full_copy(self.MD_checkpoints[idx])
+                self.trajectories[idx] = atoms_full_copy(
+                    self.MD_checkpoints[idx]
+                )
             self.trajectory_status[idx] = "running"
         else:
             # we are updating the MD checkpoint here because then we make sure
@@ -1504,7 +1622,7 @@ class ALProcedure(PrepareALProcedure):
                 self.MD_checkpoints[idx] = atoms_full_copy(self.point)
             self.trajectory_status[idx] = "waiting"
             self.num_workers_waiting += 1
-        
+
             self.comm_handler.barrier()
             self.waiting_task(idx)
             if self.rank == 0:
@@ -1521,13 +1639,14 @@ class ALProcedure(PrepareALProcedure):
         if self.rank == 0:
             logging.info("Starting active learning procedure.")
 
-
         self.comm_handler.barrier()
         self._al_loop()
         # turn keys which are ints into strings
         # save the datasets and the intervals for analysis
         if self.rank == 0:
-            logging.info(f"Active learning procedure finished. The best ensemble member based on validation loss is {self.best_member}.")
+            logging.info(
+                f"Active learning procedure finished. The best ensemble member based on validation loss is {self.best_member}."
+            )
             save_datasets(
                 ensemble=self.ensemble,
                 ensemble_ase_sets=self.ensemble_ase_sets,
@@ -1536,7 +1655,7 @@ class ALProcedure(PrepareALProcedure):
 
             if self.analysis:
                 self._save_analysis()
-            
+
             if self.create_restart:
                 self.update_al_restart_dict(
                     save_restart="restart/al/al_restart.npy"
@@ -1550,11 +1669,15 @@ class ALProcedure(PrepareALProcedure):
         """
         if self.rank == 0:
             if self.converge_best:
-                logging.info(f"Converging best model ({self.best_member}) on acquired dataset.")
-                self.ensemble = {self.best_member: self.ensemble[self.best_member]}
+                logging.info(
+                    f"Converging best model ({self.best_member}) on acquired dataset."
+                )
+                self.ensemble = {
+                    self.best_member: self.ensemble[self.best_member]
+                }
             else:
                 logging.info("Converging ensemble on acquired dataset.")
-                
+
             temp_mace_sets = {}
             for _, (tag, model) in enumerate(self.ensemble.items()):
                 train_set = create_mace_dataset(
@@ -1590,9 +1713,13 @@ class ALProcedure(PrepareALProcedure):
             best_valid_loss = np.inf
             epoch = 0
             if self.restart:
-                epoch = self.training_setups_convergence[list(self.ensemble.keys())[0]]["epoch"]
+                epoch = self.training_setups_convergence[
+                    list(self.ensemble.keys())[0]
+                ]["epoch"]
             no_improvement = 0
-            ensemble_valid_losses = {tag: np.inf for tag in self.ensemble.keys()}
+            ensemble_valid_losses = {
+                tag: np.inf for tag in self.ensemble.keys()
+            }
             for j in range(self.max_final_epochs):
                 # ensemble_loss = 0
                 for tag, model in self.ensemble.items():
@@ -1602,8 +1729,12 @@ class ALProcedure(PrepareALProcedure):
                     )
                     train_epoch(
                         model=model,
-                        train_loader=self.ensemble_mace_sets[tag]["train_loader"],
-                        loss_fn=self.training_setups_convergence[tag]["loss_fn"],
+                        train_loader=self.ensemble_mace_sets[tag][
+                            "train_loader"
+                        ],
+                        loss_fn=self.training_setups_convergence[tag][
+                            "loss_fn"
+                        ],
                         optimizer=self.training_setups_convergence[tag][
                             "optimizer"
                         ],
@@ -1626,7 +1757,10 @@ class ALProcedure(PrepareALProcedure):
                     # ensemble_loss += loss
                 # ensemble_loss /= len(ensemble)
 
-                if epoch % self.valid_skip == 0 or epoch == self.max_final_epochs - 1:
+                if (
+                    epoch % self.valid_skip == 0
+                    or epoch == self.max_final_epochs - 1
+                ):
                     (
                         ensemble_valid_losses,
                         valid_loss,
@@ -1640,27 +1774,41 @@ class ALProcedure(PrepareALProcedure):
                         epoch=epoch,
                     )
 
-                    if best_valid_loss > valid_loss and (best_valid_loss - valid_loss) > self.margin:
+                    if (
+                        best_valid_loss > valid_loss
+                        and (best_valid_loss - valid_loss) > self.margin
+                    ):
                         best_valid_loss = valid_loss
                         best_epoch = epoch
                         no_improvement = 0
                         for tag, model in self.ensemble.items():
                             param_context = (
-                                self.training_setups_convergence[tag]['ema'].average_parameters()
-                                if self.training_setups_convergence[tag]['ema'] is not None
+                                self.training_setups_convergence[tag][
+                                    "ema"
+                                ].average_parameters()
+                                if self.training_setups_convergence[tag]["ema"]
+                                is not None
                                 else nullcontext()
                             )
                             with param_context:
                                 torch.save(
                                     model,
-                                    Path(self.mace_settings["GENERAL"]["model_dir"])
+                                    Path(
+                                        self.mace_settings["GENERAL"][
+                                            "model_dir"
+                                        ]
+                                    )
                                     / (tag + ".model"),
                                 )
                             save_checkpoint(
-                                checkpoint_handler=self.training_setups_convergence[tag][
+                                checkpoint_handler=self.training_setups_convergence[
+                                    tag
+                                ][
                                     "checkpoint_handler"
                                 ],
-                                training_setup=self.training_setups_convergence[tag],
+                                training_setup=self.training_setups_convergence[
+                                    tag
+                                ],
                                 model=model,
                                 epoch=epoch,
                                 keep_last=False,
@@ -1681,31 +1829,27 @@ class ALProcedure(PrepareALProcedure):
 
 
 class ALProcedureParallel(ALProcedure):
-    
-    def __init__(                 
+
+    def __init__(
         self,
         mace_settings: dict,
         al_settings: dict,
         path_to_control: str = "./control.in",
         path_to_geometry: str = "./geometry.in",
     ):
-        
+
         self.comm_handler = CommHandler()
         self.world_comm = self.comm_handler.comm
         self.rank = self.comm_handler.get_rank()
         self.world_size = self.comm_handler.get_size()
-        
+
         # one for ML and one for DFT
         if self.rank == 0:
             self.color = 0
         else:
             self.color = 1
 
-        
-        self.comm = self.world_comm.Split(
-            color=self.color,
-            key=self.rank
-        )
+        self.comm = self.world_comm.Split(color=self.color, key=self.rank)
         self.comm_handler = CommHandler()
         self.comm_handler.rank = self.rank
         self.comm_handler.size = self.comm.Get_size()
@@ -1716,7 +1860,7 @@ class ALProcedureParallel(ALProcedure):
             al_settings=al_settings,
             path_to_control=path_to_control,
             path_to_geometry=path_to_geometry,
-            comm_handler=self.comm_handler
+            comm_handler=self.comm_handler,
         )
         self.first_wait_after_restart = {
             idx: True for idx in range(self.num_trajectories)
@@ -1725,7 +1869,7 @@ class ALProcedureParallel(ALProcedure):
     def setup_aims_calculator(
         self,
         atoms: ase.Atoms,
-        ) -> ase.Atoms:
+    ) -> ase.Atoms:
         """
         Attaches the AIMS calculator to the atoms object. Uses the AIMS settings
         from the control.in to set up the calculator.
@@ -1741,21 +1885,22 @@ class ALProcedureParallel(ALProcedure):
         aims_settings = self.aims_settings.copy()
         # only one communictor initializes aims
         if self.color == 1:
-            self.properties = ['energy', 'forces']
+            self.properties = ["energy", "forces"]
             if self.compute_stress:
-                self.properties.append('stress')
+                self.properties.append("stress")
 
             def init_via_ase(asi):
                 from ase.calculators.aims import Aims, AimsProfile
-                aims_settings["profile"] = AimsProfile(command="asi-doesnt-need-command")
+
+                aims_settings["profile"] = AimsProfile(
+                    command="asi-doesnt-need-command"
+                )
                 calc = Aims(**aims_settings)
                 calc.write_inputfiles(asi.atoms, properties=self.properties)
+
             calc = ASI_ASE_calculator(
-                self.ASI_path,
-                init_via_ase,
-                self.comm_handler.comm,
-                atoms
-                )
+                self.ASI_path, init_via_ase, self.comm_handler.comm, atoms
+            )
             return calc
         else:
             return None
@@ -1768,41 +1913,39 @@ class ALProcedureParallel(ALProcedure):
         for dest in range(1, self.world_size):
             self.kill_send = self.world_comm.isend(True, dest=dest, tag=422)
             self.kill_send.Wait()
-        
-        #for trajectory_idx in range(self.num_trajectories):
+
+        # for trajectory_idx in range(self.num_trajectories):
         #    if self.worker_reqs[trajectory_idx] is not None:
         #        self.worker_reqs[trajectory_idx].cancel()
 
-        #if self.point_send is not None:
+        # if self.point_send is not None:
         #    self.point_send.cancel()
 
-    def _al_loop(
-        self
-    ):
+    def _al_loop(self):
         self.worker_reqs = {
-            'energy': {idx: None for idx in range(self.num_trajectories)},
-            'forces': {idx: None for idx in range(self.num_trajectories)},
-            'stress': {idx: None for idx in range(self.num_trajectories)},
+            "energy": {idx: None for idx in range(self.num_trajectories)},
+            "forces": {idx: None for idx in range(self.num_trajectories)},
+            "stress": {idx: None for idx in range(self.num_trajectories)},
         }
-        
+
         self.worker_reqs_bufs = {
-            'energy': {idx: None for idx in range(self.num_trajectories)},
-            'forces': {idx: None for idx in range(self.num_trajectories)},
-            'stress': {idx: None for idx in range(self.num_trajectories)},
+            "energy": {idx: None for idx in range(self.num_trajectories)},
+            "forces": {idx: None for idx in range(self.num_trajectories)},
+            "stress": {idx: None for idx in range(self.num_trajectories)},
         }
-        
+
         if self.analysis:
             self.worker_reqs_analysis = {
-                'energy': {idx: None for idx in range(self.num_trajectories)},
-                'forces': {idx: None for idx in range(self.num_trajectories)},
-                'stress': {idx: None for idx in range(self.num_trajectories)},
+                "energy": {idx: None for idx in range(self.num_trajectories)},
+                "forces": {idx: None for idx in range(self.num_trajectories)},
+                "stress": {idx: None for idx in range(self.num_trajectories)},
             }
             self.worker_reqs_analysis_bufs = {
-                'energy': {idx: None for idx in range(self.num_trajectories)},
-                'forces': {idx: None for idx in range(self.num_trajectories)},
-                'stress': {idx: None for idx in range(self.num_trajectories)},
+                "energy": {idx: None for idx in range(self.num_trajectories)},
+                "forces": {idx: None for idx in range(self.num_trajectories)},
+                "stress": {idx: None for idx in range(self.num_trajectories)},
             }
-        
+
         self.req_sys_info = None
         self.req_geo_info = None
         self.current_num_atoms = None
@@ -1812,23 +1955,23 @@ class ALProcedureParallel(ALProcedure):
             self.req_geo_info_analysis = None
             self.current_num_atoms_analysis = None
             self.received_analysis = None
-            self.analysis_worker_reqs = {idx: None for idx in range(self.num_trajectories)}
+            self.analysis_worker_reqs = {
+                idx: None for idx in range(self.num_trajectories)
+            }
 
         if self.color == 1:
             self.req_kill = self.world_comm.irecv(source=0, tag=422)
-        
+
         while True:
-            if self.color == 0: 
+            if self.color == 0:
                 for trajectory_idx in range(self.num_trajectories):
-                    
+
                     if self.trajectory_status[trajectory_idx] == "running":
 
                         self.running_task(trajectory_idx)
 
-                    if (
-                        self.trajectory_status[trajectory_idx] == "training"
-                    ): 
-                        
+                    if self.trajectory_status[trajectory_idx] == "training":
+
                         self.training_task(trajectory_idx)
 
                     if self.trajectory_status[trajectory_idx] == "waiting":
@@ -1837,19 +1980,18 @@ class ALProcedureParallel(ALProcedure):
                         if set_limit:
                             self._send_kill()
                             break
-                    
+
                     if self.analysis:
-                        if self.trajectory_status[trajectory_idx] == "analysis_waiting":
+                        if (
+                            self.trajectory_status[trajectory_idx]
+                            == "analysis_waiting"
+                        ):
                             self._analysis_waiting_task(trajectory_idx)
 
-                    if (
-                        self.num_workers_training == self.num_trajectories
-                    ):  
+                    if self.num_workers_training == self.num_trajectories:
                         if self.rank == 0:
-                            logging.info(
-                                "All workers are in training mode."
-                            )  
-                
+                            logging.info("All workers are in training mode.")
+
                 if self.num_MD_limits_reached == self.num_trajectories:
                     if self.rank == 0:
                         logging.info(
@@ -1857,65 +1999,54 @@ class ALProcedureParallel(ALProcedure):
                         )
                         self._send_kill()
                     break
-                
+
                 if self.train_dataset_len >= self.max_set_size:
                     if self.rank == 0:
-                        logging.info(
-                            "Maximum size of training set reached."
-                        )
+                        logging.info("Maximum size of training set reached.")
                         self._send_kill()
                     break
-                
-                
+
                 if self.current_valid_error < self.desired_accuracy:
-                    if self.rank == 0:  
-                        logging.info(
-                            "Desired accuracy reached."
-                        )
+                    if self.rank == 0:
+                        logging.info("Desired accuracy reached.")
                         self._send_kill()
                     break
-                
+
             if self.color == 1:
                 kill_signal = self.req_kill.Test()
                 if kill_signal:
                     self.aims_calculator.asi.close()
                     break
-                
-                
+
                 if self.rank != 1:
                     self.geo_info_buf = None
                     self.sys_info_buf = None
                     received = False
-                    
+
                 if self.rank == 1:
                     received = self._listening_task()
-                            
 
                 self.comm_handler.barrier()
-                received = self.comm_handler.bcast(received, root=0)  # global rank 1 is 0 of split comm
-                self.current_num_atoms = self.comm_handler.bcast(self.current_num_atoms, root=0)
+                received = self.comm_handler.bcast(
+                    received, root=0
+                )  # global rank 1 is 0 of split comm
+                self.current_num_atoms = self.comm_handler.bcast(
+                    self.current_num_atoms, root=0
+                )
                 self.comm_handler.barrier()
-                
+
                 if received:
                     if self.rank != 1:
                         self.sys_info_buf = np.empty(
-                            shape=(14, ), dtype=np.float64
+                            shape=(14,), dtype=np.float64
                         )
                         self.geo_info_buf = np.empty(
-                            shape=(
-                                2, self.current_num_atoms, 3
-                            )
-                            , dtype=np.float64
-                            )
+                            shape=(2, self.current_num_atoms, 3),
+                            dtype=np.float64,
+                        )
                     self.comm_handler.barrier()
-                    self.comm_handler.comm.Bcast(
-                        buf=self.sys_info_buf,
-                        root=0
-                    )
-                    self.comm_handler.comm.Bcast(
-                        buf=self.geo_info_buf,
-                        root=0
-                    )
+                    self.comm_handler.comm.Bcast(buf=self.sys_info_buf, root=0)
+                    self.comm_handler.comm.Bcast(buf=self.geo_info_buf, root=0)
                     self.comm_handler.barrier()
 
                     self.comm_handler.barrier()
@@ -1925,63 +2056,61 @@ class ALProcedureParallel(ALProcedure):
                         self._send_result_back(
                             idx=int(self.sys_info_buf[0]),
                             dft_result=dft_result,
-                            num_atoms=self.current_num_atoms
+                            num_atoms=self.current_num_atoms,
                         )
 
-                
                 if self.analysis:
-                    
+
                     if self.rank != 1:
                         self.geo_info_buf_analysis = None
                         self.sys_info_buf_analysis = None
                         received_analysis = False
-                        
+
                     if self.rank == 1:
                         received_analysis = self._analysis_listening_task()
 
                     self.comm_handler.barrier()
-                    received_analysis = self.comm_handler.bcast(received_analysis, root=0)  # global rank 1 is 0 of split comm
-                    self.current_num_atoms_analysis = self.comm_handler.bcast(self.current_num_atoms_analysis, root=0)
+                    received_analysis = self.comm_handler.bcast(
+                        received_analysis, root=0
+                    )  # global rank 1 is 0 of split comm
+                    self.current_num_atoms_analysis = self.comm_handler.bcast(
+                        self.current_num_atoms_analysis, root=0
+                    )
                     self.comm_handler.barrier()
-                    
+
                     if received_analysis:
                         if self.rank != 1:
                             self.sys_info_buf_analysis = np.empty(
-                                shape=(14, ), dtype=np.float64
+                                shape=(14,), dtype=np.float64
                             )
                             self.geo_info_buf_analysis = np.empty(
-                                shape=(
-                                    2, self.current_num_atoms_analysis, 3
-                                )
-                                , dtype=np.float64
+                                shape=(2, self.current_num_atoms_analysis, 3),
+                                dtype=np.float64,
                             )
                         self.comm_handler.barrier()
                         self.comm_handler.comm.Bcast(
-                            buf=self.sys_info_buf_analysis,
-                            root=0
+                            buf=self.sys_info_buf_analysis, root=0
                         )
                         self.comm_handler.comm.Bcast(
-                            buf=self.geo_info_buf_analysis,
-                            root=0
+                            buf=self.geo_info_buf_analysis, root=0
                         )
                         self.comm_handler.barrier()
 
-                        dft_result_analysis = self._analysis_calculate_received()
+                        dft_result_analysis = (
+                            self._analysis_calculate_received()
+                        )
 
                         if self.rank == 1:
                             self._send_result_back(
                                 idx=int(self.sys_info_buf_analysis[0]),
                                 dft_result=dft_result_analysis,
-                                num_atoms=self.current_num_atoms_analysis
-                            )    
+                                num_atoms=self.current_num_atoms_analysis,
+                            )
 
         if self.color == 1:
             self.aims_calculator.asi.close()
-            
-    def waiting_task(
-            self,
-            idx: int
-            ):
+
+    def waiting_task(self, idx: int):
         """
         TODO
 
@@ -1991,107 +2120,116 @@ class ALProcedureParallel(ALProcedure):
         """
 
         if self.restart and self.first_wait_after_restart[idx]:
-            # if the worker is waiting and we just restarted the 
+            # if the worker is waiting and we just restarted the
             # procedure, we have to relaunch the dft job and then
             # leave the function
             self._handle_dft_call(idx)
             self.first_wait_after_restart[idx] = False
             return None
-        
-        if self.worker_reqs['energy'][idx] is None:
-            self.worker_reqs_bufs['energy'][idx] = np.empty(
-                shape=(2, ), dtype=np.float64
-                )
-            self.worker_reqs['energy'][idx] = self.world_comm.Irecv(
-                buf=self.worker_reqs_bufs['energy'][idx],
-                source=1,
-                tag=idx
+
+        if self.worker_reqs["energy"][idx] is None:
+            self.worker_reqs_bufs["energy"][idx] = np.empty(
+                shape=(2,), dtype=np.float64
             )
-        status, _ = self.worker_reqs['energy'][idx].test()
+            self.worker_reqs["energy"][idx] = self.world_comm.Irecv(
+                buf=self.worker_reqs_bufs["energy"][idx], source=1, tag=idx
+            )
+        status, _ = self.worker_reqs["energy"][idx].test()
 
         if status:
-            scf_failed = np.isnan(self.worker_reqs_bufs['energy'][idx][0])
+            scf_failed = np.isnan(self.worker_reqs_bufs["energy"][idx][0])
             # check if the energy is NaN
             if not scf_failed:
-                if self.worker_reqs['forces'][idx] is None:
-                    self.worker_reqs_bufs['forces'][idx] = np.empty(
-                        shape=(int(self.worker_reqs_bufs['energy'][idx][1]), 3),
-                        dtype=np.float64
+                if self.worker_reqs["forces"][idx] is None:
+                    self.worker_reqs_bufs["forces"][idx] = np.empty(
+                        shape=(
+                            int(self.worker_reqs_bufs["energy"][idx][1]),
+                            3,
+                        ),
+                        dtype=np.float64,
                     )
-                    self.worker_reqs['forces'][idx] = self.world_comm.Irecv(
-                        buf=self.worker_reqs_bufs['forces'][idx],
+                    self.worker_reqs["forces"][idx] = self.world_comm.Irecv(
+                        buf=self.worker_reqs_bufs["forces"][idx],
                         source=1,
-                        tag=idx + 10000
+                        tag=idx + 10000,
                     )
                     if self.compute_stress:
-                        self.worker_reqs_bufs['stress'][idx] = np.empty(
-                            shape=(6, ),
-                            dtype=np.float64
+                        self.worker_reqs_bufs["stress"][idx] = np.empty(
+                            shape=(6,), dtype=np.float64
                         )
-                        self.worker_reqs['stress'][idx] = self.world_comm.Irecv(
-                            buf=self.worker_reqs_bufs['stress'][idx],
-                            source=1,
-                            tag=idx + 20000
+                        self.worker_reqs["stress"][idx] = (
+                            self.world_comm.Irecv(
+                                buf=self.worker_reqs_bufs["stress"][idx],
+                                source=1,
+                                tag=idx + 20000,
+                            )
                         )
-                status_forces = self.worker_reqs['forces'][idx].Wait()
+                status_forces = self.worker_reqs["forces"][idx].Wait()
                 if self.compute_stress:
-                    status_stress = self.worker_reqs['stress'][idx].Wait()
+                    status_stress = self.worker_reqs["stress"][idx].Wait()
                 if status_forces or (self.compute_stress and status_stress):
-                    self.worker_reqs['energy'][idx] = None
-                    self.worker_reqs['forces'][idx] = None
+                    self.worker_reqs["energy"][idx] = None
+                    self.worker_reqs["forces"][idx] = None
                     if self.compute_stress:
-                        self.worker_reqs['stress'][idx] = None
+                        self.worker_reqs["stress"][idx] = None
 
                     if self.rank == 0:
-                        logging.info(f"Worker {idx} recieved a point from DFT.")
+                        logging.info(
+                            f"Worker {idx} recieved a point from DFT."
+                        )
                     # we are updating the MD checkpoint here because then we make sure
                     # that the MD is restarted from a point that is inside the training set
                     # so the MLFF should be able to handle this and lead to a better trajectory
                     if self.rank == 0:
-                        self.MD_checkpoints[idx] = atoms_full_copy(self.trajectories[idx])
-                    
+                        self.MD_checkpoints[idx] = atoms_full_copy(
+                            self.trajectories[idx]
+                        )
+
                     received_point = self.trajectories[idx].copy()
-                    received_point.info["REF_energy"] = self.worker_reqs_bufs['energy'][idx][0]
-                    received_point.arrays["REF_forces"] = self.worker_reqs_bufs['forces'][idx]
+                    received_point.info["REF_energy"] = self.worker_reqs_bufs[
+                        "energy"
+                    ][idx][0]
+                    received_point.arrays["REF_forces"] = (
+                        self.worker_reqs_bufs["forces"][idx]
+                    )
                     if self.compute_stress:
-                        received_point.info["REF_stress"] = self.worker_reqs_bufs['stress'][idx]
-                    
+                        received_point.info["REF_stress"] = (
+                            self.worker_reqs_bufs["stress"][idx]
+                        )
+
                     self._handle_received_point(
-                        idx=idx,
-                        received_point=received_point
+                        idx=idx, received_point=received_point
                     )
             else:
                 if self.rank == 0:
                     logging.info(
                         f"SCF not converged at worker {idx}. Discarding point and restarting MD from last checkpoint."
                     )
-                    self.worker_reqs['energy'][idx] = None
-                    self.worker_reqs['forces'][idx] = None
+                    self.worker_reqs["energy"][idx] = None
+                    self.worker_reqs["forces"][idx] = None
                     if self.compute_stress:
-                        self.worker_reqs['stress'][idx] = None
-                    self.trajectories[idx] = atoms_full_copy(self.MD_checkpoints[idx])
+                        self.worker_reqs["stress"][idx] = None
+                    self.trajectories[idx] = atoms_full_copy(
+                        self.MD_checkpoints[idx]
+                    )
                 self.trajectory_status[idx] = "running"
-  
+
     def _listening_task(
         self,
-    )-> bool:
+    ) -> bool:
         """
         Listens for incoming data from the DFT worker.
-        
+
         Returns:
             bool: True if data was received, False otherwise.
         """
         received = False
         if self.req_sys_info is None:
-            self.sys_info_buf = np.empty(
-                shape=(14, ), dtype=np.float64
-            )
+            self.sys_info_buf = np.empty(shape=(14,), dtype=np.float64)
             self.req_sys_info = self.world_comm.Irecv(
-                buf=self.sys_info_buf,
-                source=0,
-                tag=1234
+                buf=self.sys_info_buf, source=0, tag=1234
             )
-            
+
         status, _ = self.req_sys_info.test()
         if status:
             idx = int(self.sys_info_buf[0])
@@ -2099,32 +2237,23 @@ class ALProcedureParallel(ALProcedure):
             self.req_sys_info = None
             if self.req_geo_info is None:
                 self.geo_info_buf = np.empty(
-                        shape=(
-                            2, self.current_num_atoms, 3
-                        )
-                        , dtype=np.float64
+                    shape=(2, self.current_num_atoms, 3), dtype=np.float64
                 )
 
                 self.req_geo_info = self.world_comm.Irecv(
-                    buf=self.geo_info_buf,
-                    source=0,
-                    tag=1235
+                    buf=self.geo_info_buf, source=0, tag=1235
                 )
             status_pos_spec = self.req_geo_info.Wait()
             if status_pos_spec:
                 self.req_geo_info = None
                 received = True
-            
+
         return received
-            
-    def _calculate_received(
-        self
-    ):
+
+    def _calculate_received(self):
         current_idx = int(self.sys_info_buf[0])
         current_num_atoms = int(self.sys_info_buf[1])
-        current_pbc = self.sys_info_buf[2:5].astype(np.bool_).reshape(
-            (3, )
-        )
+        current_pbc = self.sys_info_buf[2:5].astype(np.bool_).reshape((3,))
         current_species = self.geo_info_buf[0].astype(np.int32)
         # transform current_species to a list of species
         current_species = current_species[:, 0].tolist()
@@ -2135,79 +2264,58 @@ class ALProcedureParallel(ALProcedure):
             positions=current_positions,
             numbers=current_species,
             pbc=current_pbc,
-            cell=current_cell
+            cell=current_cell,
         )
         self.comm_handler.barrier()
         dft_result = self.recalc_aims(point)
         return dft_result
-        
-    def _send_result_back(
-        self,
-        idx,
-        dft_result,
-        num_atoms
-    ):
+
+    def _send_result_back(self, idx, dft_result, num_atoms):
         if dft_result is not None:
-            logging.info(f"DFT calculation for worker {idx} finished and sending point back.")
+            logging.info(
+                f"DFT calculation for worker {idx} finished and sending point back."
+            )
             dft_energies = dft_result.info["REF_energy"]
             dft_energies_num_atoms = np.array(
-                [dft_energies, num_atoms],
-                dtype=np.float64
+                [dft_energies, num_atoms], dtype=np.float64
             )
             dft_forces = dft_result.arrays["REF_forces"]
             if self.compute_stress:
                 dft_stress = dft_result.info["REF_stress"]
         else:
             dft_energies_num_atoms = np.array(
-                [np.nan, np.nan],
-                dtype=np.float64
-                )
-            dft_forces = np.empty(
-                shape=(num_atoms, 3),
-                dtype=np.float64
-            ).fill(np.nan)
+                [np.nan, np.nan], dtype=np.float64
+            )
+            dft_forces = np.empty(shape=(num_atoms, 3), dtype=np.float64).fill(
+                np.nan
+            )
             if self.compute_stress:
-                dft_stress = np.empty(
-                    shape=(6, ),
-                    dtype=np.float64
-                ).fill(np.nan)
-            logging.info(f"DFT calculation for worker {idx} failed. Sending NaN values back.")
-                              
+                dft_stress = np.empty(shape=(6,), dtype=np.float64).fill(
+                    np.nan
+                )
+            logging.info(
+                f"DFT calculation for worker {idx} failed. Sending NaN values back."
+            )
+
+        self.world_comm.Isend(buf=dft_energies_num_atoms, dest=0, tag=idx)
         self.world_comm.Isend(
-            buf=dft_energies_num_atoms,
+            buf=np.asarray(dft_forces, dtype=np.float64),
             dest=0,
-            tag=idx
-            
-        )
-        self.world_comm.Isend(
-            buf=np.asarray(
-                dft_forces,
-                dtype=np.float64
-            ),
-            dest=0,
-            tag=idx + 10000
+            tag=idx + 10000,
         )
         if self.compute_stress:
             self.world_comm.Isend(
-                buf = np.asarray(
-                    dft_stress,
-                    dtype=np.float64
-                ),
+                buf=np.asarray(dft_stress, dtype=np.float64),
                 dest=0,
-                tag=idx + 20000
+                tag=idx + 20000,
             )
 
-    def _handle_dft_call(
-            self,
-            idx
-    ):
+    def _handle_dft_call(self, idx):
         self.comm_handler.barrier()
         if self.rank == 0:
             logging.info(f"Trajectory worker {idx} is sending point to DFT.")
             self.send_points_non_blocking(
-                idx=idx,
-                point_data=self.trajectories[idx],
-                tag=1234
+                idx=idx, point_data=self.trajectories[idx], tag=1234
             )
         self.comm_handler.barrier()
         self.trajectory_status[idx] = "waiting"
@@ -2217,12 +2325,9 @@ class ALProcedureParallel(ALProcedure):
         if self.rank == 0:
             logging.info(
                 f"Trajectory worker {idx} is waiting for job to finish."
-            )        
-        
-    def training_task(
-            self,
-            idx: int
-            ):
+            )
+
+    def training_task(self, idx: int):
         """
         Creates the dataloader of the updated dataset, updates
         the average number of neighbors, shifts and scaling factor
@@ -2240,11 +2345,13 @@ class ALProcedureParallel(ALProcedure):
         # we train only for some epochs before we move to the next worker which may be running MD
         # all workers train on the same models with the respective training settings for
         # each ensemble member
-        
+
         self._perform_training(idx)
 
         for trajectory in self.trajectories.values():
-            trajectory.calc.models = [self.ensemble[tag] for tag in self.ensemble.keys()]
+            trajectory.calc.models = [
+                self.ensemble[tag] for tag in self.ensemble.keys()
+            ]
 
         if self.trajectory_total_epochs[idx] >= self.max_epochs_worker:
             self.trajectory_status[idx] = "running"
@@ -2255,21 +2362,15 @@ class ALProcedureParallel(ALProcedure):
             # calculate true error and uncertainty on validation set
 
     def _process_analysis(
-            self,
-            idx: int,
-            converged: bool,
-            analysis_prediction: np.ndarray
+        self, idx: int, converged: bool, analysis_prediction: np.ndarray
     ):
         # Dummy to overwrite the parent method
         return
 
-    def _analysis_waiting_task(
-            self,
-            idx: int
-            ):
-        
+    def _analysis_waiting_task(self, idx: int):
+
         if self.restart and self.first_wait_after_restart[idx]:
-            # if the worker is waiting and we just restarted the 
+            # if the worker is waiting and we just restarted the
             # procedure, we have to relaunch the dft job and then
             # leave the function
             logging.info(
@@ -2278,80 +2379,103 @@ class ALProcedureParallel(ALProcedure):
             self._analysis_dft_call(idx, self.trajectories[idx])
             self.first_wait_after_restart[idx] = False
             return None
-        
-        
-        if self.worker_reqs_analysis['energy'][idx] is None:
-            self.worker_reqs_analysis_bufs['energy'][idx] = np.empty(
-                shape=(2, ), dtype=np.float64
-                )
-            self.worker_reqs_analysis['energy'][idx] = self.world_comm.Irecv(
-                buf=self.worker_reqs_analysis_bufs['energy'][idx],
-                source=1,
-                tag=idx
+
+        if self.worker_reqs_analysis["energy"][idx] is None:
+            self.worker_reqs_analysis_bufs["energy"][idx] = np.empty(
+                shape=(2,), dtype=np.float64
             )
-        status, _ = self.worker_reqs_analysis['energy'][idx].test()
-        
+            self.worker_reqs_analysis["energy"][idx] = self.world_comm.Irecv(
+                buf=self.worker_reqs_analysis_bufs["energy"][idx],
+                source=1,
+                tag=idx,
+            )
+        status, _ = self.worker_reqs_analysis["energy"][idx].test()
+
         if status:
-            scf_failed = np.isnan(self.worker_reqs_analysis_bufs['energy'][idx][0])
+            scf_failed = np.isnan(
+                self.worker_reqs_analysis_bufs["energy"][idx][0]
+            )
             # check if the energy is NaN
             if not scf_failed:
-                if self.worker_reqs_analysis['forces'][idx] is None:
-                    self.worker_reqs_analysis_bufs['forces'][idx] = np.empty(
-                        shape=(int(self.worker_reqs_analysis_bufs['energy'][idx][1]), 3),
-                        dtype=np.float64
+                if self.worker_reqs_analysis["forces"][idx] is None:
+                    self.worker_reqs_analysis_bufs["forces"][idx] = np.empty(
+                        shape=(
+                            int(
+                                self.worker_reqs_analysis_bufs["energy"][idx][
+                                    1
+                                ]
+                            ),
+                            3,
+                        ),
+                        dtype=np.float64,
                     )
-                    self.worker_reqs_analysis['forces'][idx] = self.world_comm.Irecv(
-                        buf=self.worker_reqs_analysis_bufs['forces'][idx],
-                        source=1,
-                        tag=idx + 10000
-                    )
-                    if self.compute_stress:
-                        self.worker_reqs_analysis_bufs['stress'][idx] = np.empty(
-                            shape=(6, ),
-                            dtype=np.float64
-                        )
-                        self.worker_reqs_analysis['stress'][idx] = self.world_comm.Irecv(
-                            buf=self.worker_reqs_analysis_bufs['stress'][idx],
+                    self.worker_reqs_analysis["forces"][idx] = (
+                        self.world_comm.Irecv(
+                            buf=self.worker_reqs_analysis_bufs["forces"][idx],
                             source=1,
-                            tag=idx + 20000
+                            tag=idx + 10000,
                         )
-                status_forces = self.worker_reqs_analysis['forces'][idx].Wait()
-                if self.compute_stress:
-                    status_stress = self.worker_reqs_analysis['stress'][idx].Wait()
-                if status_forces or (self.compute_stress and status_stress):
-                    self.worker_reqs_analysis['energy'][idx] = None
-                    self.worker_reqs_analysis['forces'][idx] = None
+                    )
                     if self.compute_stress:
-                        self.worker_reqs_analysis['stress'][idx] = None
+                        self.worker_reqs_analysis_bufs["stress"][idx] = (
+                            np.empty(shape=(6,), dtype=np.float64)
+                        )
+                        self.worker_reqs_analysis["stress"][idx] = (
+                            self.world_comm.Irecv(
+                                buf=self.worker_reqs_analysis_bufs["stress"][
+                                    idx
+                                ],
+                                source=1,
+                                tag=idx + 20000,
+                            )
+                        )
+                status_forces = self.worker_reqs_analysis["forces"][idx].Wait()
+                if self.compute_stress:
+                    status_stress = self.worker_reqs_analysis["stress"][
+                        idx
+                    ].Wait()
+                if status_forces or (self.compute_stress and status_stress):
+                    self.worker_reqs_analysis["energy"][idx] = None
+                    self.worker_reqs_analysis["forces"][idx] = None
+                    if self.compute_stress:
+                        self.worker_reqs_analysis["stress"][idx] = None
 
                     if self.rank == 0:
-                        logging.info(f"Worker {idx} recieved a point from DFT for analysis.")
-                    
-                    analysis_forces = self.worker_reqs_analysis_bufs['forces'][idx]
-                    analysis_predicted_forces = self.trajectories_analysis_prediction[idx]
+                        logging.info(
+                            f"Worker {idx} recieved a point from DFT for analysis."
+                        )
+
+                    analysis_forces = self.worker_reqs_analysis_bufs["forces"][
+                        idx
+                    ]
+                    analysis_predicted_forces = (
+                        self.trajectories_analysis_prediction[idx]
+                    )
                     check_results = self.analysis_check(
                         analysis_prediction=analysis_predicted_forces,
                         true_forces=analysis_forces,
                         current_md_step=self.trajectory_MD_steps[idx],
                     )
-                    
+
                     for key in check_results.keys():
-                        self.analysis_checks[idx][key].append(check_results[key])
-                    
-                    self.analysis_checks[idx]['threshold'].append(self.threshold)
+                        self.analysis_checks[idx][key].append(
+                            check_results[key]
+                        )
+
+                    self.analysis_checks[idx]["threshold"].append(
+                        self.threshold
+                    )
                     self.collect_thresholds[idx].append(self.threshold)
                     self.check += 1
                     self._save_analysis()
                     self.trajectory_status[idx] = "running"
 
     def _analysis_dft_call(self, idx, point):
-        
+
         self.comm_handler.barrier()
         if self.rank == 0:
             self.send_points_non_blocking(
-                idx=idx,
-                point_data=self.trajectories[idx],
-                tag=80545
+                idx=idx, point_data=self.trajectories[idx], tag=80545
             )
         self.comm_handler.barrier()
         self.trajectory_status[idx] = "analysis_waiting"
@@ -2361,51 +2485,43 @@ class ALProcedureParallel(ALProcedure):
                 f"Trajectory worker {idx} is waiting for analysis job to finish."
             )
         return None
-    
-    def _analysis_listening_task(
-            self
-    ):
+
+    def _analysis_listening_task(self):
         received = False
         if self.req_sys_info_analysis is None:
             self.sys_info_buf_analysis = np.empty(
-                shape=(14, ), dtype=np.float64
+                shape=(14,), dtype=np.float64
             )
             self.req_sys_info_analysis = self.world_comm.Irecv(
-                buf=self.sys_info_buf_analysis,
-                source=0,
-                tag=80545
+                buf=self.sys_info_buf_analysis, source=0, tag=80545
             )
-            
+
         status, _ = self.req_sys_info_analysis.test()
         if status:
             idx = int(self.sys_info_buf_analysis[0])
-            self.current_num_atoms_analysis = int(self.sys_info_buf_analysis[1])
+            self.current_num_atoms_analysis = int(
+                self.sys_info_buf_analysis[1]
+            )
             self.req_sys_info_analysis = None
             if self.req_geo_info_analysis is None:
                 self.geo_info_buf_analysis = np.empty(
-                        shape=(
-                            2, self.current_num_atoms_analysis, 3
-                        )
-                        , dtype=np.float64
+                    shape=(2, self.current_num_atoms_analysis, 3),
+                    dtype=np.float64,
                 )
 
                 self.req_geo_info_analysis = self.world_comm.Irecv(
-                    buf=self.geo_info_buf_analysis,
-                    source=0,
-                    tag=80546
+                    buf=self.geo_info_buf_analysis, source=0, tag=80546
                 )
             status_pos_spec = self.req_geo_info_analysis.Wait()
             if status_pos_spec:
                 self.req_geo_info_analysis = None
                 received = True
-            
-        return received    
-    
-    def _analysis_calculate_received(
-        self
-    ):
-        current_pbc = self.sys_info_buf_analysis[2:5].astype(np.bool_).reshape(
-            (3, )
+
+        return received
+
+    def _analysis_calculate_received(self):
+        current_pbc = (
+            self.sys_info_buf_analysis[2:5].astype(np.bool_).reshape((3,))
         )
         current_species = self.geo_info_buf_analysis[0].astype(np.int32)
         # transform current_species to a list of species
@@ -2417,56 +2533,37 @@ class ALProcedureParallel(ALProcedure):
             positions=current_positions,
             numbers=current_species,
             pbc=current_pbc,
-            cell=current_cell
+            cell=current_cell,
         )
         self.comm_handler.barrier()
         dft_result = self.recalc_aims(point)
         return dft_result
 
-    def send_points_non_blocking(
-        self,
-        idx,
-        point_data,
-        tag
-        ):
+    def send_points_non_blocking(self, idx, point_data, tag):
         # send idx, pbc, cell, positions, species in a non-blocking way
-        
+
         positions = np.asarray(point_data.get_positions(), dtype=np.float64)
         species = point_data.get_atomic_numbers()
         pbc = point_data.pbc
         cell = point_data.get_cell()
         num_atoms = len(positions)
-        
-        
+
         idx_num_atoms_pbc_cell = np.array(
-            [idx,
-             num_atoms,
-             *pbc.flatten(),
-             *cell.flatten()],
-            dtype=np.float64
+            [idx, num_atoms, *pbc.flatten(), *cell.flatten()], dtype=np.float64
         )
         species_array = np.array(
             [[element, element, element] for element in species],
-            dtype=np.float64    
+            dtype=np.float64,
         )
-        
+
         positions_species = np.empty(
             shape=(2, positions.shape[0], 3),
         )
         positions_species[0] = species_array
         positions_species[1] = positions
 
-
-        self.world_comm.Isend(
-            buf=idx_num_atoms_pbc_cell,
-            dest=1,
-            tag=tag
-        )
-        self.world_comm.Isend(
-            buf=positions_species,
-            dest=1,
-            tag=tag + 1
-        )
+        self.world_comm.Isend(buf=idx_num_atoms_pbc_cell, dest=1, tag=tag)
+        self.world_comm.Isend(buf=positions_species, dest=1, tag=tag + 1)
 
 
 class ALProcedurePARSL(ALProcedure):
@@ -2481,7 +2578,7 @@ class ALProcedurePARSL(ALProcedure):
         path_to_control: str = "./control.in",
         path_to_geometry: str = "./geometry.in",
     ):
-        
+
         if parsl is None:
             raise ImportError(
                 "PARSL is not installed. Please install PARSL to use this feature."
@@ -2491,7 +2588,7 @@ class ALProcedurePARSL(ALProcedure):
             al_settings=al_settings,
             path_to_control=path_to_control,
             path_to_geometry=path_to_geometry,
-            use_mpi=False
+            use_mpi=False,
         )
         parsl_setup_dict = prepare_parsl(
             cluster_settings=self.cluster_settings
@@ -2502,13 +2599,13 @@ class ALProcedurePARSL(ALProcedure):
         self.launch_str = parsl_setup_dict["launch_str"]
         try:
             parsl.dfk()
-            logging.info("PARSL is already initialized. Using existing PARSL context.")
-        except parsl.errors.NoDataFlowKernelError:
-            handle_parsl_logger(
-                log_dir=self.log_dir / "parsl_al.log"
+            logging.info(
+                "PARSL is already initialized. Using existing PARSL context."
             )
-            parsl.load(self.config)   
-              
+        except parsl.errors.NoDataFlowKernelError:
+            handle_parsl_logger(log_dir=self.log_dir / "parsl_al.log")
+            parsl.load(self.config)
+
         logging.info("Launching ab initio manager thread for PARSL.")
         self.ab_initio_queue = queue.Queue()
         self.ab_intio_results = {}
@@ -2517,14 +2614,11 @@ class ALProcedurePARSL(ALProcedure):
         }
         self.results_lock = threading.Lock()
         self.kill_thread = False
-        threading.Thread(
-            target=self.ab_initio_manager,
-            daemon=True
-        ).start()
+        threading.Thread(target=self.ab_initio_manager, daemon=True).start()
         self.first_wait_after_restart = {
             idx: True for idx in range(self.num_trajectories)
         }
-        
+
         if self.analysis:
             logging.info("Launching analysis manager thread for PARSL.")
             self.analysis_queue = queue.Queue()
@@ -2535,31 +2629,24 @@ class ALProcedurePARSL(ALProcedure):
                 idx: 0 for idx in range(self.num_trajectories)
             }
             threading.Thread(
-                target=self._analysis_manager,
-                daemon=True
-            ).start() 
-        
-  
-    def _handle_dft_call(
-        self,
-        idx: int
-    ):
+                target=self._analysis_manager, daemon=True
+            ).start()
+
+    def _handle_dft_call(self, idx: int):
         logging.info(f"Trajectory worker {idx} is sending point to DFT.")
         self.trajectory_status[idx] = "waiting"
         self.num_workers_waiting += 1
         self.ab_initio_queue.put((idx, self.trajectories[idx]))
         logging.info(f"Trajectory worker {idx} is waiting for job to finish.")
 
-    def ab_initio_manager(
-        self
-    ):
+    def ab_initio_manager(self):
         # collect parsl futures
         futures = {}
         for idx in range(self.num_trajectories):
             futures[idx] = {}
         # constantly check the queue for new jobs
         while True:
-            
+
             if self.kill_thread:
                 logging.info("Ab initio manager thread is stopping.")
                 break
@@ -2575,23 +2662,23 @@ class ALProcedurePARSL(ALProcedure):
                     aims_settings=self.aims_settings,
                     directory=self.calc_dir / f"worker_{idx}_no_{curr_job_no}",
                     properties=self.properties,
-                    ase_aims_command=self.launch_str
+                    ase_aims_command=self.launch_str,
                 )
                 with self.results_lock:
                     self.ab_initio_counter[idx] += 1
                 self.ab_initio_queue.task_done()
-            
+
             # is raised when the queue is empty after the timeout
             except queue.Empty:
                 pass
-            
+
             # goes through the futures and checks if they are done
             done_jobs = []
             for job_idx in futures.keys():
                 for job_no, future in futures[job_idx].items():
                     if future.done():
                         done_jobs.append((job_idx, job_no))
-            
+
             # if there are done jobs, get the results and store them in dict
             for job_idx, job_no in done_jobs:
                 with self.results_lock:
@@ -2602,13 +2689,17 @@ class ALProcedurePARSL(ALProcedure):
                     else:
                         # the DFT calculation converged
                         self.ab_intio_results[job_idx] = temp_result
-                        logging.info(f"DFT calculation number {job_no} for worker {job_idx} finished.")
+                        logging.info(
+                            f"DFT calculation number {job_no} for worker {job_idx} finished."
+                        )
                     # remove the job from the futures dict to avoid double counting
                     del futures[job_idx][job_no]
                     # remove folder with results
                     if self.clean_dirs:
                         try:
-                            shutil.rmtree(self.calc_dir / f"worker_{job_idx}_no_{job_no}")
+                            shutil.rmtree(
+                                self.calc_dir / f"worker_{job_idx}_no_{job_no}"
+                            )
                         except FileNotFoundError:
                             logging.warning(
                                 f"Directory {self.calc_dir / f'worker_{job_idx}_{job_no}'} not found. Skipping removal."
@@ -2616,10 +2707,10 @@ class ALProcedurePARSL(ALProcedure):
 
     def setup_aims_calculator(self, atoms):
         pass
-    
+
     def recalc_aims(self, current_point):
         pass
-    
+
     def _finalize_ab_initio(self):
         with threading.Lock():
             self.kill_thread = True
@@ -2629,21 +2720,21 @@ class ALProcedurePARSL(ALProcedure):
                     time.sleep(0.1)
         time.sleep(5)
         parsl.dfk().cleanup()
-    
+
     def waiting_task(self, idx):
-        
+
         if self.restart and self.first_wait_after_restart[idx]:
-            # if the worker is waiting and we just restarted the 
+            # if the worker is waiting and we just restarted the
             # procedure, we have to relaunch the dft job and then
             # leave the function
             logging.info(f"Worker {idx} is restarting DFT job after restart.")
             self._handle_dft_call(idx)
             self.first_wait_after_restart[idx] = False
             return None
-            
-        #with self.results_lock:
+
+        # with self.results_lock:
         job_result = self.ab_intio_results.get(idx, "not_done")
-        
+
         if job_result == "not_done":
             # if the job is not done, we return None and wait for the next iteration
             return None
@@ -2652,21 +2743,22 @@ class ALProcedurePARSL(ALProcedure):
                 logging.info(
                     f"SCF not converged at worker {idx}. Discarding point and restarting MD from last checkpoint."
                 )
-                self.trajectories[idx] = atoms_full_copy(self.MD_checkpoints[idx])
+                self.trajectories[idx] = atoms_full_copy(
+                    self.MD_checkpoints[idx]
+                )
                 self.trajectory_status[idx] = "running"
-        
+
             else:
                 logging.info(f"Worker {idx} recieved a point.")
                 recieved_point = self.trajectories[idx].copy()
-                recieved_point.info["REF_energy"] = job_result['energy']
-                recieved_point.arrays["REF_forces"] = job_result['forces']
+                recieved_point.info["REF_energy"] = job_result["energy"]
+                recieved_point.arrays["REF_forces"] = job_result["forces"]
                 if self.compute_stress:
-                    recieved_point.info["REF_stress"] = job_result['stress']
+                    recieved_point.info["REF_stress"] = job_result["stress"]
                 self.MD_checkpoints[idx] = atoms_full_copy(recieved_point)
-                
+
                 self._handle_received_point(
-                    idx=idx,
-                    received_point=recieved_point
+                    idx=idx, received_point=recieved_point
                 )
             with self.results_lock:
                 # remove the job from the results dict to avoid double counting
@@ -2686,7 +2778,9 @@ class ALProcedurePARSL(ALProcedure):
 
         while True:
             if self.analysis_kill_thread and not kill_requested:
-                logging.info("Analysis manager kill switch triggered. Waiting for pending analysis jobs...")
+                logging.info(
+                    "Analysis manager kill switch triggered. Waiting for pending analysis jobs..."
+                )
                 kill_requested = True
 
             # Try to get new data unless kill has been requested
@@ -2695,17 +2789,22 @@ class ALProcedurePARSL(ALProcedure):
                     idx, data = self.analysis_queue.get(timeout=1)
                     self.analysis_counter[idx] += 1
                     current_idx = self.analysis_counter[idx]
-                    predicted_forces[idx][current_idx] = data.arrays["forces_comm"]
-                    current_md_steps[idx][current_idx] = data.info["current_MD_step"]
+                    predicted_forces[idx][current_idx] = data.arrays[
+                        "forces_comm"
+                    ]
+                    current_md_steps[idx][current_idx] = data.info[
+                        "current_MD_step"
+                    ]
                     futures[idx][current_idx] = recalc_aims_parsl(
                         positions=data.get_positions(),
                         species=data.get_chemical_symbols(),
                         cell=data.get_cell(),
                         pbc=data.pbc,
                         aims_settings=self.aims_settings,
-                        directory=self.calc_dir / f"worker_analysis{idx}_no_{current_idx}",
+                        directory=self.calc_dir
+                        / f"worker_analysis{idx}_no_{current_idx}",
                         properties=self.properties,
-                        ase_aims_command=self.launch_str
+                        ase_aims_command=self.launch_str,
                     )
                     self.analysis_queue.task_done()
                 except queue.Empty:
@@ -2723,10 +2822,12 @@ class ALProcedurePARSL(ALProcedure):
                 with self.results_lock:
                     temp_result = futures[job_idx][job_no].result()
                 if temp_result is None:
-                    logging.info(f"SCF during analysis for worker {job_idx} no {job_no} failed. Discarding point.")
+                    logging.info(
+                        f"SCF during analysis for worker {job_idx} no {job_no} failed. Discarding point."
+                    )
                 else:
                     analysis_forces = predicted_forces[job_idx][job_no]
-                    true_forces = temp_result['forces']
+                    true_forces = temp_result["forces"]
                     check_results = self.analysis_check(
                         analysis_prediction=analysis_forces,
                         true_forces=true_forces,
@@ -2734,8 +2835,12 @@ class ALProcedurePARSL(ALProcedure):
                     )
                     with self.results_lock:
                         for key in check_results:
-                            self.analysis_checks[job_idx][key].append(check_results[key])
-                        self.analysis_checks[job_idx]['threshold'].append(self.threshold)
+                            self.analysis_checks[job_idx][key].append(
+                                check_results[key]
+                            )
+                        self.analysis_checks[job_idx]["threshold"].append(
+                            self.threshold
+                        )
                         self.collect_thresholds[job_idx].append(self.threshold)
                         self.check += 1
                         self._save_analysis()
@@ -2746,27 +2851,21 @@ class ALProcedurePARSL(ALProcedure):
 
             # Check for final shutdown
             if kill_requested and not any(futures.values()):
-                logging.info("All pending analysis jobs completed. Shutting down thread.")
+                logging.info(
+                    "All pending analysis jobs completed. Shutting down thread."
+                )
                 self.analysis_done = True
                 break
 
             time.sleep(0.1)
 
-
-    def _analysis_dft_call(
-        self,
-        idx: int,
-        point: ase.Atoms
-    ):
+    def _analysis_dft_call(self, idx: int, point: ase.Atoms):
         # we can go back to running here as the analysis is not blocking
         self.trajectory_status[idx] = "running"
-        self.analysis_queue.put((idx, point))   
-        
+        self.analysis_queue.put((idx, point))
+
     def _process_analysis(
-            self,
-            idx: int,
-            converged: bool,
-            analysis_prediction: np.ndarray
+        self, idx: int, converged: bool, analysis_prediction: np.ndarray
     ):
         # Dummy to overwrite the parent method
         # processing is done in the analysis manager thread

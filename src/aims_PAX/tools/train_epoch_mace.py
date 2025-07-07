@@ -27,7 +27,7 @@ def train_epoch(
     device: torch.device,
     ema: Optional[ExponentialMovingAverage] = None,
     max_grad_norm: Optional[float] = 10.0,
-)-> float:
+) -> float:
     """
     Trains a MACE model for a single epoch.
 
@@ -49,9 +49,9 @@ def train_epoch(
     Returns:
         float: Total loss for the epoch.
     """
-    #if max_grad_norm is not None:
-        #logging.info(f"Using gradient clipping with tolerance={max_grad_norm:.3f}")
-# Train
+    # if max_grad_norm is not None:
+    # logging.info(f"Using gradient clipping with tolerance={max_grad_norm:.3f}")
+    # Train
     if lr_scheduler is not None:
         if epoch > start_epoch:
             lr_scheduler.step(
@@ -60,7 +60,7 @@ def train_epoch(
     total_loss = 0.0
     batches = 0
     for batch in train_loader:
-        loss , opt_metrics = take_step(
+        loss, opt_metrics = take_step(
             model=model,
             loss_fn=loss_fn,
             batch=batch,
@@ -78,19 +78,20 @@ def train_epoch(
     total_loss /= batches
     return total_loss
 
+
 def validate_epoch_ensemble(
     ensemble: dict,
     training_setups: dict,
     ensemble_set: dict,
-    #ema: Optional[ExponentialMovingAverage],
-    #loss_fn: torch.nn.Module,
-    #valid_loader: DataLoader,
-    #output_args: Dict[str, bool],
-    #device: torch.device,
+    # ema: Optional[ExponentialMovingAverage],
+    # loss_fn: torch.nn.Module,
+    # valid_loader: DataLoader,
+    # output_args: Dict[str, bool],
+    # device: torch.device,
     logger: MetricsLogger,
     log_errors: str,
     epoch: int,
-)-> tuple[dict, float, dict]:
+) -> tuple[dict, float, dict]:
     """
     Evaluates an ensemble of models on the validation set and returns
     average loss and metrics.
@@ -111,13 +112,13 @@ def validate_epoch_ensemble(
     """
     ensemble_valid_loss, ensemble_eval_metrics = {}, []
     for tag, model in ensemble.items():
-        
+
         ema = training_setups[tag]["ema"]
         loss_fn = training_setups[tag]["loss_fn"]
         valid_loader = ensemble_set[tag]["valid_loader"]
         device = training_setups[tag]["device"]
         output_args = training_setups[tag]["output_args"]
-        
+
         if ema is not None:
             with ema.average_parameters():
                 valid_loss, eval_metrics = evaluate(
@@ -142,12 +143,14 @@ def validate_epoch_ensemble(
     eval_metrics = {}
     for key in ensemble_eval_metrics[0]:
         if key not in ["mode", "epoch"]:
-            eval_metrics[key] = np.mean([m[key] for m in ensemble_eval_metrics])
+            eval_metrics[key] = np.mean(
+                [m[key] for m in ensemble_eval_metrics]
+            )
         eval_metrics["mode"] = "eval"
         eval_metrics["epoch"] = epoch
 
     if logger is not None:
-        
+
         valid_err_log(
             valid_loss=valid_loss,
             eval_metrics=eval_metrics,
@@ -155,8 +158,9 @@ def validate_epoch_ensemble(
             log_errors=log_errors,
             epoch=epoch,
         )
-        
+
     return ensemble_valid_loss, valid_loss, eval_metrics
+
 
 #    if valid_loss >= lowest_loss:
 #        patience_counter += 1

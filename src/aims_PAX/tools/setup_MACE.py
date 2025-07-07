@@ -5,7 +5,6 @@ from e3nn import o3
 from mace import modules, tools
 
 
-
 #############################################################################
 ############ This part is mostly taken from the MACE source code ############
 ############ with slight modifications to fit the needs of AL    ############
@@ -15,14 +14,15 @@ from mace import modules, tools
 # this function is basically from the MACE run_train script but only
 # contains the parts important for setting up the model.
 
+
 def setup_mace(
-        settings: dict,
-        z_table: tools.AtomicNumberTable,
-        atomic_energies_dict: dict,
-        avg_num_neighbors: Optional[np.ndarray] = 1.,
-        atomic_inter_scale: Optional[float] = 0.,
-        atomic_inter_shift: Optional[float] = 0.,
-        ):
+    settings: dict,
+    z_table: tools.AtomicNumberTable,
+    atomic_energies_dict: dict,
+    avg_num_neighbors: Optional[np.ndarray] = 1.0,
+    atomic_inter_scale: Optional[float] = 0.0,
+    atomic_inter_shift: Optional[float] = 0.0,
+):
     """
     Setup the MACE model according to the settings and return it.
 
@@ -37,17 +37,16 @@ def setup_mace(
     Returns:
         MACE model
     """
-    
+
     general_settings = settings["GENERAL"]
     architecture_settings = settings["ARCHITECTURE"]
     misc_settings = settings["MISC"]
-    
+
     tools.set_default_dtype(general_settings["default_dtype"])
 
     atomic_energies: np.ndarray = np.array(
         [atomic_energies_dict[z] for z in z_table.zs]
     )
-
 
     if (
         architecture_settings["num_channels"] is not None
@@ -64,17 +63,11 @@ def setup_mace(
 
         hidden_irreps = f"{architecture_settings['num_channels']:d}x0e"
         if architecture_settings["max_L"] > 0:
-            hidden_irreps += (
-                f" + {architecture_settings['num_channels']:d}x1o"
-            )
+            hidden_irreps += f" + {architecture_settings['num_channels']:d}x1o"
         if architecture_settings["max_L"] > 1:
-            hidden_irreps += (
-                f" + {architecture_settings['num_channels']:d}x2e"
-            )
+            hidden_irreps += f" + {architecture_settings['num_channels']:d}x2e"
         if architecture_settings["max_L"] > 2:
-            hidden_irreps += (
-                f" + {architecture_settings['num_channels']:d}x3o"
-            )
+            hidden_irreps += f" + {architecture_settings['num_channels']:d}x3o"
 
     model_config = dict(
         r_max=architecture_settings["r_max"],

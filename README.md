@@ -218,12 +218,12 @@ In case PARSL is used, one has to specifiy certain settings that are needed to p
 
 
 # ToDo
-- [ ] update depencies and check for conflics
-- [ ] specify min version for dependencies
-- [ ] Rename repo
-- [ ] Merge PARSL features
-- [ ] Update README
-- [ ] hide non-working CLI commands
+- [x] update depencies and check for conflics
+- [x] specify min version for dependencies
+- [x] Rename repo
+- [x] Merge PARSL features
+- [x] Update README
+- [x] hide non-working CLI commands
 - [ ] format code with BLACK
 - [ ] change epoch saved in AL for ckpt
 - [ ] copy original MACE input file
