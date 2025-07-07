@@ -17,7 +17,7 @@ If you want to use the automatic resource managment feature of aims PAX for comp
 
 7. PARSL
 
-For this you need to compile FHI AIMS as an executable (standard installion).
+For this you need to compile FHI AIMS as an executable (standard installation).
 
 
 To install the dependencies you can clone the repository and run inside the directory:
@@ -218,13 +218,21 @@ In case PARSL is used, one has to specifiy certain settings that are needed to p
 
 
 # ToDo
+### High Priority:
 - [x] update depencies and check for conflics
 - [x] specify min version for dependencies
 - [x] Rename repo
 - [x] Merge PARSL features
 - [x] Update README
 - [x] hide non-working CLI commands
-- [ ] format code with BLACK
+- [x] format code with BLACK
+- [ ] manual reformatting
+- [ ] add more comments and docstrings
+- [ ] unit tests
+- [ ] refactor code, especially procedures.py and utilities.py and all the modified MACE parts
+- [ ] implement default settings and create checks when reading the input
+- [ ] create container
+### Low Priority:
 - [ ] change epoch saved in AL for ckpt
 - [ ] copy original MACE input file
 - [ ] spin polarization for E0 calculations
@@ -232,9 +240,6 @@ In case PARSL is used, one has to specifiy certain settings that are needed to p
 - [ ] multiple MD settings
 - [ ] multi GPU parallelism for AL
 - [ ] multiple species at once
-- [ ] refactor code, especially procedures.py and utilities.py and all the modified MACE parts
-- [ ] unit tests
-- [ ] implement default settings and create checks when reading the input
 - [ ] compile models at the end
 - [ ] fine-tuning of foundational models
 - [ ] Start multiple trajectories from different starting geometries
