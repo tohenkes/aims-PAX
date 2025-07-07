@@ -42,7 +42,7 @@ ACTIVE_LEARNING:
   converge_al: True
   converge_best: False
   scheduler_initial: True
-  max_initial_epochs: 10
+  max_initial_epochs: 20
   max_epochs_worker: 10
   max_final_epochs: 500
   intermediate_epochs: 5

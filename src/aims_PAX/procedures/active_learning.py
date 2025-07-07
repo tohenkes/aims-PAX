@@ -692,7 +692,11 @@ class PrepareALProcedure:
         """
         model_paths = list_files_in_directory(self.model_dir)
         self.models = [
-            torch.load(f=model_path, map_location=self.device) for model_path in model_paths
+            torch.load(
+                f=model_path,
+                map_location=self.device,
+                weights_only=False
+                ) for model_path in model_paths
         ]
         # the calculator needs to be updated consistently see below
         self.mace_calc = MACECalculator(

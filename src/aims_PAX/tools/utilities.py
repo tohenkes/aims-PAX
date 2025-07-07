@@ -13,7 +13,7 @@ from mace import data as mace_data
 from mace import tools, modules
 from mace.tools import AtomicNumberTable, torch_geometric, torch_tools, utils
 from mace.tools.train import evaluate
-from mace.data.utils import compute_average_E0s, config_from_atoms_list, load_from_xyz
+from mace.data.utils import compute_average_E0s, config_from_atoms_list, load_from_xyz, KeySpecification
 from aims_PAX.tools.setup_MACE import setup_mace
 from aims_PAX.tools.setup_MACE_training import setup_mace_training
 from dataclasses import dataclass
@@ -327,16 +327,23 @@ def load_from_atoms(
     for atoms in atoms_list:
         atoms.info[head_key] = head_name
 
+    key_spec = KeySpecification(
+        info_keys={
+            "energy_key": energy_key,
+            "stress_key": stress_key, 
+            "virials_key": virials_key, 
+            "dipole_key": dipole_key, 
+            "head_key": head_key,
+        },
+        arrays_keys={
+            "forces_key": forces_key,
+            "charges_key": charges_key,
+        }
+    )
     configs = config_from_atoms_list(
         atoms_list,
         config_type_weights=config_type_weights,
-        energy_key=energy_key,
-        forces_key=forces_key,
-        stress_key=stress_key,
-        virials_key=virials_key,
-        dipole_key=dipole_key,
-        charges_key=charges_key,
-        head_key=head_key,
+        key_specification=key_spec,
     )
     return atomic_energies_dict, configs
 
@@ -570,13 +577,11 @@ def ensemble_from_folder(
     for filename in os.listdir(path_to_models):
         if os.path.isfile(os.path.join(path_to_models, filename)):
             complete_path = os.path.join(path_to_models, filename)
-            model = torch.load(complete_path, map_location=device).to(dtype)
-            # One can't train compiled models so not usefull for us.
-            #model = torch.compile(
-            #        prepare(extract_load)(f=complete_path, map_location=device),
-            #        mode=compile_mode,
-            #        fullgraph=True,
-            #    )
+            model = torch.load(
+                complete_path,
+                map_location=device,
+                weights_only=False
+                ).to(dtype)
             filename_without_suffix = os.path.splitext(filename)[0]
             ensemble[filename_without_suffix] = model
     return ensemble

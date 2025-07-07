@@ -1,8 +1,0 @@
-[console_scripts]
-aims_PAX = aims_PAX.cli.__main__:main
-aims_PAX-al = aims_PAX.cli.al_procedure_only:main
-aims_PAX-atomic-energies = aims_PAX.cli.get_atomic_energies:main
-aims_PAX-initial-ds = aims_PAX.cli.create_initial_ds:main
-aims_PAX-recalculate = aims_PAX.cli.recalculate_data:main
-aims_PAX-scratch = aims_PAX.cli.scratch_train:main
-aims_PAX-test-ensemble = aims_PAX.cli.test_ensemble:main

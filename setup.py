@@ -16,15 +16,16 @@ setup(
     ],
     python_requires='>=3.9',
     install_requires=[
-        'ase',
-        'numpy',
-        'mace-torch',
-        'asi4py',
-        'torch',
-        'pyYaml',
+        "numpy==1.26.4",
+        "mace-torch==0.3.13",
+        "asi4py==1.3.18",
+        "torch==2.7.1",
+        "torchvision==0.22.1",
+        "torchaudio==2.7.1",
+        "pyyaml==6.0.1",
     ],
     extras_require={
-        'parsl': ['parsl'],
+        'parsl': ['parsl==2024.12.16'],
     },
     entry_points={
         'console_scripts': [

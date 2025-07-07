@@ -13,18 +13,18 @@ ACTIVE_LEARNING:
   intermediate_epochs: 5
   patience: 50
   max_MD_steps: 1000
-  max_set_size: 11
+  max_set_size: 31
   valid_skip: 5
   analysis_skip: 50
   ensemble_size: 4
-  c_x: 0.3
+  c_x: -0.5
   dataset_dir: "./data"
   skip_step_initial: 25 # step to skip in sampling initial MD
   skip_step_mlff: 25 # step to skip in sampling MLFF MD
   num_trajectories: 4 # number of trajectories to from sample in parallel
   species_dir: "/mnt/tier2/project/p200243/tcp_software/FHIaims_master_branch/FHIaims/species_defaults/defaults_2020/light"
   aims_lib_path: "/mnt/tier2/project/p200243/tcp_software/FHIaims_master_branch/FHIaims/build_lib/libaims.250507.scalapack.mpi.so"
-  analysis: True
+  analysis: False
   initial_sampling: mace-mp0
   initial_foundational_size: "small"
   parallel: False

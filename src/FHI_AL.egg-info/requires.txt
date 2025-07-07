@@ -1,6 +1,0 @@
-ase
-numpy
-mace-torch
-asi4py
-torch
-pyYaml
