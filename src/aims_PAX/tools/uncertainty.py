@@ -1,5 +1,4 @@
 import numpy as np
-import logging
 
 
 class HandleUncertainty:
@@ -14,10 +13,12 @@ class HandleUncertainty:
         Compute the standard deviation of the ensemble prediction.
 
         Args:
-            ensemble_prediction (np.array): Ensemble prediction of forces: [n_ensemble_members, n_mols, n_atoms, xyz].
+            ensemble_prediction (np.array): Ensemble prediction of forces:
+                            [n_ensemble_members, n_mols, n_atoms, xyz].
 
         Returns:
-            np.array: Standard deviation of atomic forces per molecule: [n_mols].
+            np.array: Standard deviation of atomic forces per molecule:
+                                            [n_mols].
         """
         # average prediction over ensemble of models
         pred_av = np.average(ensemble_prediction, axis=0, keepdims=True)
@@ -31,13 +32,16 @@ class HandleUncertainty:
         ensemble_sd_atomic: np.array,
     ):
         """
-        Compute the maximum atomic standard deviation of the ensemble prediction.
+        Compute the maximum atomic standard deviation of the 
+        ensemble prediction.
 
         Args:
-            ensemble_sd_atomic (np.array): Atomic standard deviation of forces: [n_mols, n_atoms].
+            ensemble_sd_atomic (np.array): Atomic standard deviation of forces: 
+                                            [n_mols, n_atoms].
 
         Returns:
-            np.array: Maximum atomic standard deviation of atomic forces per molecule: [n_mols].
+            np.array: Maximum atomic standard deviation of atomic forces per 
+                            molecule: [n_mols].
         """
         max_sd = np.max(ensemble_sd_atomic, axis=-1)
         return max_sd
@@ -50,10 +54,12 @@ class HandleUncertainty:
         Compute the mean atomic standard deviation of the ensemble prediction.
 
         Args:
-            ensemble_sd_atomic (np.array): Atomic standard deviation of forces: [n_mols, n_atoms].
+            ensemble_sd_atomic (np.array): Atomic standard deviation of forces:
+                                            [n_mols, n_atoms].
 
         Returns:
-            np.array: Mean atomic standard deviation of atomic forces per molecule: [n_mols].
+            np.array: Mean atomic standard deviation of atomic forces per 
+                                    molecule: [n_mols].
         """
         mean_sd = np.mean(ensemble_sd_atomic, axis=-1)
         return mean_sd
@@ -150,7 +156,7 @@ class MolForceUncertainty(HandleUncertainty):
 
 def get_threshold(
     uncertainties: np.array, c_x: float = 0.0, max_len: int = 400
-):
+) -> np.array:
     uncertainties = np.array(uncertainties)[-max_len:]
     avg_uncertainty = np.mean(uncertainties, axis=0)
     threshold = avg_uncertainty * (1.0 + c_x)

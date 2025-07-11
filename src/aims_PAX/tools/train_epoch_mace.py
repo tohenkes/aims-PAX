@@ -160,30 +160,3 @@ def validate_epoch_ensemble(
         )
 
     return ensemble_valid_loss, valid_loss, eval_metrics
-
-
-#    if valid_loss >= lowest_loss:
-#        patience_counter += 1
-#        patience_counter >= patience:
-#            logging.info(
-#                f"Stopping optimization after {patience_counter} epochs without improvement"
-#            )
-#            break
-#    else:
-#        lowest_loss = valid_loss
-#        patience_counter = 0
-#        if ema is not None:
-#            with ema.average_parameters():
-#                checkpoint_handler.save(
-#                    state=CheckpointState(model, optimizer, lr_scheduler),
-#                    epochs=epoch,
-#                    keep_last=keep_last,
-#                )
-#                keep_last = False
-#        else:
-#            checkpoint_handler.save(
-#                state=CheckpointState(model, optimizer, lr_scheduler),
-#                epochs=epoch,
-#                keep_last=keep_last,
-#            )
-#            keep_last = False

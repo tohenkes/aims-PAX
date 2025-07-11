@@ -227,13 +227,15 @@ In case PARSL is used, one has to specifiy certain settings that are needed to p
 - [x] hide non-working CLI commands
 - [x] format code with BLACK
 - [x] split up utilities into utilities, eval_tools, data_handling
-- [ ] manual reformatting
+- [ ] add WorkQueueExecutor to requirements
+- [ ] manual reformatting (continue with iniital_dataset.py)
 - [ ] add more comments and docstrings
 - [ ] unit tests
 - [ ] refactor code, especially procedures and utilities.py and all the modified MACE parts
 - [ ] implement default settings and create checks when reading the input
 - [ ] create container
 ### Low Priority:
+- [ ] take epoch function from mace directly
 - [ ] check if scratch_train.py and test_ensemble.py still work
 - [ ] change recalculator to use parsl
 - [ ] change epoch saved in AL for ckpt

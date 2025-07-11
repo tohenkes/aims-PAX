@@ -221,11 +221,23 @@ def setup_mace_training(
 
 
 def reset_optimizer(
-    model,
-    training_setup,
-    training_settings,
-):
+    model: modules.MACE,
+    training_setup: dict,
+    training_settings: dict,
+) -> dict:
+    """
+    Resets the optimizer state and adds the freshly initialized optimizer
+    to the training setup (which is used to control the training in
+    aims PAX).
 
+    Args:
+        model (modules.MACE): MACE model (to access the parameters)
+        training_setup (dict): Current training setup containing the optimizer.
+        training_settings (dict): Training settings containing optimizer
+                                    options.
+    Returns:
+        dict: Training setup with the new optimizer.
+    """
     decay_interactions = {}
     no_decay_interactions = {}
     for name, param in model.interactions.named_parameters():
@@ -301,11 +313,13 @@ def compute_mol_forces(forces, select_idxs) -> torch.tensor:
     Handles both batched and non-batched inputs.
 
     Args:
-        forces (torch.tensor): Tensor of atomic forces. Shape can be [n_atoms, 3] or [batch_size, n_atoms, 3].
+        forces (torch.tensor): Tensor of atomic forces. Shape can be
+                            [n_atoms, 3] or [batch_size, n_atoms, 3].
         select_idxs (list): List of indices for molecules.
 
     Returns:
-        torch.tensor: Tensor of molecular forces. Shape is [len(select_idxs), 3] for non-batched input,
+        torch.tensor: Tensor of molecular forces. Shape is
+                        [len(select_idxs), 3] for non-batched input,
                       or [batch_size, len(select_idxs), 3] for batched input.
     """
     if forces.ndim == 2:  # Non-batched case
@@ -330,7 +344,9 @@ def compute_mol_forces(forces, select_idxs) -> torch.tensor:
 
 
 class WeightedEnergyForceIntermolForceLoss(torch.nn.Module):
-
+    """
+    Weighted loss function for energy, forces, and inter-molecular forces.
+    """
     def __init__(
         self,
         energy_weight: float = 1.0,
