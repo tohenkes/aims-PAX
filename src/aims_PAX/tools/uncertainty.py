@@ -157,6 +157,22 @@ class MolForceUncertainty(HandleUncertainty):
 def get_threshold(
     uncertainties: np.array, c_x: float = 0.0, max_len: int = 400
 ) -> np.array:
+    """
+    Computes the threshold for active learning by
+    computing the average of past uncertainties and
+    scales it by a factor 1 + c_x.
+    I.e. using c_x < 0 will result in a tighter threshold,
+    while c_x > 0 will result in a looser threshold.
+
+    Args:
+        uncertainties (np.array): History of uncertainties.
+        c_x (float, optional): Scaling factor. Defaults to 0.0.
+        max_len (int, optional): How many past uncertainties are
+                used to compute the threshold. Defaults to 400.
+
+    Returns:
+        np.array: Threhshold for active learning.
+    """
     uncertainties = np.array(uncertainties)[-max_len:]
     avg_uncertainty = np.mean(uncertainties, axis=0)
     threshold = avg_uncertainty * (1.0 + c_x)

@@ -1,5 +1,8 @@
 import os
 from pathlib import Path
+import ase.calculators
+import ase.calculators.aims
+import ase.calculators.calculator
 import torch
 import numpy as np
 import time
@@ -58,7 +61,7 @@ sys.stdout.flush()
 class PrepareInitialDatasetProcedure:
     """
     Class to prepare the inital dataset generation procedure for
-    active learning. It handles all the input files, prepars the
+    active learning. It handles all the input files, prepares the
     calculators, models, directories etc.
     """
 
@@ -75,18 +78,22 @@ class PrepareInitialDatasetProcedure:
             mace_settings (dict): Settings for the MACE model and its training.
             al_settings (dict): Settings for the active learning procedure.
             path_to_aims_lib (str): Path to the compiled AIMS library.
-            atomic_energies_dict (dict, optional): Dictionary containing the atomic energies. Defaults to None.
-            species_dir (str, optional): Path to the basis set settings of AIMS. Defaults to None.
-            path_to_control (str, optional): Path to the AIMS control file. Defaults to "./control.in".
-            path_to_geometry (str, optional): Path to the initial geometry. Defaults to "./geometry.in".
-            ensemble_seeds (np.array, optional): Seeds for the individual ensemble members. Defaults to None.
+            atomic_energies_dict (dict, optional): Dictionary containing the
+                                            atomic energies. Defaults to None.
+            species_dir (str, optional): Path to the basis set settings
+                                                of AIMS. Defaults to None.
+            path_to_control (str, optional): Path to the AIMS control file.
+                                                Defaults to "./control.in".
+            path_to_geometry (str, optional): Path to the initial geometry.
+                                                Defaults to "./geometry.in".
+            ensemble_seeds (np.array, optional): Seeds for the individual
+                                        ensemble members. Defaults to None.
         """
 
         self.comm_handler = CommHandler(use_mpi=use_mpi)
         self.rank = self.comm_handler.get_rank()
         self.world_size = self.comm_handler.get_size()
 
-        # basic logger is being set up here
         self.log_dir = Path(mace_settings["GENERAL"]["log_dir"])
         logger_level = (
             logging.DEBUG
@@ -94,12 +101,6 @@ class PrepareInitialDatasetProcedure:
             else logging.INFO
         )
 
-        # logging.basicConfig(
-        #    filename="initial_dataset.log",
-        #    encoding="utf-8",
-        #    level=logger_level,
-        #    force=True,
-        # )
         self.logger = setup_logger(
             level=logger_level,
             tag="initial_dataset",
@@ -110,19 +111,27 @@ class PrepareInitialDatasetProcedure:
             logging.info(f"Procedure runs on {self.world_size} workers.")
 
         self.control_parser = AIMSControlParser()
-        self.handle_mace_settings(mace_settings)
-        self.handle_al_settings(al_settings)
-        self.handle_aims_settings(path_to_control)
-        self.create_folders()
+        self._handle_mace_settings(mace_settings)
+        self._handle_al_settings(al_settings)
+        self._handle_aims_settings(path_to_control)
+        self._create_folders()
 
         if self.restart:
             if self.rank == 0:
                 logging.info(
                     "Restarting initial dataset acquisition from checkpoint."
                 )
-            self.init_ds_restart_dict = np.load(
-                "restart/initial_ds/initial_ds_restart.npy", allow_pickle=True
-            ).item()
+            try:
+                self.init_ds_restart_dict = np.load(
+                    "restart/initial_ds/initial_ds_restart.npy",
+                    allow_pickle=True
+                ).item()
+            except FileNotFoundError:
+                logging.error(
+                    "Restart file under 'restart/initial_ds/"
+                    "initial_ds_restart.npy' not found."
+                )
+                raise
             self.atoms = self.init_ds_restart_dict["last_geometry"]
             self.step = self.init_ds_restart_dict["step"]
         else:
@@ -134,11 +143,9 @@ class PrepareInitialDatasetProcedure:
         self.z_table = create_ztable(self.z)
 
         np.random.seed(self.seed)
-        random.seed(
-            self.seed
-        )  # this influences the shuffling of the sampled geometries
+        random.seed(self.seed)
         self.ensemble_seeds = np.random.randint(
-            0, 1000, size=self.ensemble_size
+            0, 10000, size=self.ensemble_size
         )
         self.seeds_tags_dict = create_seeds_tags_dict(
             seeds=self.ensemble_seeds,
@@ -146,12 +153,13 @@ class PrepareInitialDatasetProcedure:
             al_settings=self.al,
         )
 
-        self.handle_atomic_energies()
+        self._handle_atomic_energies()
         self.epoch = 0
 
-        # the ensemble dictionary contains the models and their tags as values and keys
-        # the seeds_tags_dict connects the seeds to the tags of each ensemble member
-        # the training_setups dictionary contains the training setups for each ensemble member
+        # the ensemble dictionary contains the models and their tags as values
+        # and keys the seeds_tags_dict connects the seeds to the tags of each
+        # ensemble member the training_setups dictionary contains the training
+        # setups (optimizer, scheduler etc.) for each ensemble member
         if self.rank == 0:
             self.ensemble = setup_ensemble_dicts(
                 seeds_tags_dict=self.seeds_tags_dict,
@@ -179,8 +187,8 @@ class PrepareInitialDatasetProcedure:
         self.comm_handler.barrier()
 
         # each ensemble member has their own initial dataset.
-        # we create a ASE and MACE dataset because it makes the conversion and
-        # saving easier
+        # we create a ASE and MACE dataset because it makes 
+        # conversion and saving easier
         if self.rank == 0:
             if self.restart:
                 self.ensemble_ase_sets = load_ensemble_sets_from_folder(
@@ -205,7 +213,9 @@ class PrepareInitialDatasetProcedure:
                         for tag in self.ensemble.keys()
                     },
                 )
-
+        # analysis means that at certain MD steps we
+        # compute ab initio data, ML predictions and
+        # other metrics for analysis of the procedure
         if self.analysis:
             if self.restart:
                 self.collect_losses = self.init_ds_restart_dict[
@@ -218,10 +228,11 @@ class PrepareInitialDatasetProcedure:
                     "ensemble_losses": [],
                 }
 
-    # TODO: path to settings could maybe be better
-    def handle_mace_settings(self, mace_settings: dict) -> None:
+    def _handle_mace_settings(self, mace_settings: dict) -> None:
         """
         Saves the MACE settings to class attributes.
+        TODO: Create function to check if all necessary settings are present
+        and fall back to defaults if not.
 
         Args:
             mace_settings (dict): Dictionary containing the MACE settings.
@@ -249,12 +260,15 @@ class PrepareInitialDatasetProcedure:
         if self.compute_stress:
             self.properties.append("stress")
 
-    def handle_al_settings(self, al_settings: dict) -> None:
+    def _handle_al_settings(self, al_settings: dict) -> None:
         """
         Saves the active learning settings to class attributes.
+        TODO: Create function to check if all necessary settings are present
+        and fall back to defaults if not.
 
         Args:
-            al_settings (dict): Dictionary containing the active learning settings.
+            al_settings (dict): Dictionary containing the active 
+                                learning settings.
         """
 
         self.al = al_settings["ACTIVE_LEARNING"]
@@ -299,7 +313,7 @@ class PrepareInitialDatasetProcedure:
                 "initial_ds_done": False,
             }
 
-    def update_restart_dict(self):
+    def _update_restart_dict(self):
         self.init_ds_restart_dict["last_geometry"] = self.last_point
         self.init_ds_restart_dict["step"] = self.step
         if self.analysis:
@@ -307,7 +321,7 @@ class PrepareInitialDatasetProcedure:
                 self.collect_losses
             )
 
-    def create_folders(self):
+    def _create_folders(self):
         """
         Creates the necessary directories for saving the datasets.
         """
@@ -324,17 +338,18 @@ class PrepareInitialDatasetProcedure:
         if self.create_restart:
             os.makedirs("restart/initial_ds", exist_ok=True)
 
-    def setup_aims_calculator(
+    def _setup_aims_calculator(
         self,
         atoms: ase.Atoms,
     ) -> ase.Atoms:
         """
-        Attaches the AIMS calculator to the atoms object. Uses the AIMS settings
-        from the control.in to set up the calculator.
+        Attaches the AIMS calculator to the atoms object.
+        Uses the AIMS settings from the control.in to set up the calculator.
 
         Args:
             atoms (ase.Atoms): Atoms object to attach the calculator to.
-            pbc (bool, optional): If periodic boundry conditions are required or not.
+            pbc (bool, optional): If periodic boundry conditions are required
+                                    or not.
             Defaults to False.
 
         Returns:
@@ -356,9 +371,10 @@ class PrepareInitialDatasetProcedure:
         )
         return calc
 
-    def handle_aims_settings(self, path_to_control: str):
+    def _handle_aims_settings(self, path_to_control: str):
         """
-        Parses the AIMS control file to get the settings for the AIMS calculator.
+        Parses the AIMS control file to get the settings for the AIMS 
+        calculator.
 
         Args:
             path_to_control (str): Path to the AIMS control file.
@@ -369,12 +385,13 @@ class PrepareInitialDatasetProcedure:
         self.aims_settings["compute_forces"] = True
         self.aims_settings["species_dir"] = self.species_dir
         self.aims_settings["postprocess_anyway"] = (
-            True  # this is necesssary to check for convergence
+            True  # this is necesssary to check for convergence in ASI
         )
 
-    def setup_md(self, atoms: ase.Atoms, md_settings: dict):
+    def _setup_md(self, atoms: ase.Atoms, md_settings: dict):
         """
         Sets up the ASE molecular dynamics object for the atoms object.
+        TODO: Add more flexibility and support for other settings
 
         Args:
             atoms (ase.Atoms): Atoms to be propagated.
@@ -437,10 +454,14 @@ class PrepareInitialDatasetProcedure:
 
         return dyn
 
-    def handle_atomic_energies(
+    def _handle_atomic_energies(
         self,
     ):
-
+        """
+        Handles the atomic energies for the initial dataset generation.
+        Either they are loaded from a model checkpoint, initialized to zero
+        or specified by the user in the model settings.
+        """
         self.ensemble_atomic_energies = None
         self.ensemble_atomic_energies_dict = None
         self.update_atomic_energies = False
@@ -505,7 +526,16 @@ class PrepareInitialDatasetProcedure:
                 f"{self.ensemble_atomic_energies_dict[list(self.seeds_tags_dict.keys())[0]]}"
             )
 
-    def check_initial_ds_done(self):
+    def _check_initial_ds_done(self) -> bool:
+        """
+        Checks if the initial dataset generation is already done.
+        This is mostly relevant when one is restarting using the
+        aims_PAX command which runs both the initial dataset generation
+        and active learning.
+
+        Returns:
+            bool: Whether the initial dataset generation is done or not.
+        """
         if self.create_restart:
             check = self.init_ds_restart_dict.get("initial_ds_done", False)
             if check:
@@ -518,14 +548,17 @@ class PrepareInitialDatasetProcedure:
         else:
             return False
 
-    def run_MD(self, atoms: ase.Atoms, dyn):
+    def _run_MD(self, atoms: ase.Atoms, dyn) -> ase.Atoms:
         """
-        Runs the molecular dynamics simulation for the atoms object. Saves
+        Runs molecular dynamics simulation for the atoms object. Saves
         energy and forces in a MACE readable format.
 
         Args:
             atoms (ase.Atoms): Atoms object to be propagated.
             dyn (ase.md.MolecularDynamics): ASE MD engine.
+        Returns:
+            ase.Atoms: Atoms object with the energy and forces saved in the
+                        MACE readable format.
         """
 
         dyn.run(self.skip_step)
@@ -545,7 +578,11 @@ class PrepareInitialDatasetProcedure:
 
     def converge(self):
         """
-        Function to converge the ensemble on the acquired initial dataset.
+        Converges the ensemble on the acquired initial dataset.
+        Stops when the validation loss does not improve for a certain number
+        of epochs (defined in patience) or when the maximum number of epochs
+        is reached.
+
         """
         if self.rank == 0:
             logging.info("Converging.")
@@ -575,7 +612,6 @@ class PrepareInitialDatasetProcedure:
                     device=self.device,
                 )
 
-            # TODO: reset or not?
             self.training_setups_convergence = {}
             for tag in self.ensemble.keys():
                 self.training_setups_convergence[tag] = setup_mace_training(
@@ -600,7 +636,6 @@ class PrepareInitialDatasetProcedure:
                 tag: np.inf for tag in self.ensemble.keys()
             }
             for j in range(self.max_final_epochs):
-                # ensemble_loss = 0
                 for tag, model in self.ensemble.items():
                     logger = tools.MetricsLogger(
                         directory=self.mace_settings["GENERAL"]["results_dir"],
@@ -633,8 +668,6 @@ class PrepareInitialDatasetProcedure:
                         ],
                         ema=self.training_setups_convergence[tag]["ema"],
                     )
-                    # ensemble_loss += loss
-                # ensemble_loss /= len(ensemble)
 
                 if (
                     epoch % self.valid_skip == 0
@@ -697,39 +730,52 @@ class PrepareInitialDatasetProcedure:
                 epoch += 1
                 if no_improvement > patience:
                     logging.info(
-                        f"No improvements for {patience} epochs. Training converged. Best model based on validation loss saved"
+                        f"No improvements for {patience} epochs. "
+                        "Training converged. Best model based on validation"
+                        " loss saved"
                     )
                     break
                 if j == self.max_final_epochs - 1:
                     logging.info(
-                        f"Maximum number of epochs reached. Best model (Epoch {best_epoch}) based on validation loss saved."
+                        f"Maximum number of epochs reached. Best model "
+                        f"(Epoch {best_epoch}) based on validation loss saved."
                     )
                     break
 
 
 class InitialDatasetProcedure(PrepareInitialDatasetProcedure):
     """
-    Class to generate the initial dataset for the active learning procedure. Handles the
-    molecular dynamics simulations, the sampling of points, the training of the ensemble
-    members and the saving of the datasets.
+    Class to generate the initial dataset for the active learning procedure.
+    Handles the molecular dynamics simulations, the sampling of points, the 
+    training of the ensemble members and the saving of the datasets.
 
+    This is the base class for the serial, parallel, and PARSL version of 
+    this workflow.
     """
 
-    def sample_points(self):
+    def _sample_points(self):
         """
         Dummy function to sample points. This function should be overwritten in the
         derived classes.
         """
         raise NotImplementedError
 
-    def train(self):
+    def _train(self) -> bool:
+        """
+        Trains the model(s) on the sampled points and updates the
+        average number of neighbors, shifts and the scaling factor
+        for each ensemble member.
+
+        Returns:
+            bool: Returns True if the maximum number of epochs is reached.
+        """
         if self.rank == 0:
             random.shuffle(self.sampled_points)
             # each ensemble member collects their respective points
             for number, (tag, model) in enumerate(self.ensemble.items()):
 
                 member_points = self.sampled_points[
-                    self.n_samples * number : self.n_samples * (number + 1)
+                    self.n_samples * number: self.n_samples * (number + 1)
                 ]
 
                 (
@@ -784,11 +830,10 @@ class InitialDatasetProcedure(PrepareInitialDatasetProcedure):
                     device=self.device,
                 )
                 logging.info(
-                    f"Training set size for '{tag}': {len(self.ensemble_mace_sets[tag]['train'])}; Validation set size: {len(self.ensemble_mace_sets[tag]['valid'])}."
+                    f"Training set size for '{tag}': "
+                    f"{len(self.ensemble_mace_sets[tag]['train'])}; Validation"
+                    " set size: {len(self.ensemble_mace_sets[tag]['valid'])}."
                 )
-                # logging.info(
-                #    f"Updated model auxiliaries for '{tag}'."
-                # )
 
             logging.info("Training.")
             ensemble_valid_losses = {
@@ -841,7 +886,7 @@ class InitialDatasetProcedure(PrepareInitialDatasetProcedure):
                     self.current_valid = metrics["mae_f"]
 
                     if self.analysis:
-                        self.handle_analysis(
+                        self._handle_analysis(
                             valid_loss=valid_loss,
                             ensemble_valid_losses=ensemble_valid_losses,
                         )
@@ -863,7 +908,7 @@ class InitialDatasetProcedure(PrepareInitialDatasetProcedure):
                             initial=True,
                         )
                     if self.create_restart:
-                        self.update_restart_dict()
+                        self._update_restart_dict()
                         np.save(
                             "restart/initial_ds/initial_ds_restart.npy",
                             self.init_ds_restart_dict,
@@ -886,38 +931,53 @@ class InitialDatasetProcedure(PrepareInitialDatasetProcedure):
                 logging.info(f"Maximum number of epochs reached.")
                 return True
 
-    def sample_and_train(self):
+    def _sample_and_train(self):
+        """
+        Combines the sampling of points and the training of the ensemble members
+        in one method (easier for overwritting for derived classes).
+        """
         if self.rank == 0:
             logging.info(f"Sampling new points at step {self.step}.")
         self.sampled_points = []
         # in case SCF fails to converge no point is returned
-        # TODO: come up with a better solution. maybe restart trajectory
         while len(self.sampled_points) == 0:
-            self.sampled_points = self.sample_points()
+            self.sampled_points = self._sample_points()
 
         self.step += 1
-        self.train()
+        self._train()
 
-    def setup_calcs(self):
+    def _setup_calcs(self):
         """
         Dummy function to set up the calculators. This function should be overwritten in the
         derived classes.
         """
         raise NotImplementedError
 
-    def close_aims(self):
+    def _close_aims(self):
         """
         Dummy function to close the AIMS calculators. This function should be overwritten in the
         derived classes.
         """
         raise NotImplementedError
 
-    def handle_analysis(
+    def _handle_analysis(
         self,
-        valid_loss,
-        ensemble_valid_losses,
+        valid_loss: float,
+        ensemble_valid_losses: dict,
         save_path: str = "analysis/initial_losses.npz",
     ):
+        """
+        Collects number of epochs, average validation loss and
+        per ensemble member validation losses and saves in a
+        npz file.
+
+        Args:
+            valid_loss (float): Averaged validation loss over the ensemble.
+            ensemble_valid_losses (dict): Per ensemble member 
+                                                    validation losses.
+            save_path (str, optional): Path to save the analysis data. 
+                    Defaults to "analysis/initial_losses.npz".
+        """
         self.collect_losses["epoch"].append(self.epoch)
         self.collect_losses["avg_losses"].append(valid_loss)
         self.collect_losses["ensemble_losses"].append(ensemble_valid_losses)
@@ -926,15 +986,15 @@ class InitialDatasetProcedure(PrepareInitialDatasetProcedure):
     def run(self):
         """
         Main function to run the initial dataset generation procedure.
-        It samples points and trains the ensemble members until the desired accuracy
-        is reached or the maximum number of epochs is reached.
+        It samples points and trains the ensemble members until the 
+        stopping criterion is met.
 
         """
 
         # initializing md and FHI aims
-        self.dyn = self.setup_md(self.atoms, md_settings=self.md_settings)
+        self.dyn = self._setup_md(self.atoms, md_settings=self.md_settings)
 
-        self.setup_calcs()
+        self._setup_calcs()
 
         self.current_valid = np.inf
         # criterion for initial dataset is multiple of the desired accuracy
@@ -944,7 +1004,7 @@ class InitialDatasetProcedure(PrepareInitialDatasetProcedure):
             and self.epoch < self.max_initial_epochs
         ):
 
-            self.sample_and_train()
+            self._sample_and_train()
             # only one worker is doing the training right now,
             # so we have to broadcast the criterion so they
             # don't get stuck in the while loop
@@ -964,14 +1024,14 @@ class InitialDatasetProcedure(PrepareInitialDatasetProcedure):
             )
 
             if self.create_restart:
-                self.update_restart_dict()
+                self._update_restart_dict()
                 self.init_ds_restart_dict["initial_ds_done"] = True
                 np.save(
                     "restart/initial_ds/initial_ds_restart.npy",
                     self.init_ds_restart_dict,
                 )
         self.logger.handlers.clear()
-        self.close_aims()
+        self._close_aims()
         return 0
 
 
@@ -981,9 +1041,11 @@ class InitialDatasetAIMD(InitialDatasetProcedure):
     Handles the molecular dynamics simulations, the sampling of points, the
     training of the ensemble members and the saving of the datasets.
 
+    Uses ab initio MD to sample points. Runs serially.
+
     """
 
-    def sample_points(self) -> list:
+    def _sample_points(self) -> list:
         """
         Samples geometries solely using AIMD.
 
@@ -991,18 +1053,18 @@ class InitialDatasetAIMD(InitialDatasetProcedure):
             list: List of ASE Atoms objects.
         """
         return [
-            self.run_MD(atoms=self.atoms, dyn=self.dyn)
+            self._run_MD(atoms=self.atoms, dyn=self.dyn)
             for _ in range(self.ensemble_size * self.n_samples)
         ]
 
-    def setup_calcs(self):
+    def _setup_calcs(self):
         """
         Sets up the calculators for the initial dataset generation.
         In this case it sets up the AIMS calculators for AIMD.
         """
-        self.atoms.calc = self.setup_aims_calculator(self.atoms)
+        self.atoms.calc = self._setup_aims_calculator(self.atoms)
 
-    def close_aims(self):
+    def _close_aims(self):
         """
         Kills the AIMS calculators.
         """
@@ -1010,17 +1072,45 @@ class InitialDatasetAIMD(InitialDatasetProcedure):
 
 
 class InitialDatasetFoundational(InitialDatasetProcedure):
+    """
+    Class to generate the initial dataset for the active learning procedure.
+    Handles the molecular dynamics simulations, the sampling of points, the
+    training of the ensemble members and the saving of the datasets.
 
-    def setup_foundational(self):
-        calc = mace_mp(
+    Uses a "foundational" model to sample points. These are then recomputed
+    using DFT. Runs serially.
+    """
+
+    def _setup_foundational(self):
+        """
+        Creates the foundational model for sampling.
+
+        Returns:
+            ase.Calculator: ASE calculator object.
+        """
+        return mace_mp(
             model=self.initial_foundational_size,
             dispersion=False,
             default_dtype=self.dtype,
             device=self.device,
         )
-        return calc
 
-    def recalc_aims(self, current_point: ase.Atoms) -> ase.Atoms:
+    def _recalc_aims(
+            self,
+            current_point: ase.Atoms
+            ) -> ase.Atoms:
+        """
+        Recalculates the energies and forces of the current point using
+        the AIMS calculator. If the SCF is converged, it saves the energy
+        and forces (and stress) in the MACE readable format.
+        If not, it returns None.
+
+        Args:
+            current_point (ase.Atoms): System to recompute.
+
+        Returns:
+            ase.Atoms: Atoms object containing generated DFT data.
+        """
         self.aims_calc.calculate(current_point, properties=self.properties)
         if self.aims_calc.asi.is_scf_converged:
             current_point.info["REF_energy"] = self.aims_calc.results["energy"]
@@ -1040,11 +1130,15 @@ class InitialDatasetFoundational(InitialDatasetProcedure):
     def _md_w_foundational(
         self,
     ):
+        """
+        Samples points using the foundational model.
+        """
+
         self.comm_handler.barrier()
         self.sampled_points = []
         if self.rank == 0:
             for _ in range(self.ensemble_size * self.n_samples):
-                current_point = self.run_MD(self.atoms, self.dyn)
+                current_point = self._run_MD(self.atoms, self.dyn)
                 self.sampled_points.append(current_point)
             logging.info(
                 f"Sampled {len(self.sampled_points)} points using foundational model."
@@ -1055,7 +1149,7 @@ class InitialDatasetFoundational(InitialDatasetProcedure):
         )
         self.comm_handler.barrier()
 
-    def sample_points(self) -> list:
+    def _sample_points(self) -> list:
         """
         Samples geometries using foundational model and recalculates
         the energies and forces with DFT.
@@ -1068,25 +1162,25 @@ class InitialDatasetFoundational(InitialDatasetProcedure):
             logging.info("Recalculating energies and forces with DFT.")
         recalculated_points = []
         for atoms in self.sampled_points:
-            temp = self.recalc_aims(atoms)
+            temp = self._recalc_aims(atoms)
             if temp is not None:
                 recalculated_points.append(temp)
         return recalculated_points
 
-    def setup_calcs(self):
+    def _setup_calcs(self):
         """
         Sets up the calculators for the initial dataset generation.
         In this case it sets up the AIMS calculators for recalculating
         the energies and forces and the foundational model for MD.
         """
-        self.aims_calc = self.setup_aims_calculator(self.atoms)
+        self.aims_calc = self._setup_aims_calculator(self.atoms)
         if self.rank == 0:
             logging.info(
                 f"Initial dataset generation with foundational model of size: {self.initial_foundational_size}."
             )
-            self.atoms.calc = self.setup_foundational()
+            self.atoms.calc = self._setup_foundational()
 
-    def close_aims(self):
+    def _close_aims(self):
         """
         Kills the AIMS calculator.
         """
@@ -1094,6 +1188,21 @@ class InitialDatasetFoundational(InitialDatasetProcedure):
 
 
 class InitialDatasetFoundationalParallel(InitialDatasetFoundational):
+    """
+    Class to generate the initial dataset for the active learning procedure.
+    Handles the molecular dynamics simulations, the sampling of points, the
+    training of the ensemble members and the saving of the datasets.
+
+    Uses a "foundational" model to sample points. These are then recomputed
+    using DFT. Runs in parallel using MPI. The MD using the foundational 
+    model is propagted while DFT is being run.
+
+    !!! WARNING: Not recommended (especially for large systems) as the
+        model can generate strange geometries when run to long, which 
+        can happen when DFT calculations take too much time. Speedup is
+        modest as DFT calculations are processed one at a time. Ideally
+        use the PARSL version. !!!
+    """
 
     def __init__(
         self,
@@ -1110,7 +1219,14 @@ class InitialDatasetFoundationalParallel(InitialDatasetFoundational):
             path_to_control=path_to_control,
             path_to_geometry=path_to_geometry,
         )
-
+        if self.rank == 0:
+            logging.warning(
+                "Not recommended (especially for large systems) as the "
+                "model can generate strange geometries when run to long, which"
+                "can happen when DFT calculations take too much time. Speedup "
+                "is modest as DFT calculations are processed one at a time. "
+                "Ideally use the PARSL version."
+            )
         # one for ML and one for DFT
         if self.rank == 0:
             self.color = 0
@@ -1121,24 +1237,24 @@ class InitialDatasetFoundationalParallel(InitialDatasetFoundational):
             color=self.color, key=self.rank
         )
 
-    def close_aims(self):
+    def _close_aims(self):
         # this is just to overwrite the function in the parent class
         # due to the communicators we are closing it inside the
         # sample_and_train function
         return None
 
-    def setup_aims_calculator(
+    def _setup_aims_calculator(
         self,
         atoms: ase.Atoms,
     ) -> ase.Atoms:
         """
-        Attaches the AIMS calculator to the atoms object. Uses the AIMS settings
-        from the control.in to set up the calculator.
+        Attaches the AIMS calculator to the atoms object. Uses the AIMS
+        settings from the control.in to set up the calculator.
 
         Args:
             atoms (ase.Atoms): Atoms object to attach the calculator to.
-            pbc (bool, optional): If periodic boundry conditions are required or not.
-            Defaults to False.
+            pbc (bool, optional): If periodic boundry conditions are required
+            or not. Defaults to False.
 
         Returns:
             ase.Atoms: Atoms object with the calculator attached.
@@ -1166,8 +1282,16 @@ class InitialDatasetFoundationalParallel(InitialDatasetFoundational):
         else:
             return None
 
-    def sample_and_train(self) -> list:
+    def _sample_and_train(self) -> list:
+        """
+        Samples points using the foundational models, computes
+        DFT data in parallel and trains the ensemble members.
+        Contains all the MPI communications.
 
+        Returns:
+            list: List of ASE Atoms objects with the sampled points
+                and their DFT data.
+        """
         self.sampled_points = []
 
         # TODO: add stress
@@ -1191,9 +1315,10 @@ class InitialDatasetFoundationalParallel(InitialDatasetFoundational):
 
         if self.rank == 0:
             logging.info("Starting sampling and training using parallel mode.")
+
         while not criterion_met:
             if self.color == 0:
-                current_point = self.run_MD(self.atoms, self.dyn)
+                current_point = self._run_MD(self.atoms, self.dyn)
                 # TODO: also send cell and pbc
                 geometry = current_point.get_positions()
                 # using isend to create a queue of messages
@@ -1202,12 +1327,13 @@ class InitialDatasetFoundationalParallel(InitialDatasetFoundational):
                 )
                 sample_send.Wait()
 
-                # checking if training data recieved
+                # creating requests if there are none
                 if (
                     self.req_geometries is None
                     and self.req_energies is None
                     and self.req_forces is None
                 ):
+                    # creates buffers in memory for receiving data
                     buf_geometries, buf_energies, buf_forces = (
                         np.zeros(
                             (
@@ -1229,6 +1355,7 @@ class InitialDatasetFoundationalParallel(InitialDatasetFoundational):
                             dtype=float,
                         ),
                     )
+                    # non-blocking recieve for data
                     self.req_geometries = self.comm_handler.comm.Irecv(
                         buf=buf_geometries, source=1, tag=2210
                     )
@@ -1240,6 +1367,7 @@ class InitialDatasetFoundationalParallel(InitialDatasetFoundational):
                     )
 
                 else:
+                    # listening for data
                     status_geometries = (
                         self.req_geometries.Test()
                     )  # non-blocking recieve
@@ -1270,6 +1398,8 @@ class InitialDatasetFoundationalParallel(InitialDatasetFoundational):
                             or self.epoch >= self.max_initial_epochs
                         )
                         if criterion_met:
+                            # instructs the DFT worker to stop when
+                            # the criterion is met
                             for dest in range(
                                 1, self.comm_handler.comm.Get_size()
                             ):
@@ -1285,10 +1415,10 @@ class InitialDatasetFoundationalParallel(InitialDatasetFoundational):
                         )
                         self.sampled_points.extend(recieved_points)
                         recieved_points = None
-                        self.train()
+                        self._train()
                         logging.info("Training done, going back to sampling.")
-
-            if self.color == 1:
+            # DFT workers
+            if self.color == 1:                
                 current_geometry = None
                 # recieving the criterion
                 if self.criterion_req is None:
@@ -1319,7 +1449,9 @@ class InitialDatasetFoundationalParallel(InitialDatasetFoundational):
                 current_point = self.atoms_dummy.copy()
                 current_point.set_positions(current_geometry)
 
-                dft_result = self.recalc_aims(current_point)
+                dft_result = self._recalc_aims(current_point)
+
+                # one rank sends data back
                 if self.rank == 1:
                     energies, forces = (
                         dft_result.info["REF_energy"],
@@ -1339,7 +1471,8 @@ class InitialDatasetFoundationalParallel(InitialDatasetFoundational):
                         and len(temp_sampled_energies) != 0
                     ):
                         logging.info(
-                            f"Computed {len(temp_sampled_energies)} points with DFT and sending them to training worker."
+                            f"Computed {len(temp_sampled_energies)} points "
+                            "with DFT and sending them to training worker."
                         )
 
                         # TODO: create loop or package data in one
@@ -1375,6 +1508,15 @@ class InitialDatasetFoundationalParallel(InitialDatasetFoundational):
 
 
 class InitialDatasetPARSL(InitialDatasetFoundational):
+    """
+    Class to generate the initial dataset for the active learning procedure.
+    Handles the molecular dynamics simulations, the sampling of points, the
+    training of the ensemble members and the saving of the datasets.
+
+    Uses a "foundational" model to sample points. These are then recomputed
+    using DFT. Uses PARSL and can run DFT in parallel on multiple nodes.
+    """
+
     def __init__(
         self,
         mace_settings: dict,
@@ -1395,11 +1537,15 @@ class InitialDatasetPARSL(InitialDatasetFoundational):
 
         if parsl is None:
             raise ImportError(
-                "Parsl is not installed. Please install parsl to use this feature."
+                "Parsl is not installed. Please install parsl" 
+                " to use this feature."
             )
 
         if self.rank == 0:
-            logging.info(f"Setting up PARSL for initial dataset generation.")
+            logging.info("Setting up PARSL for initial dataset generation.")
+            # TODO: create function to check if all
+            # necessary settings are provided and fall back to
+            # defaults if not
             parsl_setup_dict = prepare_parsl(
                 cluster_settings=self.cluster_settings
             )
@@ -1411,18 +1557,27 @@ class InitialDatasetPARSL(InitialDatasetFoundational):
             handle_parsl_logger(
                 log_dir=self.log_dir / "parsl_initial_dataset.log",
             )
-            # parsl.load(self.config)
 
         self.comm_handler.barrier()
 
-    def sample_points(self) -> list:
+    def _sample_points(self) -> list:
+        """
+        Samples geometries using foundational model and recalculates
+        the energies and forces with DFT using PARSL.
+
+        Returns:
+            list: List of ASE Atoms objects with the sampled points
+                and their DFT data.
+        """
         self._md_w_foundational()
         recalculated_points = []
         if self.rank == 0:
-            logging.info(f"Recalculating energies and forces with DFT.")
+            logging.info("Recalculating energies and forces with DFT.")
             job_results = {}
             for i, atoms in enumerate(self.sampled_points):
                 self.calc_idx += 1
+                # launches a parsl app and returns a future
+                # that can be used to get the result later
                 temp_result = recalc_aims_parsl(
                     positions=atoms.get_positions(),
                     species=atoms.get_chemical_symbols(),
@@ -1482,16 +1637,17 @@ class InitialDatasetPARSL(InitialDatasetFoundational):
                         "Please check the directories manually."
                     )
 
-    def setup_calcs(
+    def _setup_calcs(
         self,
     ) -> None:
         if self.rank == 0:
             logging.info(
-                f"Initial dataset generation with foundational model of size: {self.initial_foundational_size}."
+                "Initial dataset generation with foundational "
+                 f"model of size: {self.initial_foundational_size}."
             )
-            self.atoms.calc = self.setup_foundational()
+            self.atoms.calc = self._setup_foundational()
 
-    def close_aims(self):
+    def _close_aims(self):
         if self.close_parsl:
             logging.info("Closing PARSL.")
             parsl.dfk().cleanup()

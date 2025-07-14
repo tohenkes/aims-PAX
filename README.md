@@ -228,13 +228,14 @@ In case PARSL is used, one has to specifiy certain settings that are needed to p
 - [x] format code with BLACK
 - [x] split up utilities into utilities, eval_tools, data_handling
 - [ ] add WorkQueueExecutor to requirements
-- [ ] manual reformatting (continue with iniital_dataset.py)
+- [ ] manual reformatting (continue with active_learning.py)
 - [ ] add more comments and docstrings
 - [ ] unit tests
 - [ ] refactor code, especially procedures and utilities.py and all the modified MACE parts
 - [ ] implement default settings and create checks when reading the input
 - [ ] create container
 ### Low Priority:
+- [ ] Start multiple trajectories from different starting geometries
 - [ ] take epoch function from mace directly
 - [ ] check if scratch_train.py and test_ensemble.py still work
 - [ ] change recalculator to use parsl
@@ -247,7 +248,6 @@ In case PARSL is used, one has to specifiy certain settings that are needed to p
 - [ ] multiple species at once
 - [ ] compile models at the end
 - [ ] fine-tuning of foundational models
-- [ ] Start multiple trajectories from different starting geometries
 - [ ] Implement SO3LR (needed: (ensemble) calculator, model setup, training setup, one epoch function, update model auxiliaries)
 
 
