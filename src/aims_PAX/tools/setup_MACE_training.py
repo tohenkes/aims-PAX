@@ -366,12 +366,7 @@ class WeightedEnergyForceIntermolForceLoss(torch.nn.Module):
             "forces_weight",
             torch.tensor(forces_weight, dtype=torch.get_default_dtype()),
         )
-        self.register_buffer(
-            "intermol_forces_weight",
-            torch.tensor(
-                intermol_forces_weight, dtype=torch.get_default_dtype()
-            ),
-        )
+        self.intermol_forces_weight = intermol_forces_weight
 
     def forward(self, ref: Batch, pred: TensorDict) -> torch.Tensor:
 

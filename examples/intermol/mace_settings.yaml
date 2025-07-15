@@ -52,7 +52,7 @@ TRAINING:
   loss: intermol
   energy_weight: 1.
   forces_weight: 1000.
-  intermol_forces_weight: 1000.
+  intermol_forces_weight: 0.
   virials_weight: 1.
   stress_weight: 1.
   config_type_weights: {Default: 1.0}

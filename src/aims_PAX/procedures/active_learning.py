@@ -383,8 +383,17 @@ class PrepareALProcedure:
             if self.al.get("mol_idxs", None) is not None
             else None
         )
-        if self.rank == 0:
-            logging.info(f"Using molecular indices: {self.mol_idxs}")
+        if self.mol_idxs is not None:
+            if self.rank == 0:
+                logging.info(f"Using molecular indices: {self.mol_idxs}")
+            self.intermol_crossed = 0
+            self.intermol_crossed_limit = self.al.get(
+                "intermol_crossed_limit", 10
+            )
+            self.intermol_forces_weight = self.al.get(
+                "intermol_forces_weight", 100
+            )
+            self.switched_on_intermol = False
         self.uncertainty_type = self.al.get(
             "uncertainty_type", "max_atomic_sd"
         )
@@ -1572,13 +1581,41 @@ class ALProcedure(PrepareALProcedure):
                 if self.rank == 0:
                     if (uncertainty > self.threshold).any():
                         logging.info(
-                            f"Uncertainty of point is beyond threshold {np.round(self.threshold,3)} at worker {idx}: {np.round(uncertainty,3):.3f}."
+                            f"Uncertainty of point is beyond threshold {np.round(self.threshold,3)} at worker {idx}: {np.round(uncertainty,3)}."
                         )
-                    else:
-                        logging.info(
-                            f"Threshold not crossed at trajectory worker {idx} for {self.skip_step*self.uncert_not_crossed_limit} steps."
-                        )
+                if self.mol_idxs is not None:
+                    crossings = uncertainty > self.threshold
+                    cross_global = crossings[0]
+                    cross_inter = crossings[1]
+                    
+                    if cross_inter and not cross_global:
+                        self.intermol_crossed += 1
+                    
+                    if cross_global and not cross_inter:
+                        self.intermol_crossed = 0
+                    
+                    if (
+                        self.intermol_crossed >= self.intermol_crossed_limit
+                            and not self.switched_on_intermol
+                    ):
+                        if self.rank == 0:
+                            logging.info(
+                                f"Intermolecular uncertainty crossed "
+                                f"{self.intermol_crossed_limit} consecutive "
+                                "times. Turning intermol_loss weight to "
+                                f"{self.intermol_forces_weight}."
+                            )
+                            for tag in self.ensemble.keys():
+                                self.training_setups[
+                                    tag
+                                ][
+                                    "loss_fn"
+                            ].intermol_forces_weight = self.intermol_forces_weight
+                            self.switched_on_intermol = True
 
+                        
+                    
+                    
                 self._handle_dft_call(idx)
 
             else:

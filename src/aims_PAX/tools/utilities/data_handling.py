@@ -16,7 +16,7 @@ from mace import tools
 from mace.tools import AtomicNumberTable, torch_geometric
 from mace.data.utils import (
     config_from_atoms_list,
-    KeySpecification,
+    #KeySpecification,
 )
 from dataclasses import dataclass
 from ase.io import read
@@ -319,23 +319,29 @@ def load_from_atoms(
     for atoms in atoms_list:
         atoms.info[head_key] = head_name
 
-    key_spec = KeySpecification(
-        info_keys={
-            "energy_key": energy_key,
-            "stress_key": stress_key,
-            "virials_key": virials_key,
-            "dipole_key": dipole_key,
-            "head_key": head_key,
-        },
-        arrays_keys={
-            "forces_key": forces_key,
-            "charges_key": charges_key,
-        },
-    )
+    #key_spec = KeySpecification(
+    #    info_keys={
+    #        "energy_key": energy_key,
+    #        "stress_key": stress_key,
+    #        "virials_key": virials_key,
+    #        "dipole_key": dipole_key,
+    #        "head_key": head_key,
+    #    },
+    #    arrays_keys={
+    #        "forces_key": forces_key,
+    #        "charges_key": charges_key,
+    #    },
+    #)
     configs = config_from_atoms_list(
         atoms_list,
         config_type_weights=config_type_weights,
-        key_specification=key_spec,
+        energy_key=energy_key,
+        forces_key=forces_key,
+        stress_key=stress_key,
+        virials_key=virials_key,
+        dipole_key=dipole_key,
+        charges_key=charges_key,
+        head_key=head_key,
     )
     return atomic_energies_dict, configs
 

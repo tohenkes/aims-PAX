@@ -526,7 +526,7 @@ class PrepareInitialDatasetProcedure:
                 f"{self.ensemble_atomic_energies_dict[list(self.seeds_tags_dict.keys())[0]]}"
             )
 
-    def _check_initial_ds_done(self) -> bool:
+    def check_initial_ds_done(self) -> bool:
         """
         Checks if the initial dataset generation is already done.
         This is mostly relevant when one is restarting using the
@@ -832,7 +832,7 @@ class InitialDatasetProcedure(PrepareInitialDatasetProcedure):
                 logging.info(
                     f"Training set size for '{tag}': "
                     f"{len(self.ensemble_mace_sets[tag]['train'])}; Validation"
-                    " set size: {len(self.ensemble_mace_sets[tag]['valid'])}."
+                    f" set size: {len(self.ensemble_mace_sets[tag]['valid'])}."
                 )
 
             logging.info("Training.")

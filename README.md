@@ -227,9 +227,12 @@ In case PARSL is used, one has to specifiy certain settings that are needed to p
 - [x] hide non-working CLI commands
 - [x] format code with BLACK
 - [x] split up utilities into utilities, eval_tools, data_handling
+- [ ] intermol loss weight switch
+- [ ] clear logger -- prints warning from mace: Standard deviation of the scaling is zero, Changing to no scaling
 - [ ] add WorkQueueExecutor to requirements
 - [ ] manual reformatting (continue with active_learning.py)
 - [ ] add more comments and docstrings
+- [ ] refactor input file (split between IDG and AL)
 - [ ] unit tests
 - [ ] refactor code, especially procedures and utilities.py and all the modified MACE parts
 - [ ] implement default settings and create checks when reading the input
