@@ -1,4 +1,3 @@
-import ase.build
 import numpy as np
 from mace import tools
 from aims_PAX.tools.utilities import (

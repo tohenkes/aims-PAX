@@ -5,7 +5,6 @@ from mace.tools.train import take_step, evaluate, valid_err_log
 from mace.tools.utils import MetricsLogger
 from torch.utils.data import DataLoader
 from torch_ema import ExponentialMovingAverage
-import logging
 
 #############################################################################
 ############ This part is mostly taken from the MACE source code ############

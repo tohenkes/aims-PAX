@@ -1,6 +1,5 @@
 from typing import Optional
 import numpy as np
-import torch.nn.functional
 from e3nn import o3
 from mace import modules, tools
 

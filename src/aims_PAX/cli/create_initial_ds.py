@@ -5,7 +5,6 @@ from aims_PAX.procedures.initial_dataset import (
     InitialDatasetPARSL,
 )
 from yaml import safe_load
-from time import perf_counter
 #import time
 
 

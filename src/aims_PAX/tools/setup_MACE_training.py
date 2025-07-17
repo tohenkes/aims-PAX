@@ -1,8 +1,5 @@
-import aims_PAX.tools
-import aims_PAX.tools.utilities
 import torch
 from typing import Optional
-import torch.nn.functional
 from torch_ema import ExponentialMovingAverage
 from mace import modules, tools
 from mace.tools import TensorDict

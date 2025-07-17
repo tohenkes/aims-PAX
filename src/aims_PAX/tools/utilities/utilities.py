@@ -21,7 +21,6 @@ from ase.io import read
 from ase import units
 from contextlib import nullcontext
 import time
-import GPUtil
 from threading import Thread
 import pandas as pd
 
