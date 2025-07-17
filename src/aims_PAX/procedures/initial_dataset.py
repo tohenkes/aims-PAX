@@ -1,8 +1,5 @@
 import os
 from pathlib import Path
-import ase.calculators
-import ase.calculators.aims
-import ase.calculators.calculator
 import torch
 import numpy as np
 import time
@@ -32,7 +29,6 @@ from aims_PAX.tools.utilities.utilities import (
     AIMSControlParser,
     dtype_mapping,
 )
-import parsl
 from aims_PAX.tools.utilities.parsl_tools import (
     recalc_aims_parsl,
     handle_parsl_logger,
@@ -46,7 +42,6 @@ import ase
 from ase.io import read
 import logging
 import random
-from asi4py.asecalc import ASI_ASE_calculator
 from ase.md.velocitydistribution import MaxwellBoltzmannDistribution
 from ase.md.langevin import Langevin
 from ase.md.nptberendsen import NPTBerendsen
@@ -54,6 +49,15 @@ from ase.md.npt import NPT
 from ase import units
 from contextlib import nullcontext
 import sys
+try:
+    from asi4py.asecalc import ASI_ASE_calculator
+except Exception as e:
+    asi4py = None
+try:
+    import parsl
+except ImportError:
+    parsl = None
+
 
 sys.stdout.flush()
 
