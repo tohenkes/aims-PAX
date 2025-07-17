@@ -887,6 +887,9 @@ class AIMSControlParser:
             "postprocess_anyway": re.compile(
                 r"^\s*(postprocess_anyway)\s+(\S+)", re.IGNORECASE
             ),
+            "override_initial_charge_check": re.compile(
+                r"^\s*(override_initial_charge_check)\s+(\S+)", re.IGNORECASE
+            ),
         }
 
         self.float_patterns = {

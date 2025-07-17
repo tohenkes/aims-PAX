@@ -5,7 +5,7 @@ CLUSTER:
     nodes_per_block: 1
     init_blocks: 1
     min_blocks: 1
-    max_blocks: 4
+    max_blocks: 1
     label: 'EXAMPLE'
     # run_dir: "/home/users/u101418/al_aims/asi/aims_PAX/examples/parsl/parsl1/parsl_run_dir1"
     #function_dir: "/home/users/u101418/al_aims/asi/aims_PAX/examples/parsl/parsl1/parsl_function_dir1"
@@ -59,7 +59,7 @@ ACTIVE_LEARNING:
   num_trajectories: 2 # number of trajectories to from sample in parallel
   species_dir: "/mnt/tier2/project/p200243/tcp_software/FHIaims_master_branch/FHIaims/species_defaults/defaults_2020/light"
   aims_lib_path: "/project/home/p200243/tcp_software/aims_master_090824/libaims.241114.scalapack.mpi.so"
-  analysis: True
+  analysis: False
   initial_sampling: mace-mp0
   initial_foundational_size: "small"
   parallel: False

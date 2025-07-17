@@ -262,3 +262,12 @@ def recalc_aims_parsl(
         return calc.results
     except ParseError:
         return None
+    except Exception as e:
+        # Handle any other calculation failures (including subprocess errors)
+        # This catches cases where the DFT calculation fails due to
+        # unphysical structures
+        import logging
+        logging.warning(
+            f"DFT calculation failed in directory {directory}: {str(e)}"
+        )
+        return None

@@ -70,7 +70,7 @@ except ImportError:
     parsl = None
 
 
-# TODO: refactor this. too much in one class. maybe restart class etc.
+# TODO: refactor this. too much in one class
 class PrepareALProcedure:
     """
     Class to prepare the active learning procedure. It handles all the input files,
@@ -384,6 +384,7 @@ class PrepareALProcedure:
             else None
         )
         if self.mol_idxs is not None:
+            # all the settings for handling intermolecular uncertainty
             if self.rank == 0:
                 logging.info(f"Using molecular indices: {self.mol_idxs}")
             self.intermol_crossed = 0
@@ -393,6 +394,11 @@ class PrepareALProcedure:
             self.intermol_forces_weight = self.al.get(
                 "intermol_forces_weight", 100
             )
+            self.using_intermol_loss = self.settings[
+                "TRAINING"
+                ][
+                    'loss'
+                    ].lower() == "intermol"
             self.switched_on_intermol = False
         self.uncertainty_type = self.al.get(
             "uncertainty_type", "max_atomic_sd"
@@ -403,6 +409,7 @@ class PrepareALProcedure:
         self.freeze_threshold_dataset = self.al.get(
             "freeze_threshold_dataset", np.inf
         )
+        
         if self.rank == 0:
             if self.freeze_threshold_dataset != np.inf:
                 logging.info(
@@ -1326,7 +1333,9 @@ class ALProcedure(PrepareALProcedure):
                     save_restart="restart/al/al_restart.npy"
                 )
                 self.save_restart = False
-
+        self.models = [
+            self.ensemble[tag] for tag in self.ensemble.keys()
+        ]
         self.trajectory_intermediate_epochs[idx] = 0
 
     def training_task(self, idx: int):
@@ -1591,12 +1600,19 @@ class ALProcedure(PrepareALProcedure):
                     if cross_inter and not cross_global:
                         self.intermol_crossed += 1
                     
-                    if cross_global and not cross_inter:
+                    if cross_global:
                         self.intermol_crossed = 0
                     
+                    if self.intermol_crossed != 0:
+                        if self.rank == 0:
+                            logging.info(
+                                f"Intermolecular uncertainty crossed {self.intermol_crossed} consecutive times."
+                            )
+
                     if (
                         self.intermol_crossed >= self.intermol_crossed_limit
                             and not self.switched_on_intermol
+                            and self.using_intermol_loss
                     ):
                         if self.rank == 0:
                             logging.info(
@@ -2717,7 +2733,7 @@ class ALProcedurePARSL(ALProcedure):
                     temp_result = futures[job_idx][job_no].result()
                     if temp_result is None:
                         # if the result is None, it means the DFT calculation did not converge
-                        self.ab_intio_results[job_idx][job_no] = False
+                        self.ab_intio_results[job_idx] = False
                     else:
                         # the DFT calculation converged
                         self.ab_intio_results[job_idx] = temp_result
@@ -2787,7 +2803,9 @@ class ALProcedurePARSL(ALProcedure):
                 recieved_point.arrays["REF_forces"] = job_result["forces"]
                 if self.compute_stress:
                     recieved_point.info["REF_stress"] = job_result["stress"]
+                    
                 self.MD_checkpoints[idx] = atoms_full_copy(recieved_point)
+                self.MD_checkpoints[idx].calc = self.trajectories[idx].calc
 
                 self._handle_received_point(
                     idx=idx, received_point=recieved_point
@@ -2880,6 +2898,16 @@ class ALProcedurePARSL(ALProcedure):
                 del futures[job_idx][job_no]
                 del predicted_forces[job_idx][job_no]
                 del current_md_steps[job_idx][job_no]
+                if self.clean_dirs:
+                    try:
+                        shutil.rmtree(
+                            self.calc_dir
+                            / f"worker_analysis{job_idx}_no_{job_no}"
+                        )
+                    except FileNotFoundError:
+                        logging.warning(
+                            f"Directory {self.calc_dir / f'worker_analysis{job_idx}_no_{job_no}'} not found. Skipping removal."
+                        )
 
             # Check for final shutdown
             if kill_requested and not any(futures.values()):

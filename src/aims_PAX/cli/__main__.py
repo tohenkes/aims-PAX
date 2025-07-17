@@ -52,7 +52,7 @@ def main():
             )
 
     # check if initial_ds_done.txt exists
-    if not initial_ds._check_initial_ds_done():
+    if not initial_ds.check_initial_ds_done():
         initial_ds.run()
 
     if al_settings["ACTIVE_LEARNING"].get("converge_initial", False):
