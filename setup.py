@@ -17,12 +17,13 @@ setup(
     python_requires='>=3.9',
     install_requires=[
         "numpy==1.26.4",
-        "mace-torch==0.3.13",
+        "mace-torch==0.3.9",
         "asi4py==1.3.18",
-        "torch==2.7.1",
-        "torchvision==0.22.1",
-        "torchaudio==2.7.1",
+        "torch==2.3.1",
+        "torchvision==0.18.1",
+        "torchaudio==2.3.1",
         "pyyaml==6.0.1",
+        "ase==3.23.0"
     ],
     extras_require={
         'parsl': ['parsl==2024.12.16'],
