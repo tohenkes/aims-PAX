@@ -350,6 +350,12 @@ class PrepareALProcedure:
         self.properties = ["energy", "forces"]
         if self.compute_stress:
             self.properties.append("stress")
+        if self.mol_idxs is not None:
+            self.using_intermol_loss = self.mace_settings[
+                "TRAINING"
+                ][
+                    'loss'
+                    ].lower() == "intermol"
 
     def handle_al_settings(self, al_settings):
 
@@ -394,11 +400,6 @@ class PrepareALProcedure:
             self.intermol_forces_weight = self.al.get(
                 "intermol_forces_weight", 100
             )
-            self.using_intermol_loss = self.settings[
-                "TRAINING"
-                ][
-                    'loss'
-                    ].lower() == "intermol"
             self.switched_on_intermol = False
         self.uncertainty_type = self.al.get(
             "uncertainty_type", "max_atomic_sd"
