@@ -1536,8 +1536,8 @@ class ALProcedure(PrepareALProcedure):
 
             if self.rank == 0:
                 self.md_drivers[idx].run(self.skip_step)
-                self.trajectory_MD_steps[idx] += self.skip_step
-                current_MD_step += self.skip_step
+            self.trajectory_MD_steps[idx] += self.skip_step
+            current_MD_step += self.skip_step
 
             # somewhat arbitrary; i just want to save checkpoints if the MD phase
             # is super long
@@ -2084,8 +2084,7 @@ class ALProcedureParallel(ALProcedure):
             if self.color == 1:
                 kill_signal = self.req_kill.Test()
                 if kill_signal:
-                    self.aims_calculator.asi.close()
-                    break
+                    return None
 
                 if self.rank != 1:
                     self.geo_info_buf = None
