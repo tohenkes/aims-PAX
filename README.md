@@ -227,15 +227,16 @@ In case PARSL is used, one has to specifiy certain settings that are needed to p
 - [x] hide non-working CLI commands
 - [x] format code with BLACK
 - [x] split up utilities into utilities, eval_tools, data_handling
-- [ ] intermol loss weight switch
-- [ ] clear logger -- prints warning from mace: Standard deviation of the scaling is zero, Changing to no scaling
-- [ ] add WorkQueueExecutor to requirements
+- [x] intermol loss weight switch
+- [x] add WorkQueueExecutor to requirements
 - [ ] manual reformatting (continue with active_learning.py)
 - [ ] add more comments and docstrings
 - [ ] refactor input file (split between IDG and AL)
+- [ ] copy original MACE input file
+- [ ] implement default settings and create checks when reading the input
 - [ ] unit tests
 - [ ] refactor code, especially procedures and utilities.py and all the modified MACE parts
-- [ ] implement default settings and create checks when reading the input
+- [ ] git push workflow
 - [ ] create container
 ### Low Priority:
 - [ ] Start multiple trajectories from different starting geometries
@@ -243,12 +244,14 @@ In case PARSL is used, one has to specifiy certain settings that are needed to p
 - [ ] check if scratch_train.py and test_ensemble.py still work
 - [ ] change recalculator to use parsl
 - [ ] change epoch saved in AL for ckpt
-- [ ] copy original MACE input file
+- [ ] update to new mace and torch version
+- [ ] clear logger -- prints warning from mace: Standard deviation of the scaling is zero, Changing to no scaling
 - [ ] spin polarization for E0 calculations
 - [ ] energy, force weight swap in loss fn during convergence
 - [ ] multiple MD settings
 - [ ] multi GPU parallelism for AL
 - [ ] multiple species at once
+- [ ] multiple trajectories in IDG
 - [ ] compile models at the end
 - [ ] fine-tuning of foundational models
 - [ ] Implement SO3LR (needed: (ensemble) calculator, model setup, training setup, one epoch function, update model auxiliaries)

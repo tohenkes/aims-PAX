@@ -1676,7 +1676,14 @@ class ALProcedure(PrepareALProcedure):
             # so the MLFF should be able to handle this and lead to a better trajectory
             # that does not lead to convergence issues
             if self.rank == 0:
-                self.MD_checkpoints[idx] = atoms_full_copy(self.point)
+                recieved_point = self.trajectories[idx].copy()
+                recieved_point.info["REF_energy"] = self.point.info['REF_energy']
+                recieved_point.arrays["REF_forces"] = self.point.arrays['REF_forces']
+                if self.compute_stress:
+                    recieved_point.info["REF_stress"] = self.point.info['REF_stress']
+                    
+                self.MD_checkpoints[idx] = atoms_full_copy(recieved_point)
+                self.MD_checkpoints[idx].calc = self.trajectories[idx].calc
             self.trajectory_status[idx] = "waiting"
             self.num_workers_waiting += 1
 
