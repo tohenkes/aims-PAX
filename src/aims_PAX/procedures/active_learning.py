@@ -53,7 +53,6 @@ from aims_PAX.tools.train_epoch_mace import (
 import ase
 from ase.io import read
 import logging
-from asi4py.asecalc import ASI_ASE_calculator
 from ase.md.velocitydistribution import MaxwellBoltzmannDistribution
 from ase.md.langevin import Langevin
 from ase.md.nptberendsen import NPTBerendsen
@@ -68,6 +67,10 @@ try:
     import parsl
 except ImportError:
     parsl = None
+try:
+    import asi4py
+except Exception as e:
+    asi4py = None
 
 
 # TODO: refactor this. too much in one class
@@ -801,7 +804,12 @@ class PrepareALProcedure:
             calc = Aims(**aims_settings)
             calc.write_inputfiles(asi.atoms, properties=self.properties)
 
-        calc = ASI_ASE_calculator(
+        if asi4py is None:
+            raise ImportError(
+                "asi4py is not properly installed. "
+                "Please install it to use the AIMS calculator."
+            )
+        calc = asi4py.asecalc.ASI_ASE_calculator(
             self.ASI_path, init_via_ase, self.comm_handler.comm, atoms
         )
         return calc
@@ -1947,7 +1955,12 @@ class ALProcedureParallel(ALProcedure):
                 calc = Aims(**aims_settings)
                 calc.write_inputfiles(asi.atoms, properties=self.properties)
 
-            calc = ASI_ASE_calculator(
+            if asi4py is None:
+                raise ImportError(
+                    "asi4py is not properly installed. "
+                    "Please install it to use the AIMS calculator."
+                )
+            calc = asi4py.asecalc.ASI_ASE_calculator(
                 self.ASI_path, init_via_ase, self.comm_handler.comm, atoms
             )
             return calc

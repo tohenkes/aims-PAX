@@ -13,15 +13,12 @@ from yaml import safe_load
 
 try:
     from mpi4py import MPI
-except ImportError:
+except (ImportError, RuntimeError):
     MPI = None
 
 
 def main():
-
-    # if MPI.COMM_WORLD.Get_rank() == 0:
-    #    monitor = GPUMonitor(1, 'gpu_utilization.csv')
-
+    
     with open("./mace_settings.yaml", "r") as file:
         mace_settings = safe_load(file)
     with open("./active_learning_settings.yaml", "r") as file:
@@ -44,14 +41,13 @@ def main():
             initial_ds = InitialDatasetPARSL(
                 mace_settings=mace_settings,
                 al_settings=al_settings,
-                close_parsl=False,  # keep parsl open after IDG for AL
+                close_parsl=False,
             )
         else:
             initial_ds = InitialDatasetFoundational(
                 mace_settings=mace_settings, al_settings=al_settings
             )
-
-    # check if initial_ds_done.txt exists
+            
     if not initial_ds.check_initial_ds_done():
         initial_ds.run()
 

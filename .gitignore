@@ -9,7 +9,6 @@
 *.db
 *.ipynb
 *.ase
-*.sh
 src/aims_PAX.egg-info
 /build
 

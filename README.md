@@ -26,7 +26,7 @@ To install the dependencies you can clone the repository and run inside the dire
 pip install -r requirements.txt
 ```
 
-!!! Note: Make sure to uncomment PARSL in requirements.txt if you want to use the PARSL version of aims PAX.
+!!! Note: Make sure to uncomment PARSL in requirements.txt if you want to use the PARSL version of aims PAX. Additionally you have to install the `Work Queue` (https://cctools.readthedocs.io/en/latest/) tools. This can be done with a simple `conda install`. You can just run the `setup.sh` script to handle this.
 
 In order to install aims PAX itself, run:
 

@@ -156,7 +156,9 @@ def create_parsl_config(
 
     # Extract the cluster partition from the slurm options string
     match = re.search(
-        r"partition\s*=\s*(\S+)", slurm_options_str, re.IGNORECASE
+        r"(?:partition\s*=\s*|(?:^|\s)-p\s*(?:=\s*)?)([\w\-]+)", 
+        slurm_options_str, 
+        re.IGNORECASE
     )
     if match:
         partition = match.group(1)
