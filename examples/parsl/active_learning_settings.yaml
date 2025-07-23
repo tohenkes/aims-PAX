@@ -5,7 +5,7 @@ CLUSTER:
     nodes_per_block: 1
     init_blocks: 1
     min_blocks: 1
-    max_blocks: 1
+    max_blocks: 4
     label: 'EXAMPLE'
     # run_dir: "/home/users/u101418/al_aims/asi/aims_PAX/examples/parsl/parsl1/parsl_run_dir1"
     #function_dir: "/home/users/u101418/al_aims/asi/aims_PAX/examples/parsl/parsl1/parsl_function_dir1"

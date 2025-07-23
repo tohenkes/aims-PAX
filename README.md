@@ -239,6 +239,7 @@ In case PARSL is used, one has to specifiy certain settings that are needed to p
 - [ ] git push workflow
 - [ ] create container
 ### Low Priority:
+- [ ] look at "current temperatures" more closely, does it even make sense?
 - [ ] Start multiple trajectories from different starting geometries
 - [ ] take epoch function from mace directly
 - [ ] check if scratch_train.py and test_ensemble.py still work

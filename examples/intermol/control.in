@@ -7,6 +7,7 @@
   spin               none
   relativistic       atomic_zora scalar
   charge             0
+  sc_iter_limit      100
 #  many_body_dispersion
 #===============================================================================
 
