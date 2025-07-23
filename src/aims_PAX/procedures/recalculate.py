@@ -1,8 +1,6 @@
 import ase.build
 from mace import tools
-from aims_PAX.tools.utilities import (
-    AIMSControlParser,
-)
+from aims_PAX.tools.utilities.utilities import AIMSControlParser
 import ase
 from ase.io import read, write
 import logging

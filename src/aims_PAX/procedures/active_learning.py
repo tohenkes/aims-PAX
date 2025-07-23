@@ -1766,20 +1766,20 @@ class ALProcedure(PrepareALProcedure):
                     cross_inter = crossings[1]
 
                     if cross_inter and not cross_global:
-                        self.intermol_crossed += 1
+                        self.config.intermol_crossed += 1
 
                     if cross_global:
-                        self.intermol_crossed = 0
+                        self.config.intermol_crossed = 0
 
-                    if self.intermol_crossed != 0:
+                    if self.config.intermol_crossed != 0:
                         if self.rank == 0:
                             logging.info(
-                                f"Intermolecular uncertainty crossed {self.intermol_crossed} consecutive times."
+                                f"Intermolecular uncertainty crossed {self.config.intermol_crossed} consecutive times."
                             )
 
                     if (
-                        self.intermol_crossed >= self.config.intermol_crossed_limit
-                        and not self.switched_on_intermol
+                        self.config.intermol_crossed >= self.config.intermol_crossed_limit
+                        and not self.config.switched_on_intermol
                         and self.config.using_intermol_loss
                     ):
                         if self.rank == 0:
@@ -1795,7 +1795,7 @@ class ALProcedure(PrepareALProcedure):
                                 ].intermol_forces_weight = (
                                     self.config.intermol_forces_weight
                                 )
-                            self.switched_on_intermol = True
+                            self.config.switched_on_intermol = True
 
                 self._handle_dft_call(idx)
 
