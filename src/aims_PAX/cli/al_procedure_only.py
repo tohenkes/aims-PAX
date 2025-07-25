@@ -1,10 +1,11 @@
 from aims_PAX.procedures.active_learning import (
-    ALProcedure,
+    ALProcedureSerial,
     ALProcedureParallel,
     ALProcedurePARSL,
 )
 from yaml import safe_load
-#from time import perf_counter
+
+# from time import perf_counter
 
 
 def main():
@@ -22,13 +23,13 @@ def main():
             mace_settings=mace_settings, al_settings=al_settings
         )
     else:
-        al = ALProcedure(mace_settings=mace_settings, al_settings=al_settings)
+        al = ALProcedureSerial(mace_settings=mace_settings, al_settings=al_settings)
 
     if not al.check_al_done():
-        #start_time = perf_counter()
+        # start_time = perf_counter()
         al.run()
-        #end_time = perf_counter()
-        #with open("./al_procedure_time.txt", "w") as f:
+        # end_time = perf_counter()
+        # with open("./al_procedure_time.txt", "w") as f:
         #    f.write(
         #        f"Active Learning Procedure Time: {end_time - start_time} seconds\n"
         #    )

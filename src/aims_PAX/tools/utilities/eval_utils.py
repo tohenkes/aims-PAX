@@ -1,11 +1,7 @@
 import logging
 import torch
 import numpy as np
-from typing import (
-    Tuple,
-    List,
-    Union
-)
+from typing import Tuple, List, Union
 from mace import data as mace_data
 from mace.tools import torch_geometric, torch_tools, utils
 from mace.data.utils import (
@@ -208,7 +204,7 @@ def evaluate_model_mace_ds(
         forces_collection.append(forces[:-1])  # drop last as its emtpy
 
     energies = np.concatenate(energies_list, axis=0)
-    # TODO: This only works for predicting a single molecule not different 
+    # TODO: This only works for predicting a single molecule not different
     # ones in one set
     forces_array = np.stack(forces_collection).reshape(len(energies), -1, 3)
     assert len(mace_ds) == len(energies) == len(forces_array)
@@ -240,13 +236,13 @@ def ensemble_prediction_mace_ds(
         device (str): Device to evaluate the models on.
         dtype (str, optional): Dtype of models. Defaults to "float64".
         batch_size (int, optional): Batch size of evaluation. Defaults to 1.
-        return_energies (bool, optional): Whether to return energies or not. 
+        return_energies (bool, optional): Whether to return energies or not.
                                             Defaults to False.
 
     Returns:
         np.array: Forces [n_models, n_mols, n_atoms, xyz]
         Optionally:
-        np.array: Energies [n_models, n_mols], 
+        np.array: Energies [n_models, n_mols],
                     Forces [n_models, n_mols, n_atoms, xyz]
 
     """
@@ -506,7 +502,7 @@ def test_ensemble(
     """
     Function taken from MACE code and adapted to work with ensembles.
     Tests an ensemble of MACE models on a set of configurations.
-    
+
     Either `atoms_list` or `path_to_data` must be provided. So it's data
     is either loaded or the atoms list is transformed into a MACE
     compatible format.
@@ -516,7 +512,7 @@ def test_ensemble(
         batch_size (int): Batch size for testing the models.
         output_args (dict): Dictionary of output arguments for the models.
         device (str): Device to run the models on (e.g., "cpu" or "cuda").
-        path_to_data (str, optional): Path to the data file in ASE readable 
+        path_to_data (str, optional): Path to the data file in ASE readable
                                         format.
         atoms_list (list, optional): . Defaults to None.
         logger (MetricsLogger, optional): Logger object for eval.
@@ -537,7 +533,7 @@ def test_ensemble(
                                         Defaults to "dipoles".
         charges_key (str, optional): How charges are defined in the ase.Atoms.
                                         Defaults to "charges".
-        head_key (str, optional): Which output head to test. 
+        head_key (str, optional): Which output head to test.
                                         Defaults to "head".
 
     Raises:
@@ -684,4 +680,3 @@ def test_ensemble(
             )
 
     return (avg_ensemble_metrics, ensemble_metrics)
-

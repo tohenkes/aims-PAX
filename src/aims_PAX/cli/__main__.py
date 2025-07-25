@@ -5,7 +5,7 @@ from aims_PAX.procedures.initial_dataset import (
     InitialDatasetPARSL,
 )
 from aims_PAX.procedures.active_learning import (
-    ALProcedure,
+    ALProcedureSerial,
     ALProcedureParallel,
     ALProcedurePARSL,
 )
@@ -18,7 +18,7 @@ except (ImportError, RuntimeError):
 
 
 def main():
-    
+
     with open("./mace_settings.yaml", "r") as file:
         mace_settings = safe_load(file)
     with open("./active_learning_settings.yaml", "r") as file:
@@ -47,7 +47,7 @@ def main():
             initial_ds = InitialDatasetFoundational(
                 mace_settings=mace_settings, al_settings=al_settings
             )
-            
+
     if not initial_ds.check_initial_ds_done():
         initial_ds.run()
 
@@ -64,7 +64,7 @@ def main():
         )
 
     else:
-        al = ALProcedure(mace_settings=mace_settings, al_settings=al_settings)
+        al = ALProcedureSerial(mace_settings=mace_settings, al_settings=al_settings)
 
     if not al.check_al_done():
         al.run()

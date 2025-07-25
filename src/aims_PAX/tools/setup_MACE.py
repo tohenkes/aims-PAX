@@ -14,6 +14,7 @@ from mace import modules, tools
 # contains the parts important for setting up a simple model.
 # TODO: check mace code for more features
 
+
 def setup_mace(
     settings: dict,
     z_table: tools.AtomicNumberTable,
@@ -29,11 +30,11 @@ def setup_mace(
         settings (dict): MACE model settings
         z_table (tools.AtomicNumberTable): Table of atomic numbers
         atomic_energies_dict (dict): Dictionary of atomic energies
-        avg_num_neighbors (Optional[np.ndarray], optional): Average number of 
+        avg_num_neighbors (Optional[np.ndarray], optional): Average number of
                                                     neighbors. Defaults to 1.
         atomic_inter_scale (Optional[float], optional): Scaling factor for
                                             energies and forces. Defaults to 0.
-        atomic_inter_shift (Optional[float], optional): Shift for energies 
+        atomic_inter_shift (Optional[float], optional): Shift for energies
                                                     and forces. Defaults to 0.
 
     Returns:

@@ -16,7 +16,7 @@ from mace import tools
 from mace.tools import AtomicNumberTable, torch_geometric
 from mace.data.utils import (
     config_from_atoms_list,
-    #KeySpecification,
+    # KeySpecification,
 )
 from dataclasses import dataclass
 from ase.io import read
@@ -34,8 +34,6 @@ Pbc = tuple  # (3,)
 
 DEFAULT_CONFIG_TYPE = "Default"
 DEFAULT_CONFIG_TYPE_WEIGHTS = {DEFAULT_CONFIG_TYPE: 1.0}
-
-
 
 
 @dataclasses.dataclass
@@ -292,9 +290,7 @@ def load_from_atoms(
             )
             if isolated_atom_config:
                 if energy_key in atoms.info.keys():
-                    atomic_energies_dict[
-                        atoms.get_atomic_numbers()[0]
-                    ] = (
+                    atomic_energies_dict[atoms.get_atomic_numbers()[0]] = (
                         atoms.info[energy_key]
                     )
                 else:
@@ -303,9 +299,7 @@ def load_from_atoms(
                         "but does not contain an energy. Zero energy "
                         "will be used."
                     )
-                    atomic_energies_dict[
-                        atoms.get_atomic_numbers()[0]
-                    ] = (
+                    atomic_energies_dict[atoms.get_atomic_numbers()[0]] = (
                         np.zeros(1)
                     )
             else:
@@ -319,7 +313,7 @@ def load_from_atoms(
     for atoms in atoms_list:
         atoms.info[head_key] = head_name
 
-    #key_spec = KeySpecification(
+    # key_spec = KeySpecification(
     #    info_keys={
     #        "energy_key": energy_key,
     #        "stress_key": stress_key,
@@ -331,7 +325,7 @@ def load_from_atoms(
     #        "forces_key": forces_key,
     #        "charges_key": charges_key,
     #    },
-    #)
+    # )
     configs = config_from_atoms_list(
         atoms_list,
         config_type_weights=config_type_weights,
@@ -434,11 +428,7 @@ def create_mace_dataset(
     )
 
     data_set = [
-        mace_data.AtomicData.from_config(
-            config,
-            z_table=z_table,
-            cutoff=r_max
-        )
+        mace_data.AtomicData.from_config(config, z_table=z_table, cutoff=r_max)
         for config in collections.train
     ]
     return data_set
@@ -555,30 +545,30 @@ def ase_to_mace_ensemble_sets(
 def save_datasets(
     ensemble: dict,
     ensemble_ase_sets: dict,
-    path: str, 
+    path: str,
     initial: bool = False,
-    save_combined_initial: bool = True
+    save_combined_initial: bool = True,
 ):
     """
     Save the ensemble datasets as xyz files in the given path.
     The datasets are saved in the "training" and "validation" subdirectories.
-    
+
     If `initial` is True, the datasets are saved with the prefix "initial_".
-   
+
     If `save_combined_initial` is True, a combined initial training
     and validation set is saved as "combined_initial_train_set.xyz" and
     "combined_initial_valid_set.xyz".
 
     Args:
         ensemble (dict): Dictionary of models.
-        ensemble_ase_sets (dict): Respective ASE style datasets as a 
+        ensemble_ase_sets (dict): Respective ASE style datasets as a
                                     dictionary.
         path (str): _description_
         initial (bool, optional): _description_. Defaults to False.
         save_combined_initial (bool, optional): If True, saves a combined
             initial training and validation set. Defaults to True.
     """
-    
+
     if save_combined_initial:
         combined_init_train_set = []
         combined_init_valid_set = []

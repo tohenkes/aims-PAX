@@ -32,15 +32,15 @@ class HandleUncertainty:
         ensemble_sd_atomic: np.array,
     ):
         """
-        Compute the maximum atomic standard deviation of the 
+        Compute the maximum atomic standard deviation of the
         ensemble prediction.
 
         Args:
-            ensemble_sd_atomic (np.array): Atomic standard deviation of forces: 
+            ensemble_sd_atomic (np.array): Atomic standard deviation of forces:
                                             [n_mols, n_atoms].
 
         Returns:
-            np.array: Maximum atomic standard deviation of atomic forces per 
+            np.array: Maximum atomic standard deviation of atomic forces per
                             molecule: [n_mols].
         """
         max_sd = np.max(ensemble_sd_atomic, axis=-1)
@@ -58,7 +58,7 @@ class HandleUncertainty:
                                             [n_mols, n_atoms].
 
         Returns:
-            np.array: Mean atomic standard deviation of atomic forces per 
+            np.array: Mean atomic standard deviation of atomic forces per
                                     molecule: [n_mols].
         """
         mean_sd = np.mean(ensemble_sd_atomic, axis=-1)

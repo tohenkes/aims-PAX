@@ -4,7 +4,7 @@ ACTIVE_LEARNING:
   n_samples: 4
   valid_ratio: 0.3 # e.g. 0.3 means 30% of the data is used for validation
   converge_initial: False
-  converge_al: True
+  converge_al: False
   converge_best: False
   scheduler_initial: True
   max_initial_epochs: 10
@@ -24,10 +24,10 @@ ACTIVE_LEARNING:
   num_trajectories: 4 # number of trajectories to from sample in parallel
   species_dir: "/mnt/tier2/project/p200243/tcp_software/FHIaims_master_branch/FHIaims/species_defaults/defaults_2020/light"
   aims_lib_path: "/mnt/tier2/project/p200243/tcp_software/FHIaims_master_branch/FHIaims/build_lib/libaims.250507.scalapack.mpi.so"
-  analysis: True
+  analysis: False
   initial_sampling: mace-mp0
   initial_foundational_size: "small"
-  parallel: False
+  parallel: True
   #freeze_threshold_dataset: 11
 
 MD:

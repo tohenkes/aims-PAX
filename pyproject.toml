@@ -40,3 +40,4 @@ where = ["src"]
 aims_PAX = "aims_PAX.cli.__main__:main"
 aims_PAX-initial-ds = "aims_PAX.cli.create_initial_ds:main"
 aims_PAX-al = "aims_PAX.cli.al_procedure_only:main"
+aims_PAX-recalc = "aims_PAX.cli.recalculate_data:main"

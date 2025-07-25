@@ -25,11 +25,11 @@ from aims_PAX.tools.utilities.utilities import (
     create_ztable,
     save_ensemble,
     setup_logger,
-    CommHandler,
     AIMSControlParser,
     dtype_mapping,
 )
-from aims_PAX.tools.utilities.parsl_tools import (
+from aims_PAX.tools.utilities.mpi_utils import CommHandler
+from aims_PAX.tools.utilities.parsl_utils import (
     recalc_aims_parsl,
     handle_parsl_logger,
     prepare_parsl,
@@ -49,6 +49,7 @@ from ase.md.npt import NPT
 from ase import units
 from contextlib import nullcontext
 import sys
+
 try:
     import asi4py
 except Exception as e:
@@ -128,7 +129,7 @@ class PrepareInitialDatasetProcedure:
             try:
                 self.init_ds_restart_dict = np.load(
                     "restart/initial_ds/initial_ds_restart.npy",
-                    allow_pickle=True
+                    allow_pickle=True,
                 ).item()
             except FileNotFoundError:
                 logging.error(
@@ -191,7 +192,7 @@ class PrepareInitialDatasetProcedure:
         self.comm_handler.barrier()
 
         # each ensemble member has their own initial dataset.
-        # we create a ASE and MACE dataset because it makes 
+        # we create a ASE and MACE dataset because it makes
         # conversion and saving easier
         if self.rank == 0:
             if self.restart:
@@ -271,7 +272,7 @@ class PrepareInitialDatasetProcedure:
         and fall back to defaults if not.
 
         Args:
-            al_settings (dict): Dictionary containing the active 
+            al_settings (dict): Dictionary containing the active
                                 learning settings.
         """
 
@@ -369,6 +370,7 @@ class PrepareInitialDatasetProcedure:
             )
             calc = Aims(**aims_settings)
             calc.write_inputfiles(asi.atoms, properties=self.properties)
+
         if asi4py is None:
             raise ImportError(
                 "asi4py is not properly installed. "
@@ -381,7 +383,7 @@ class PrepareInitialDatasetProcedure:
 
     def _handle_aims_settings(self, path_to_control: str):
         """
-        Parses the AIMS control file to get the settings for the AIMS 
+        Parses the AIMS control file to get the settings for the AIMS
         calculator.
 
         Args:
@@ -754,10 +756,10 @@ class PrepareInitialDatasetProcedure:
 class InitialDatasetProcedure(PrepareInitialDatasetProcedure):
     """
     Class to generate the initial dataset for the active learning procedure.
-    Handles the molecular dynamics simulations, the sampling of points, the 
+    Handles the molecular dynamics simulations, the sampling of points, the
     training of the ensemble members and the saving of the datasets.
 
-    This is the base class for the serial, parallel, and PARSL version of 
+    This is the base class for the serial, parallel, and PARSL version of
     this workflow.
     """
 
@@ -783,7 +785,7 @@ class InitialDatasetProcedure(PrepareInitialDatasetProcedure):
             for number, (tag, model) in enumerate(self.ensemble.items()):
 
                 member_points = self.sampled_points[
-                    self.n_samples * number: self.n_samples * (number + 1)
+                    self.n_samples * number : self.n_samples * (number + 1)
                 ]
 
                 (
@@ -981,9 +983,9 @@ class InitialDatasetProcedure(PrepareInitialDatasetProcedure):
 
         Args:
             valid_loss (float): Averaged validation loss over the ensemble.
-            ensemble_valid_losses (dict): Per ensemble member 
+            ensemble_valid_losses (dict): Per ensemble member
                                                     validation losses.
-            save_path (str, optional): Path to save the analysis data. 
+            save_path (str, optional): Path to save the analysis data.
                     Defaults to "analysis/initial_losses.npz".
         """
         self.collect_losses["epoch"].append(self.epoch)
@@ -994,7 +996,7 @@ class InitialDatasetProcedure(PrepareInitialDatasetProcedure):
     def run(self):
         """
         Main function to run the initial dataset generation procedure.
-        It samples points and trains the ensemble members until the 
+        It samples points and trains the ensemble members until the
         stopping criterion is met.
 
         """
@@ -1103,10 +1105,7 @@ class InitialDatasetFoundational(InitialDatasetProcedure):
             device=self.device,
         )
 
-    def _recalc_aims(
-            self,
-            current_point: ase.Atoms
-            ) -> ase.Atoms:
+    def _recalc_aims(self, current_point: ase.Atoms) -> ase.Atoms:
         """
         Recalculates the energies and forces of the current point using
         the AIMS calculator. If the SCF is converged, it saves the energy
@@ -1202,11 +1201,11 @@ class InitialDatasetFoundationalParallel(InitialDatasetFoundational):
     training of the ensemble members and the saving of the datasets.
 
     Uses a "foundational" model to sample points. These are then recomputed
-    using DFT. Runs in parallel using MPI. The MD using the foundational 
+    using DFT. Runs in parallel using MPI. The MD using the foundational
     model is propagted while DFT is being run.
 
     !!! WARNING: Not recommended (especially for large systems) as the
-        model can generate strange geometries when run to long, which 
+        model can generate strange geometries when run to long, which
         can happen when DFT calculations take too much time. Speedup is
         modest as DFT calculations are processed one at a time. Ideally
         use the PARSL version. !!!
@@ -1426,7 +1425,7 @@ class InitialDatasetFoundationalParallel(InitialDatasetFoundational):
                         self._train()
                         logging.info("Training done, going back to sampling.")
             # DFT workers
-            if self.color == 1:                
+            if self.color == 1:
                 current_geometry = None
                 # recieving the criterion
                 if self.criterion_req is None:
@@ -1545,7 +1544,7 @@ class InitialDatasetPARSL(InitialDatasetFoundational):
 
         if parsl is None:
             raise ImportError(
-                "Parsl is not installed. Please install parsl" 
+                "Parsl is not installed. Please install parsl"
                 " to use this feature."
             )
 
@@ -1651,7 +1650,7 @@ class InitialDatasetPARSL(InitialDatasetFoundational):
         if self.rank == 0:
             logging.info(
                 "Initial dataset generation with foundational "
-                 f"model of size: {self.initial_foundational_size}."
+                f"model of size: {self.initial_foundational_size}."
             )
             self.atoms.calc = self._setup_foundational()
 

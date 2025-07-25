@@ -344,6 +344,7 @@ class WeightedEnergyForceIntermolForceLoss(torch.nn.Module):
     """
     Weighted loss function for energy, forces, and inter-molecular forces.
     """
+
     def __init__(
         self,
         energy_weight: float = 1.0,

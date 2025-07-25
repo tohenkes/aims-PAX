@@ -4,12 +4,7 @@ import sys
 import os
 import torch
 import numpy as np
-from typing import (
-    Optional,
-    Any,
-    Dict,
-    Union
-)
+from typing import Optional, Any, Dict, Union
 from pathlib import Path
 from mace import tools, modules
 from mace.tools import AtomicNumberTable
@@ -28,7 +23,7 @@ import pandas as pd
 # refactored into classes
 
 
-#AIMS CONSTANTS
+# AIMS CONSTANTS
 BOHR = 0.529177210
 BOHR_INV = 1.0 / BOHR
 HARTREE = 27.21138450
@@ -141,7 +136,7 @@ def atom_wise_sd(
                             [n_ensemble_members, n_mols, n_atoms, xyz].
 
     Returns:
-        np.array: Atom-wise standard deviation of atomic forces per 
+        np.array: Atom-wise standard deviation of atomic forces per
                     molecule: [n_mols, n_atoms].
     """
     # average prediction over ensemble of models
@@ -172,11 +167,7 @@ def atom_wise_f_error(
     return atom_wise_f_error
 
 
-def ensemble_from_folder(
-    path_to_models: str,
-    device: str,
-    dtype
-) -> list:
+def ensemble_from_folder(path_to_models: str, device: str, dtype) -> list:
     """
     Load an ensemble of models from a folder.
     (Can't handle other file formats than .pt at the moment.)
@@ -209,7 +200,7 @@ def pre_trajectories_from_folder(
     num_trajectories: int,
 ) -> list:
     """
-    Load pre-existing trajectories from a folder. 
+    Load pre-existing trajectories from a folder.
     ASE readable formats are supported.
 
     Args:
@@ -241,7 +232,7 @@ def select_best_member(
     Selects the best member of an ensemble based on the validation loss.
 
     Args:
-        ensemble_valid_loss (dict): Dictionary of validation losses for 
+        ensemble_valid_loss (dict): Dictionary of validation losses for
                                     each ensemble member.
 
     Returns:
@@ -270,11 +261,7 @@ def E_uncert(
     return uncert
 
 
-def get_uncert_alpha(
-    reference, 
-    ensemble_avg, 
-    uncertainty
-) -> float:
+def get_uncert_alpha(reference, ensemble_avg, uncertainty) -> float:
     """
     Estimate distribution shift for a given dataset.
 
@@ -312,7 +299,7 @@ def ensemble_training_setups(
         restart (bool, optional): Wether this function is called during
                                         an aims PAX restart. Defaults to False.
         al_settings (dict, optional): The active learning settings,
-                    only important if intermol_uncertainty is used as 
+                    only important if intermol_uncertainty is used as
                     the molecular indices are stored there. Defaults to None.
 
     Returns:
@@ -412,13 +399,13 @@ def get_atomic_energies_from_ensemble(
 ):
     """
     Loads the atomic energies from existing ensemble members.
-    
+
     Args:
         ensemble (dict): Dictionary of MACE models.
-        z (np.array): Array of atomic numbers for which the atomic energies 
+        z (np.array): Array of atomic numbers for which the atomic energies
                         are needed.
         dtype (str): Data type for the atomic energies.
-    
+
     """
     ensemble_atomic_energies_dict = {}
     ensemble_atomic_energies = {}
@@ -428,7 +415,7 @@ def get_atomic_energies_from_ensemble(
         )
         ensemble_atomic_energies_dict[tag] = {}
         for i, atomic_energy in enumerate(ensemble_atomic_energies[tag]):
-            # TH: i don't know if the atomic energies are really sorted 
+            # TH: i don't know if the atomic energies are really sorted
             # by atomic number inside the models. TODO: check that
             ensemble_atomic_energies_dict[tag][
                 np.sort(np.unique(z))[i]
@@ -449,18 +436,18 @@ def get_atomic_energies_from_pt(
     atomic energies for each ensemble member.
 
     Args:
-        path_to_checkpoints (str): Path to the directory containing the 
+        path_to_checkpoints (str): Path to the directory containing the
                                     checkpoints.
-        z (np.array): Array of atomic numbers for which the atomic energies 
+        z (np.array): Array of atomic numbers for which the atomic energies
                                         are needed.
         seeds_tags_dict (dict): Dictionary mapping model tags to seeds.
         dtype (str): Data type for the atomic energies.
 
     Returns:
-        tuple: list and dictionary containing the atomic energies for 
+        tuple: list and dictionary containing the atomic energies for
                     each ensemble member.
     """
-    
+
     ensemble_atomic_energies_dict = {}
     ensemble_atomic_energies = {}
     last_check_pt = list_latest_file(path_to_checkpoints)
@@ -478,7 +465,7 @@ def get_atomic_energies_from_pt(
         )
         ensemble_atomic_energies_dict[tag] = {}
         for i, atomic_energy in enumerate(ensemble_atomic_energies[tag]):
-            # TH: i don't know if the atomic energies are really sorted by 
+            # TH: i don't know if the atomic energies are really sorted by
             # atomic number inside the models. TODO: check that
             ensemble_atomic_energies_dict[tag][
                 np.sort(np.unique(z))[i]
@@ -554,8 +541,7 @@ def update_model_auxiliaries(
             average_neighbors
         )
     mean, std = modules.scaling_classes[scaling](
-        train_loader, 
-        atomic_energies_list
+        train_loader, atomic_energies_list
     )
     mean, std = torch.from_numpy(mean).to(device), torch.from_numpy(std).to(
         device
@@ -579,7 +565,7 @@ def save_checkpoint(
         training_setup (dict): Training settings.
         model (modules.MACE): MACE model to be saved.
         epoch (int): Current epoch.
-        keep_last (bool, optional): Keep the last checkpoint. 
+        keep_last (bool, optional): Keep the last checkpoint.
                                         Defaults to False.
 
     Returns:
@@ -614,7 +600,7 @@ def Z_from_geometry_in(path_to_geometry: str = "geometry.in") -> list:
     Extract atomic numbers from a aims geometry file.
 
     Args:
-        path_to_geometry (str, optional): Path to the geometry file. 
+        path_to_geometry (str, optional): Path to the geometry file.
                             Defaults to "geometry.in".
 
     Returns:
@@ -660,7 +646,7 @@ def atoms_full_copy(atoms: ase.Atoms) -> ase.Atoms:
     Returns:
         ase.Atoms: Copied ASE Atoms object with all properties.
     """
-    
+
     atoms_copy = ase.Atoms(
         symbols=atoms.get_chemical_symbols(),
         positions=atoms.get_positions(),
@@ -711,9 +697,7 @@ def list_latest_file(directory: str) -> str:
 
 
 def save_ensemble(
-    ensemble: dict,
-    training_setups: dict,
-    mace_settings: dict
+    ensemble: dict, training_setups: dict, mace_settings: dict
 ) -> None:
     """
     Save the ensemble models to disk. If EMA is used, the averaged parameters
@@ -726,7 +710,7 @@ def save_ensemble(
         ensemble (dict): Dictionary of models.
         training_setups (dict): Dictionary of training setups for each model.
         mace_settings (dict): Dictionary of MACE settings, specificied by the
-                                     user in the config file.            
+                                     user in the config file.
     """
     for tag, model in ensemble.items():
         param_context = (
@@ -753,9 +737,7 @@ class ModifyMD:
         driver.temp += units.kB * self.temp_step
 
     def __call__(self, driver, metric, idx=None) -> Any:
-        raise NotImplementedError(
-            "This method is not implemented. "
-        )
+        raise NotImplementedError("This method is not implemented. ")
         if self.settings["type"] == "temp":
             if metric in self.mod_interval:
                 self.change_temp(driver)
@@ -1263,37 +1245,3 @@ def setup_logger(
         fh_debug.addFilter(lambda record: record.levelno >= logging.DEBUG)
         logger.addHandler(fh_debug)
     return logger
-
-
-class CommHandler:
-    def __init__(self, use_mpi=True):
-        self.use_mpi = use_mpi
-        if self.use_mpi:
-            try:
-                from mpi4py import MPI
-            except ImportError:
-                raise ImportError(
-                    "mpi4py is not installed."
-                    "Please install it to use MPI features."
-                )
-            self.comm = MPI.COMM_WORLD
-            self.rank = self.comm.Get_rank()
-            self.size = self.comm.Get_size()
-        else:
-            self.rank = 0
-            self.size = 1
-
-    def barrier(self):
-        if self.use_mpi:
-            self.comm.Barrier()
-
-    def bcast(self, data, root=0):
-        if self.use_mpi:
-            return self.comm.bcast(data, root=root)
-        return data
-
-    def get_rank(self):
-        return self.rank
-
-    def get_size(self):
-        return self.size
