@@ -229,6 +229,7 @@ In case PARSL is used, one has to specifiy certain settings that are needed to p
 - [x] split up utilities into utilities, eval_tools, data_handling
 - [x] intermol loss weight switch
 - [x] add WorkQueueExecutor to requirements
+- [x] refactor active_learning.py
 - [ ] manual reformatting (continue with active_learning.py)
 - [ ] add more comments and docstrings
 - [ ] refactor input file (split between IDG and AL)

@@ -1,6 +1,9 @@
 from pathlib import Path
 import torch
 import numpy as np
+import threading
+import queue
+import shutil
 from mace import tools
 from .preparation import (
     ALCalculatorManager,
@@ -24,7 +27,7 @@ from aims_PAX.tools.utilities.utilities import (
 )
 from aims_PAX.tools.utilities.mpi_utils import (
     send_points_non_blocking,
-    CommHandler
+    CommHandler,
 )
 from aims_PAX.tools.setup_MACE_training import (
     setup_mace_training,
@@ -37,9 +40,21 @@ from aims_PAX.tools.train_epoch_mace import (
 from aims_PAX.tools.utilities.eval_utils import (
     ensemble_prediction,
 )
+from aims_PAX.tools.utilities.parsl_utils import (
+    prepare_parsl,
+    recalc_aims_parsl,
+    handle_parsl_logger,
+)
+
+try:
+    import parsl
+except ImportError:
+    parsl = None
 import logging
 from contextlib import nullcontext
 import ase
+import time
+
 try:
     import asi4py
 except Exception as e:
@@ -199,7 +214,7 @@ class ALTrainingManager:
         state_manager: ALStateManager,
         md_manager: ALMDManager,
         restart_manager: ALRestartManager,
-        rank: int
+        rank: int,
     ):
         self.config = config
         self.ensemble_manager = ensemble_manager
@@ -382,9 +397,7 @@ class ALTrainingManager:
                         ],
                         self.ensemble_manager.training_setups[tag],
                         model,
-                        self.state_manager.trajectory_intermediate_epochs[
-                            idx
-                        ],
+                        self.state_manager.trajectory_intermediate_epochs[idx],
                         keep_last=False,
                     )
 
@@ -407,7 +420,10 @@ class ALTrainingManager:
                     save_restart="restart/al/al_restart.npy",
                 )
                 self.save_restart = False
-        self.models = [self.ensemble_manager.ensemble[tag] for tag in self.ensemble_manager.ensemble.keys()]
+        self.models = [
+            self.ensemble_manager.ensemble[tag]
+            for tag in self.ensemble_manager.ensemble.keys()
+        ]
         self.state_manager.trajectory_intermediate_epochs[idx] = 0
 
     def converge(self):
@@ -421,13 +437,17 @@ class ALTrainingManager:
                     f"Converging best model ({self.best_member}) on acquired dataset."
                 )
                 self.ensemble_manager.ensemble = {
-                    self.best_member: self.ensemble_manager.ensemble[self.best_member]
+                    self.best_member: self.ensemble_manager.ensemble[
+                        self.best_member
+                    ]
                 }
             else:
                 logging.info("Converging ensemble on acquired dataset.")
 
             temp_mace_sets = {}
-            for _, (tag, model) in enumerate(self.ensemble_manager.ensemble.items()):
+            for _, (tag, model) in enumerate(
+                self.ensemble_manager.ensemble.items()
+            ):
                 train_set = create_mace_dataset(
                     data=self.ensemble_manager.ensemble_ase_sets[tag]["train"],
                     z_table=self.ensemble_manager.z_table,
@@ -533,7 +553,10 @@ class ALTrainingManager:
                         best_valid_loss = valid_loss
                         best_epoch = epoch
                         no_improvement = 0
-                        for tag, model in self.ensemble_manager.ensemble.items():
+                        for (
+                            tag,
+                            model,
+                        ) in self.ensemble_manager.ensemble.items():
                             param_context = (
                                 self.training_setups_convergence[tag][
                                     "ema"
@@ -581,7 +604,7 @@ class ALTrainingManager:
 
 
 class ALDFTManager:
-    
+
     def __init__(
         self,
         path_to_control: str,
@@ -595,11 +618,11 @@ class ALDFTManager:
         self.state_manager = state_manager
         self.comm_handler = comm_handler
         self.rank = self.comm_handler.rank
-        
+
         # AIMS settings
         self.control_parser = AIMSControlParser()
         self._handle_aims_settings(path_to_control)
-        
+
         self.aims_calculator = None
 
     def handle_dft_call(self, point, idx):
@@ -651,8 +674,8 @@ class ALDFTManager:
                 logging.info(
                     f"Trajectory worker {idx} is going to add point to the dataset."
                 )
-                
-    def finalize_ab_initio(self):
+
+    def finalize_dft(self):
         self.aims_calculator.asi.close()
 
     def recalc_aims(self, current_point: ase.Atoms) -> ase.Atoms:
@@ -710,8 +733,8 @@ class ALDFTManagerSerial(ALDFTManager):
             comm_handler=comm_handler,
         )
         self.aims_calculator = self._setup_aims_calculator(
-                atoms=self.state_manager.trajectories[0]
-            )
+            atoms=self.state_manager.trajectories[0]
+        )
 
     def _setup_aims_calculator(self, atoms: ase.Atoms):
         """Setup AIMS calculator."""
@@ -739,7 +762,7 @@ class ALDFTManagerSerial(ALDFTManager):
 
 
 class ALDFTManagerParallel(ALDFTManager):
-    
+
     def __init__(
         self,
         path_to_control: str,
@@ -748,7 +771,7 @@ class ALDFTManagerParallel(ALDFTManager):
         state_manager: ALStateManager,
         comm_handler: CommHandler,
         color: int,
-        world_comm
+        world_comm,
     ):
         super().__init__(
             path_to_control=path_to_control,
@@ -757,14 +780,14 @@ class ALDFTManagerParallel(ALDFTManager):
             state_manager=state_manager,
             comm_handler=comm_handler,
         )
-        
+
         self.color = color
         # Initialize AIMS calculator
         self.aims_calculator = self._setup_aims_calculator(
             atoms=self.state_manager.trajectories[0]
         )
         self.world_comm = world_comm
-    
+
     def _setup_aims_calculator(
         self,
         atoms: ase.Atoms,
@@ -803,7 +826,10 @@ class ALDFTManagerParallel(ALDFTManager):
                     "Please install it to use the AIMS calculator."
                 )
             calc = asi4py.asecalc.ASI_ASE_calculator(
-                self.config.ASI_path, init_via_ase, self.comm_handler.comm, atoms
+                self.config.ASI_path,
+                init_via_ase,
+                self.comm_handler.comm,
+                atoms,
             )
             return calc
         else:
@@ -815,8 +841,8 @@ class ALDFTManagerParallel(ALDFTManager):
             logging.info(f"Trajectory worker {idx} is sending point to DFT.")
             send_points_non_blocking(
                 idx=idx,
-                point_data=point, 
-                tag=1234, 
+                point_data=point,
+                tag=1234,
                 world_comm=self.world_comm,
             )
         self.comm_handler.barrier()
@@ -830,6 +856,136 @@ class ALDFTManagerParallel(ALDFTManager):
             )
 
 
+class ALDFTManagerPARSL(ALDFTManager):
+    def __init__(
+        self,
+        path_to_control: str,
+        config: ALConfigurationManager,
+        ensemble_manager: ALEnsembleManager,
+        state_manager: ALStateManager,
+        comm_handler: CommHandler,
+    ):
+        super().__init__(
+            path_to_control=path_to_control,
+            config=config,
+            ensemble_manager=ensemble_manager,
+            state_manager=state_manager,
+            comm_handler=comm_handler,
+        )
+        parsl_setup_dict = prepare_parsl(
+            cluster_settings=self.config.cluster_settings
+        )
+        self.parsl_config = parsl_setup_dict["config"]
+        self.calc_dir = parsl_setup_dict["calc_dir"]
+        self.clean_dirs = parsl_setup_dict["clean_dirs"]
+        self.launch_str = parsl_setup_dict["launch_str"]
+        try:
+            parsl.dfk()
+            logging.info(
+                "PARSL is already initialized. Using existing PARSL context."
+            )
+        except parsl.errors.NoDataFlowKernelError:
+            parsl_log = Path(self.config.mace_settings["GENERAL"]["log_dir"])
+            handle_parsl_logger(log_dir=parsl_log / "parsl_al.log")
+            parsl.load(self.parsl_config)
+
+        logging.info("Launching ab initio manager thread for PARSL.")
+        self.ab_initio_queue = queue.Queue()
+        self.ab_intio_results = {}
+        self.ab_initio_counter = {
+            idx: 0 for idx in range(self.config.num_trajectories)
+        }
+        self.results_lock = threading.Lock()
+        self.kill_thread = False
+        threading.Thread(target=self._dft_thread, daemon=True).start()
+
+    def handle_dft_call(self, point, idx: int):
+        logging.info(f"Trajectory worker {idx} is sending point to DFT.")
+        self.state_manager.trajectory_status[idx] = "waiting"
+        self.state_manager.num_workers_training += 1
+        self.ab_initio_queue.put((idx, point))
+        logging.info(f"Trajectory worker {idx} is waiting for job to finish.")
+
+    def _dft_thread(self):
+        # collect parsl futures
+        futures = {}
+        for idx in range(self.config.num_trajectories):
+            futures[idx] = {}
+        # constantly check the queue for new jobs
+        while True:
+
+            if self.kill_thread:
+                logging.info("Ab initio manager thread is stopping.")
+                break
+            try:
+                idx, data = self.ab_initio_queue.get(timeout=1)
+                with self.results_lock:
+                    curr_job_no = self.ab_initio_counter[idx]
+                futures[idx][curr_job_no] = recalc_aims_parsl(
+                    positions=data.get_positions(),
+                    species=data.get_chemical_symbols(),
+                    cell=data.get_cell(),
+                    pbc=data.pbc,
+                    aims_settings=self.aims_settings,
+                    directory=self.calc_dir / f"worker_{idx}_no_{curr_job_no}",
+                    properties=self.config.properties,
+                    ase_aims_command=self.launch_str,
+                )
+                with self.results_lock:
+                    self.ab_initio_counter[idx] += 1
+                self.ab_initio_queue.task_done()
+
+            # is raised when the queue is empty after the timeout
+            except queue.Empty:
+                pass
+
+            # goes through the futures and checks if they are done
+            done_jobs = []
+            for job_idx in futures.keys():
+                for job_no, future in futures[job_idx].items():
+                    if future.done():
+                        done_jobs.append((job_idx, job_no))
+
+            # if there are done jobs, get the results and store them in dict
+            for job_idx, job_no in done_jobs:
+                with self.results_lock:
+                    temp_result = futures[job_idx][job_no].result()
+                    if temp_result is None:
+                        # if the result is None, it means the DFT calculation did not converge
+                        self.ab_intio_results[job_idx] = False
+                    else:
+                        # the DFT calculation converged
+                        self.ab_intio_results[job_idx] = temp_result
+                        logging.info(
+                            f"DFT calculation number {job_no} for worker {job_idx} finished."
+                        )
+                    # remove the job from the futures dict to avoid double counting
+                    del futures[job_idx][job_no]
+                    # remove folder with results
+                    if self.clean_dirs:
+                        try:
+                            shutil.rmtree(
+                                self.calc_dir / f"worker_{job_idx}_no_{job_no}"
+                            )
+                        except FileNotFoundError:
+                            logging.warning(
+                                f"Directory {self.calc_dir / f'worker_{job_idx}_{job_no}'} not found. Skipping removal."
+                            )
+
+    def _setup_aims_calculator(self, atoms):
+        pass
+
+    def _recalc_aims(self, current_point):
+        pass
+
+    def finalize_dft(self):
+        with threading.Lock():
+            self.kill_thread = True
+        time.sleep(5)
+        if not self.config.analysis:
+            parsl.dfk().cleanup()
+
+
 class ALAnalysisManager:
 
     def __init__(
@@ -840,7 +996,7 @@ class ALAnalysisManager:
         state_manager: ALStateManager,
         md_manager: ALMDManager,
         comm_handler: CommHandler,
-        rank: int,
+        rank: int = 0,
     ):
         self.config = config
         self.ensemble_manager = ensemble_manager
@@ -897,7 +1053,8 @@ class ALAnalysisManager:
             self.state_manager.check += 1
 
             self.save_analysis()
-
+            if self.rank == 0:
+                logging.info(f"SCF converged at worker {idx} for analysis.")
         else:
             if self.rank == 0:
                 logging.info(
@@ -951,7 +1108,6 @@ class ALAnalysisManager:
                 )
                 self.comm_handler.barrier()
 
-            # TODO: sometimes already calculated above so we should not calculate it again
             self.comm_handler.barrier()
             send_point = atoms_full_copy(point)
             send_point.arrays["forces_comm"] = (
@@ -1026,7 +1182,9 @@ class ALAnalysisManager:
         check_results["current_md_step"] = current_md_step
 
         if self.config.mol_idxs is not None:
-            total_certainty = self.md_manager.get_uncertainty(analysis_prediction)
+            total_certainty = self.md_manager.get_uncertainty(
+                analysis_prediction
+            )
             mol_forces_uncertainty = (
                 self.md_manager.get_uncertainty.get_intermol_uncertainty(
                     analysis_prediction
@@ -1039,10 +1197,12 @@ class ALAnalysisManager:
                 .mean(0)
                 .squeeze()
             )
-            mol_forces_true = self.md_manager.get_uncertainty.compute_mol_forces_ensemble(
-                true_forces.reshape(1, *true_forces.shape),
-                self.config.mol_idxs,
-            ).squeeze()
+            mol_forces_true = (
+                self.md_manager.get_uncertainty.compute_mol_forces_ensemble(
+                    true_forces.reshape(1, *true_forces.shape),
+                    self.config.mol_idxs,
+                ).squeeze()
+            )
             mol_diff_sq_mean = np.mean(
                 (mol_forces_true - mol_forces_prediction) ** 2, axis=-1
             )
@@ -1072,7 +1232,7 @@ class ALAnalysisManagerParallel(ALAnalysisManager):
         comm_handler: CommHandler,
         rank: int,
         color: int,
-        world_comm
+        world_comm,
     ):
         super().__init__(
             config=config,
@@ -1085,7 +1245,13 @@ class ALAnalysisManagerParallel(ALAnalysisManager):
         )
         self.color = color
         self.world_comm = world_comm
-        
+        self.req_sys_info_analysis = None
+        self.req_geo_info_analysis = None
+        self.current_num_atoms_analysis = None
+        self.received_analysis = None
+        self.analysis_worker_reqs = {
+            idx: None for idx in range(self.config.num_trajectories)
+        }
         self.worker_reqs_analysis = {
             "energy": {
                 idx: None for idx in range(self.config.num_trajectories)
@@ -1108,16 +1274,13 @@ class ALAnalysisManagerParallel(ALAnalysisManager):
                 idx: None for idx in range(self.config.num_trajectories)
             },
         }
-    
-    def _process_analysis(
-        self, idx: int, converged: bool, analysis_prediction: np.ndarray
-    ):
-        # Dummy to overwrite the parent method
-        return
 
-    def _analysis_waiting_task(self, idx: int):
+    def analysis_waiting_task(self, idx: int):
 
-        if self.config.restart and self.state_manager.first_wait_after_restart[idx]:
+        if (
+            self.config.restart
+            and self.state_manager.first_wait_after_restart[idx]
+        ):
             # if the worker is waiting and we just restarted the
             # procedure, we have to relaunch the dft job and then
             # leave the function
@@ -1231,9 +1394,10 @@ class ALAnalysisManagerParallel(ALAnalysisManager):
         self.comm_handler.barrier()
         if self.rank == 0:
             send_points_non_blocking(
-                idx=idx, 
-                point_data=self.state_manager.trajectories[idx], 
-                tag=80545
+                idx=idx,
+                point_data=self.state_manager.trajectories[idx],
+                tag=80545,
+                world_comm=self.world_comm,
             )
         self.comm_handler.barrier()
         self.state_manager.trajectory_status[idx] = "analysis_waiting"
@@ -1244,7 +1408,7 @@ class ALAnalysisManagerParallel(ALAnalysisManager):
             )
         return None
 
-    def _analysis_listening_task(self):
+    def analysis_listening_task(self):
         received = False
         if self.req_sys_info_analysis is None:
             self.sys_info_buf_analysis = np.empty(
@@ -1277,7 +1441,7 @@ class ALAnalysisManagerParallel(ALAnalysisManager):
 
         return received
 
-    def _analysis_calculate_received(self):
+    def analysis_calculate_received(self):
         current_pbc = (
             self.sys_info_buf_analysis[2:5].astype(np.bool_).reshape((3,))
         )
@@ -1286,7 +1450,6 @@ class ALAnalysisManagerParallel(ALAnalysisManager):
         current_species = current_species[:, 0].tolist()
         current_positions = self.geo_info_buf_analysis[1]
         current_cell = self.sys_info_buf_analysis[5:14].reshape((3, 3))
-
         point = ase.Atoms(
             positions=current_positions,
             numbers=current_species,
@@ -1297,10 +1460,166 @@ class ALAnalysisManagerParallel(ALAnalysisManager):
         dft_result = self.dft_manager.recalc_aims(point)
         return dft_result
 
+    def _process_analysis(self, idx, converged, analysis_prediction):
+        return None
 
 
+class ALAnalysisManagerPARSL(ALAnalysisManager):
 
+    def __init__(
+        self,
+        config: ALConfigurationManager,
+        ensemble_manager: ALEnsembleManager,
+        dft_manager: ALDFTManagerPARSL,
+        state_manager: ALStateManager,
+        md_manager: ALMDManager,
+        comm_handler: CommHandler,
+    ):
+        super().__init__(
+            config=config,
+            ensemble_manager=ensemble_manager,
+            dft_manager=dft_manager,
+            state_manager=state_manager,
+            md_manager=md_manager,
+            comm_handler=comm_handler,
+        )
+        self.analysis_queue = queue.Queue()
+        self.analysis_counter = {
+            idx: 0 for idx in range(self.config.num_trajectories)
+        }
+        self.analysis_kill_thread = False
+        self.analysis_done = False
+        self.results_lock = threading.Lock()
+        logging.info("Launching analysis manager thread for PARSL.")
+        threading.Thread(target=self._analysis_manager, daemon=True).start()
 
-class ALAnalysisManagerPARSL:
-    None
+    def _analysis_manager(self):
+        futures = {}
+        predicted_forces = {}
+        current_md_steps = {}
 
+        for idx in range(self.config.num_trajectories):
+            predicted_forces[idx] = {}
+            futures[idx] = {}
+            current_md_steps[idx] = {}
+
+        kill_requested = False
+
+        while True:
+            if self.analysis_kill_thread and not kill_requested:
+                logging.info(
+                    "Analysis manager kill switch triggered. Waiting for pending analysis jobs..."
+                )
+                kill_requested = True
+
+            # Try to get new data unless kill has been requested
+            if not kill_requested:
+                try:
+                    idx, data = self.analysis_queue.get(timeout=1)
+                    self.analysis_counter[idx] += 1
+                    current_idx = self.analysis_counter[idx]
+                    predicted_forces[idx][current_idx] = data.arrays[
+                        "forces_comm"
+                    ]
+                    current_md_steps[idx][current_idx] = data.info[
+                        "current_MD_step"
+                    ]
+                    futures[idx][current_idx] = recalc_aims_parsl(
+                        positions=data.get_positions(),
+                        species=data.get_chemical_symbols(),
+                        cell=data.get_cell(),
+                        pbc=data.pbc,
+                        aims_settings=self.dft_manager.aims_settings,
+                        directory=self.dft_manager.calc_dir
+                        / f"worker_analysis{idx}_no_{current_idx}",
+                        properties=self.config.properties,
+                        ase_aims_command=self.dft_manager.launch_str,
+                    )
+                    self.analysis_queue.task_done()
+                except queue.Empty:
+                    pass
+
+            # Check all futures for completion
+            done_jobs = []
+            for job_idx in list(futures.keys()):
+                for job_no, future in list(futures[job_idx].items()):
+                    if future.done():
+                        done_jobs.append((job_idx, job_no))
+
+            # Process done jobs
+            for job_idx, job_no in done_jobs:
+                with self.results_lock:
+                    temp_result = futures[job_idx][job_no].result()
+                if temp_result is None:
+                    logging.info(
+                        f"SCF during analysis for worker {job_idx} no {job_no} failed. Discarding point."
+                    )
+                else:
+                    analysis_forces = predicted_forces[job_idx][job_no]
+                    true_forces = temp_result["forces"]
+                    check_results = self.analysis_check(
+                        analysis_prediction=analysis_forces,
+                        true_forces=true_forces,
+                        current_md_step=current_md_steps[job_idx][job_no],
+                    )
+                    with self.results_lock:
+                        for key in check_results:
+                            self.state_manager.analysis_checks[job_idx][
+                                key
+                            ].append(check_results[key])
+                        self.state_manager.analysis_checks[job_idx][
+                            "threshold"
+                        ].append(self.state_manager.threshold)
+                        self.state_manager.collect_thresholds[job_idx].append(
+                            self.state_manager.threshold
+                        )
+                        self.state_manager.check += 1
+                        self.save_analysis()
+                # Remove only the completed job
+                del futures[job_idx][job_no]
+                del predicted_forces[job_idx][job_no]
+                del current_md_steps[job_idx][job_no]
+                if self.dft_manager.clean_dirs:
+                    try:
+                        shutil.rmtree(
+                            self.dft_manager.calc_dir
+                            / f"worker_analysis{job_idx}_no_{job_no}"
+                        )
+                    except FileNotFoundError:
+                        logging.warning(
+                            f"Directory {self.dft_manager.calc_dir / f'worker_analysis{job_idx}_no_{job_no}'} not found. Skipping removal."
+                        )
+
+            # Check for final shutdown
+            if kill_requested and not any(futures.values()):
+                logging.info(
+                    "All pending analysis jobs completed. Shutting down thread."
+                )
+                self.analysis_done = True
+                break
+
+            time.sleep(0.1)
+
+    def _analysis_dft_call(self, idx: int, point: ase.Atoms):
+        # we can go back to running here as the analysis is not blocking
+        self.state_manager.trajectory_status[idx] = "running"
+        self.analysis_queue.put((idx, point))
+
+    def _process_analysis(
+        self, idx: int, converged: bool, analysis_prediction: np.ndarray
+    ):
+        # Dummy to overwrite the parent method
+        # processing is done in the analysis manager thread
+        return
+
+    def finalize_analysis(self):
+        """
+        Finalizes the analysis by ensuring all analysis jobs are completed
+        and cleans up any resources used by the analysis manager.
+        """
+        with self.results_lock:
+            self.analysis_kill_thread = True
+        # Wait for the analysis manager thread to finish
+        while not self.analysis_done:
+            time.sleep(0.1)
+        parsl.dfk().cleanup()

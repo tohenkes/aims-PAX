@@ -64,7 +64,9 @@ def main():
         )
 
     else:
-        al = ALProcedureSerial(mace_settings=mace_settings, al_settings=al_settings)
+        al = ALProcedureSerial(
+            mace_settings=mace_settings, al_settings=al_settings
+        )
 
     if not al.check_al_done():
         al.run()

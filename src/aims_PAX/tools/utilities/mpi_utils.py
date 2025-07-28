@@ -14,6 +14,7 @@ class CommHandler:
                     "Please install it to use MPI features."
                 )
             self.comm = MPI.COMM_WORLD
+            self.mpi = MPI
             self.rank = self.comm.Get_rank()
             self.size = self.comm.Get_size()
         else:
@@ -34,13 +35,10 @@ class CommHandler:
 
     def get_size(self):
         return self.size
-    
-    
+
+
 def send_points_non_blocking(
-    idx: int, 
-    point_data: ase.Atoms, 
-    tag: int,
-    world_comm
+    idx: int, point_data: ase.Atoms, tag: int, world_comm
 ):
     # send idx, pbc, cell, positions, species in a non-blocking way
 

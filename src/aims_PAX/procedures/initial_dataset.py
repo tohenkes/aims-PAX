@@ -218,9 +218,7 @@ class PrepareInitialDatasetProcedure:
                         for tag in self.ensemble.keys()
                     },
                 )
-        # analysis means that at certain MD steps we
-        # compute ab initio data, ML predictions and
-        # other metrics for analysis of the procedure
+
         if self.analysis:
             if self.restart:
                 self.collect_losses = self.init_ds_restart_dict[

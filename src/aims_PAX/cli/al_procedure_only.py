@@ -23,7 +23,9 @@ def main():
             mace_settings=mace_settings, al_settings=al_settings
         )
     else:
-        al = ALProcedureSerial(mace_settings=mace_settings, al_settings=al_settings)
+        al = ALProcedureSerial(
+            mace_settings=mace_settings, al_settings=al_settings
+        )
 
     if not al.check_al_done():
         # start_time = perf_counter()

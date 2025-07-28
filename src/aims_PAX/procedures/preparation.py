@@ -400,7 +400,6 @@ class ALCalculatorManager:
         self.comm_handler = comm_handler
         self.rank = comm_handler.get_rank()
 
-
         # MACE calculator
         self.models = None
         self.mace_calc = None
@@ -421,7 +420,6 @@ class ALCalculatorManager:
     def handle_atomic_energies(self):
         """Handle atomic energies initialization."""
         self.update_atomic_energies = False
-
         if self.rank != 0:
             return
 
@@ -1018,10 +1016,8 @@ class PrepareALProcedure:
         comm_handler: CommHandler = None,
     ):
         """Initialize the active learning procedure."""
-
         # Setup communication first
         self._setup_communication(comm_handler, use_mpi)
-
         # Initialize configuration
         self.config = ALConfigurationManager(mace_settings, al_settings)
 
@@ -1050,7 +1046,6 @@ class PrepareALProcedure:
         # Setup calculators and datasets
         self.ensemble_manager.setup_ensemble_and_datasets()
         self.calc_manager.setup_ml_calculators()
-
         # Pass train_dataset_len to MD manager for modification
         self.md_manager.train_dataset_len = (
             self.ensemble_manager.train_dataset_len
@@ -1131,6 +1126,7 @@ class PrepareALProcedure:
             return check
         return False
 
+    # TODO: check which to add or remove for convenience and readability
     @property
     def trajectories(self):
         return self.state_manager.trajectories
@@ -1150,4 +1146,3 @@ class PrepareALProcedure:
     @property
     def get_uncertainty(self):
         return self.md_manager.get_uncertainty
-
