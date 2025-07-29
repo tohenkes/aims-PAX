@@ -230,13 +230,12 @@ In case PARSL is used, one has to specifiy certain settings that are needed to p
 - [x] intermol loss weight switch
 - [x] add WorkQueueExecutor to requirements
 - [x] refactor active_learning.py
-- [ ] manual reformatting (continue with active_learning.py)
-- [ ] add more comments and docstrings
+- [x] manual reformatting
+- [x] add more comments and docstrings
 - [ ] refactor input file (split between IDG and AL)
 - [ ] copy original MACE input file
 - [ ] implement default settings and create checks when reading the input
 - [ ] unit tests
-- [ ] refactor code, especially procedures and utilities.py and all the modified MACE parts
 - [ ] git push workflow
 - [ ] create container
 ### Low Priority:
