@@ -74,7 +74,11 @@ class InitialDatasetProcedure(PrepareInitialDatasetProcedure):
             for number, (tag, model) in enumerate(self.ensemble.items()):
 
                 member_points = self.sampled_points[
-                    self.n_samples * number:self.n_samples * (number + 1)
+                    len(self.atoms)
+                    * self.n_samples
+                    * number : len(self.atoms)
+                    * self.n_samples
+                    * (number + 1)
                 ]
 
                 (
@@ -291,7 +295,9 @@ class InitialDatasetProcedure(PrepareInitialDatasetProcedure):
         """
 
         # initializing md and FHI aims
-        self.dyn = self._setup_md(self.atoms, md_settings=self.md_settings)
+        for idx, atoms in self.trajectories.items():
+            dyn = self._setup_md(atoms, md_settings=self.md_settings)
+            self.md_drivers[idx] = dyn
 
         self._setup_calcs()
 
@@ -351,17 +357,34 @@ class InitialDatasetAIMD(InitialDatasetProcedure):
         Returns:
             list: List of ASE Atoms objects.
         """
-        return [
-            self._run_MD(atoms=self.atoms, dyn=self.dyn)
-            for _ in range(self.ensemble_size * self.n_samples)
-        ]
+
+        sampled = []
+        for idx in self.trajectories.keys():
+            sampled.extend(
+                [
+                    self._run_MD(
+                        atoms=self.trajectories[idx], dyn=self.md_drivers[idx]
+                    )
+                    for _ in range(self.ensemble_size * self.n_samples)
+                ]
+            )
+
+        return sampled
 
     def _setup_calcs(self):
         """
         Sets up the calculators for the initial dataset generation.
         In this case it sets up the AIMS calculators for AIMD.
         """
-        self.atoms.calc = self._setup_aims_calculator(self.atoms)
+        if len(self.atoms) > 1:
+            raise NotImplementedError(
+                "Initital dataset generation with AIMD is not "
+                "implemented for multiple geometries."
+            )
+        for idx in self.trajectories.keys():
+            self.trajectories[idx].calc = self._setup_aims_calculator(
+                self.trajectories[idx]
+            )
 
     def _close_aims(self):
         """
@@ -428,14 +451,20 @@ class InitialDatasetFoundational(InitialDatasetProcedure):
     ):
         """
         Samples points using the foundational model.
+        For each geometry n points are sampled with
+        n = self.n_samples * self.ensemble_size.
+        Thus, the total number of points sampled are n * n_geometries.
         """
 
         self.comm_handler.barrier()
         self.sampled_points = []
         if self.rank == 0:
-            for _ in range(self.ensemble_size * self.n_samples):
-                current_point = self._run_MD(self.atoms, self.dyn)
-                self.sampled_points.append(current_point)
+            for idx in self.trajectories.keys():
+                dyn = self.md_drivers[idx]
+                atoms = self.trajectories[idx]
+                for _ in range(self.ensemble_size * self.n_samples):
+                    current_point = self._run_MD(atoms, dyn)
+                    self.sampled_points.append(current_point)
             logging.info(
                 f"Sampled {len(self.sampled_points)} points using foundational model."
             )
@@ -469,12 +498,19 @@ class InitialDatasetFoundational(InitialDatasetProcedure):
         In this case it sets up the AIMS calculators for recalculating
         the energies and forces and the foundational model for MD.
         """
-        self.aims_calc = self._setup_aims_calculator(self.atoms)
+        if len(self.atoms) > 1:
+            raise NotImplementedError(
+                "Initial dataset generation with foundational model "
+                " without using PARSL for multiple geometries."
+            )
+        self.aims_calc = self._setup_aims_calculator(self.atoms[0])
         if self.rank == 0:
             logging.info(
                 f"Initial dataset generation with foundational model of size: {self.initial_foundational_size}."
             )
-            self.atoms.calc = self._setup_foundational()
+            foundational_calc = self._setup_foundational()
+            for idx in self.trajectories.keys():
+                self.trajectories[idx].calc = foundational_calc
 
     def _close_aims(self):
         """
@@ -909,7 +945,7 @@ class InitialDatasetPARSL(InitialDatasetFoundational):
 
             if self.clean_dirs:
                 try:
-                    for calc_dir in self.calc_dir.glob("calc_*"):
+                    for calc_dir in self.calc_dir.glob("initial_calc_*"):
                         shutil.rmtree(calc_dir)
                 except Exception as e:
                     logging.error(
@@ -941,7 +977,9 @@ class InitialDatasetPARSL(InitialDatasetFoundational):
                 "Initial dataset generation with foundational "
                 f"model of size: {self.initial_foundational_size}."
             )
-            self.atoms.calc = self._setup_foundational()
+            foundational_calc = self._setup_foundational()
+            for idx in self.trajectories.keys():
+                self.trajectories[idx].calc = foundational_calc
 
     def _close_aims(self):
         if self.close_parsl:

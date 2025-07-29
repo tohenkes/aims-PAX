@@ -2,7 +2,7 @@ from typing import Optional
 import numpy as np
 from e3nn import o3
 from mace import modules, tools
-
+import torch
 
 #############################################################################
 ############ This part is mostly taken from the MACE source code ############

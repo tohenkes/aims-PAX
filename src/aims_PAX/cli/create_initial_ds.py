@@ -1,7 +1,7 @@
 from aims_PAX.procedures.initial_dataset import (
     InitialDatasetAIMD,
     InitialDatasetFoundational,
-    InitialDatasetFoundationalParallel,
+    #  InitialDatasetFoundationalParallel,
     InitialDatasetPARSL,
 )
 from yaml import safe_load
@@ -15,9 +15,19 @@ def main():
     with open("./active_learning_settings.yaml", "r") as file:
         al_settings = safe_load(file)
 
+    path_to_control = al_settings["MISC"].get(
+        "path_to_control", "./control.in"
+    )
+    path_to_geometry = al_settings["MISC"].get(
+        "path_to_geometry", "./geometry.in"
+    )
+
     if al_settings["ACTIVE_LEARNING"]["initial_sampling"].lower() == "aimd":
         initial_ds = InitialDatasetAIMD(
-            mace_settings=mace_settings, al_settings=al_settings
+            mace_settings=mace_settings,
+            al_settings=al_settings,
+            path_to_control=path_to_control,
+            path_to_geometry=path_to_geometry,
         )
     elif (
         al_settings["ACTIVE_LEARNING"]["initial_sampling"].lower()
@@ -29,11 +39,17 @@ def main():
         #    )
         if al_settings.get("CLUSTER", False):
             initial_ds = InitialDatasetPARSL(
-                mace_settings=mace_settings, al_settings=al_settings
+                mace_settings=mace_settings,
+                al_settings=al_settings,
+                path_to_control=path_to_control,
+                path_to_geometry=path_to_geometry,
             )
         else:
             initial_ds = InitialDatasetFoundational(
-                mace_settings=mace_settings, al_settings=al_settings
+                mace_settings=mace_settings,
+                al_settings=al_settings,
+                path_to_control=path_to_control,
+                path_to_geometry=path_to_geometry,
             )
 
     if not initial_ds.check_initial_ds_done():

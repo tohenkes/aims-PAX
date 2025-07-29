@@ -2,6 +2,7 @@ import os
 import random
 from pathlib import Path
 import torch
+from typing import Union, List
 import numpy as np
 from mace import tools
 from mace.calculators import MACECalculator
@@ -17,7 +18,7 @@ from aims_PAX.tools.utilities.data_handling import (
 from aims_PAX.tools.utilities.utilities import (
     ensemble_training_setups,
     ensemble_from_folder,
-    Z_from_geometry_in,
+    Z_from_geometry,
     list_files_in_directory,
     get_atomic_energies_from_ensemble,
     create_ztable,
@@ -28,6 +29,7 @@ from aims_PAX.tools.utilities.utilities import (
     create_seeds_tags_dict,
     setup_logger,
     update_model_auxiliaries,
+    read_geometry,
     AIMSControlParser,
     ModifyMD,
 )
@@ -37,7 +39,6 @@ from aims_PAX.tools.train_epoch_mace import (
 )
 from aims_PAX.tools.utilities.mpi_utils import CommHandler
 import ase
-from ase.io import read
 import logging
 from ase.md.velocitydistribution import MaxwellBoltzmannDistribution
 from ase.md.langevin import Langevin
@@ -45,6 +46,7 @@ from ase.md.nptberendsen import NPTBerendsen
 from ase.md.npt import NPT
 from ase import units
 from contextlib import nullcontext
+
 try:
     import asi4py
 except Exception as e:
@@ -126,15 +128,27 @@ class PrepareInitialDatasetProcedure:
                     "initial_ds_restart.npy' not found."
                 )
                 raise
-            self.atoms = self.init_ds_restart_dict["last_geometry"]
+            self.trajectories = self.init_ds_restart_dict["trajectories"]
+            self.atoms = list(self.trajectories.values())
             self.step = self.init_ds_restart_dict["step"]
         else:
-            self.atoms = read(path_to_geometry)
+            self.atoms = read_geometry(path_to_geometry)
             self.step = 0
-
-        self.z = Z_from_geometry_in()
-        self.n_atoms = len(self.z)
+            # TODO: multiple trajectories per atoms
+            # TODO: make this compatible with the other methods in case the
+            # geometries are not different systems
+            self.trajectories = {
+                idx: atoms for idx, atoms in enumerate(self.atoms)
+            }
+        if self.rank == 0:
+            logging.info(
+                "Running Initial Dataset Procedure with "
+                f"{len(self.atoms)} geometries."
+            )
+        self.z = Z_from_geometry(self.atoms)
         self.z_table = create_ztable(self.z)
+
+        self.md_drivers = {idx: None for idx in self.trajectories.keys()}
 
         np.random.seed(self.seed)
         random.seed(self.seed)
@@ -300,13 +314,14 @@ class PrepareInitialDatasetProcedure:
         self.create_restart = self.misc.get("create_restart", False)
         if self.create_restart:
             self.init_ds_restart_dict = {
-                "last_geometry": None,
+                "trajectories": None,
                 "last_initial_losses": None,
                 "initial_ds_done": False,
             }
 
     def _update_restart_dict(self):
-        self.init_ds_restart_dict["last_geometry"] = self.last_point
+        self._collect_restart_points(self.trajectories)
+        self.init_ds_restart_dict["trajectories"] = self.last_points
         self.init_ds_restart_dict["step"] = self.step
         if self.analysis:
             self.init_ds_restart_dict["last_initial_losses"] = (
@@ -479,8 +494,8 @@ class PrepareInitialDatasetProcedure:
                 else:
 
                     logging.info(
-                        "No atomic specified. Initializing with 0 and fit to "
-                        "training data."
+                        "No atomic energies specified. Initializing with 0 and"
+                        " fit to training data."
                     )
                     self.ensemble_atomic_energies_dict = {
                         tag: {z: 0 for z in np.sort(np.unique(self.z))}
@@ -566,13 +581,18 @@ class PrepareInitialDatasetProcedure:
         # MACE reads energies and forces from the info & arrays dictionary
         current_point.info["REF_energy"] = current_energy
         current_point.arrays["REF_forces"] = current_forces
+        return current_point
 
-        if self.create_restart:
+    def _collect_restart_points(
+        self,
+        trajectories: dict[int, ase.Atoms],
+    ):
+        self.last_points = {}
+        for idx, atoms in trajectories.items():
+            current_point = atoms.copy()
             current_point.set_velocities(atoms.get_velocities())
             current_point.set_masses(atoms.get_masses())
-            self.last_point = current_point
-
-        return current_point
+            self.last_points[idx] = current_point
 
     def converge(self):
         """
@@ -829,6 +849,12 @@ class ALConfigurationManager:
         self.restart = os.path.exists("restart/al/al_restart.npy")
         self.create_restart = self.misc.get("create_restart", False)
 
+        # path to control file and geometries
+        self.path_to_control = self.misc.get("path_to_control", "./control.in")
+        self.path_to_geometry = self.misc.get(
+            "path_to_geometry", "./geometry.in"
+        )
+
     def _setup_molecular_indices(self):
         """
         Setup molecular indices configuration.
@@ -898,11 +924,17 @@ class ALStateManager:
 
     def initialize_fresh_state(self, path_to_geometry: str):
         """Initialize state for a fresh run."""
-        geometry = read(path_to_geometry)
-        num_traj = self.config.num_trajectories
-
+        atoms = read_geometry(path_to_geometry)
+        if self.rank == 0:
+            logging.info(
+                "Running Active Learning Procedure with "
+                f"{len(atoms)} geometries."
+            )
         # Initialize trajectory data
-        self.trajectories = {i: geometry.copy() for i in range(num_traj)}
+        self.trajectories = self._create_trajectories(
+            atoms, self.config.num_trajectories
+        )
+        num_traj = len(self.trajectories)
         self.MD_checkpoints = {
             i: self.trajectories[i].copy() for i in range(num_traj)
         }
@@ -918,6 +950,62 @@ class ALStateManager:
             self.ensemble_reset_opt = {tag: False for tag in tags}
             self.ensemble_no_improvement = {tag: 0 for tag in tags}
             self.ensemble_best_valid = {tag: np.inf for tag in tags}
+
+    def _create_trajectories(
+        self, atoms: List[ase.Atoms], num_trajectories: int
+    ) -> dict:
+        """
+        Creates a dictionary of trajectories with given starting
+        geometries.
+
+        If `len(atoms)` > 1, each entry in the list
+        is used for a different trajectory. If the number of
+        user-specified trajectories, `num_trajectories`, is
+        smaller than the length of `atoms`, a warning is issued and
+        and `num_trajectories` is overwritten. If the number of
+        user-specified trajectories is larger than the length of
+        `atoms`, a warning is issued and it just continues to loop
+        through atoms again until num_trajectory is met.
+
+        If `len(atoms)` == 1, the same geometry is used for all
+        trajectories.
+
+        Args:
+            atoms (Union[ase.Atoms, List]): Starting geometries for
+                                                trajectories.
+            num_trajectories (int): Number of trajectories to create.
+
+        Returns:
+            dict: Dictionary of trajectories indexed by trajectory number.
+        """
+        trajectories = {}
+        if len(atoms) == 1:
+            for i in range(num_trajectories):
+                trajectories[i] = atoms[0].copy()
+            return trajectories
+
+        elif len(atoms) > 1:
+            if num_trajectories > len(atoms):
+                logging.warning(
+                    f"Number of trajectories ({num_trajectories}) "
+                    f"is larger than the number of provided geometries "
+                    f"({len(atoms)}). Looping through geometries until "
+                    f"the number of trajectories is met."
+                )
+            elif num_trajectories < len(atoms):
+                logging.warning(
+                    f"Number of trajectories ({num_trajectories}) "
+                    f"is smaller than the number of provided geometries "
+                    f"({len(atoms)}). Overwriting to match the number of "
+                    f"provided geometries."
+                )
+                num_trajectories = len(atoms)
+                self.config.num_trajectories = num_trajectories
+
+            for i in range(num_trajectories):
+                trajectories[i] = atoms[i % len(atoms)].copy()
+
+            return trajectories
 
     def _initialize_analysis_state(self):
         """Initialize analysis-specific state."""
@@ -989,7 +1077,6 @@ class ALEnsembleManager:
         # System properties
         self.z = None
         self.z_table = None
-        self.n_atoms = None
 
         # Ensemble and datasets (rank 0 only)
         self.ensemble = None
@@ -999,16 +1086,16 @@ class ALEnsembleManager:
         self.train_dataset_len = None
 
         # Setup system properties
-        self._setup_system_properties()
+        self._setup_system_properties(self.config.path_to_geometry)
 
         # Load seeds_tags_dict if not provided
         self._load_seeds_tags_dict()
 
-    def _setup_system_properties(self):
+    def _setup_system_properties(self, path_to_geometry: str):
         """Setup system-specific properties."""
-        self.z = Z_from_geometry_in()
+        atoms = read_geometry(path_to_geometry)
+        self.z = Z_from_geometry(atoms)
         self.z_table = create_ztable(self.z)
-        self.n_atoms = len(self.z)
 
     def _load_seeds_tags_dict(self):
         """Load seeds_tags_dict from file if not provided."""
@@ -1729,11 +1816,15 @@ class PrepareALProcedure:
         # Initialize configuration
         self.config = ALConfigurationManager(mace_settings, al_settings)
 
+        # Setup logging and folders
+        self._setup_logging()
+        self._create_folders()
+
         # Initialize all managers
+        self.state_manager = ALStateManager(self.config, self.comm_handler)
         self.ensemble_manager = ALEnsembleManager(
             self.config, self.comm_handler
         )
-        self.state_manager = ALStateManager(self.config, self.comm_handler)
         self.mlff_manager = ALCalculatorMLFFManager(
             self.config, self.ensemble_manager, self.comm_handler
         )
@@ -1744,13 +1835,8 @@ class PrepareALProcedure:
             self.config, self.state_manager, self.comm_handler, self.md_manager
         )
 
-        # Setup logging and basic configuration
-        self._setup_logging()
-        self._create_folders()
-
         # Set random seed
         np.random.seed(self.config.seed)
-
         # Setup calculators and datasets
         self.ensemble_manager.setup_ensemble_and_datasets()
         self.mlff_manager.setup_ml_calculators()
@@ -1763,10 +1849,11 @@ class PrepareALProcedure:
         if self.config.restart:
             self.restart_manager.handle_restart()
         else:
-            self.state_manager.initialize_fresh_state(path_to_geometry)
+            self.state_manager.initialize_fresh_state(
+                self.config.path_to_geometry
+            )
             # Make sure state manager has access to seeds_tags_dict
             self.state_manager.seeds_tags_dict = self.config.seeds_tags_dict
-            self.state_manager.initialize_fresh_state(path_to_geometry)
 
         if self.rank == 0:
             self.md_manager.setup_md_drivers(

@@ -4,11 +4,10 @@ import sys
 import os
 import torch
 import numpy as np
-from typing import Optional, Any, Dict, Union
+from typing import Optional, Any, Dict, Union, List
 from pathlib import Path
 from mace import tools, modules
 from mace.tools import AtomicNumberTable
-from mace.data import Configurations
 from aims_PAX.tools.setup_MACE import setup_mace
 from aims_PAX.tools.setup_MACE_training import setup_mace_training
 import ase.data
@@ -18,16 +17,6 @@ from contextlib import nullcontext
 import time
 from threading import Thread
 import pandas as pd
-
-# TODO: this file combines a lot of stuff and should be split up and
-# refactored into classes
-
-
-# AIMS CONSTANTS
-BOHR = 0.529177210
-BOHR_INV = 1.0 / BOHR
-HARTREE = 27.21138450
-HARTREE_INV = 1.0 / HARTREE
 
 # !!!
 # Many functions are taken from the MACE code:
@@ -45,6 +34,44 @@ Pbc = tuple  # (3,)
 
 DEFAULT_CONFIG_TYPE = "Default"
 DEFAULT_CONFIG_TYPE_WEIGHTS = {DEFAULT_CONFIG_TYPE: 1.0}
+
+
+def read_geometry(
+    path: str,
+) -> Union[ase.Atoms, List]:
+    """
+    Checks if the path is a single ase readable file or a directory.
+    If it is a directory, it reads all files in the directory and
+    puts the ase.atoms in a list. If the directory contains files
+    that are not ase readable, it raises an error.
+    If the path is a single ase readable file, it reads the file
+    and returns the ase.atoms object.
+
+    Args:
+        path (str): Path to file or directory.
+
+    Returns:
+        Union[ase.Atoms, List]: ase.atoms object or list of ase.atoms objects.
+    """
+
+    if os.path.isdir(path):
+        atoms_list = []
+        for filename in os.listdir(path):
+            complete_path = os.path.join(path, filename)
+            if os.path.isfile(complete_path):
+                try:
+                    atoms = read(complete_path)
+                    atoms_list.append(atoms)
+                except Exception as e:
+                    logging.error(
+                        f"File {filename} is not a valid ASE readable file: {e}"
+                    )
+        if not atoms_list:
+            raise ValueError("No valid ASE readable files found.")
+        return atoms_list
+    else:
+        atoms = [read(path)]
+        return atoms
 
 
 def compute_average_E0s(
@@ -622,26 +649,34 @@ def save_models(
         )
 
 
-def Z_from_geometry_in(path_to_geometry: str = "geometry.in") -> list:
+def Z_from_geometry(
+    atoms: Union[ase.Atoms, List],
+) -> np.ndarray:
     """
-    Extract atomic numbers from a aims geometry file.
+    Extracts the atomic numbers from an ASE Atoms object
+    or a list of Atoms objects.
 
     Args:
-        path_to_geometry (str, optional): Path to the geometry file.
-                            Defaults to "geometry.in".
+        atoms (Union[ase.Atoms, List]): ASE Atoms object
+                                or list of Atoms objects.
 
     Returns:
-        list: List of atomic numbers (no unique).
+        np.ndarray: Array of atomic numbers.
     """
-    with open(path_to_geometry, "r") as file:
-        lines = file.readlines()
-    Z = []
-    for line in lines:
-        if "atom" in line and "#" not in line:
-            species = line.split()[4]
-            atomic_number = ase.data.atomic_numbers[species]
-            Z.append(atomic_number)
-    return Z
+    if isinstance(atoms, ase.Atoms):
+        return np.array(
+            [ase.data.atomic_numbers[atom.symbol] for atom in atoms]
+        )
+    elif isinstance(atoms, list):
+        all_z = []
+        for atom in atoms:
+            current_z = atom.get_atomic_numbers()
+            all_z.extend(current_z)
+        return np.array(all_z)
+    else:
+        raise TypeError(
+            "Input must be an ASE Atoms object or a list of Atoms."
+        )
 
 
 def list_files_in_directory(directory_path: str) -> list:

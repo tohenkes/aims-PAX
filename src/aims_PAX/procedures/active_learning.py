@@ -569,7 +569,7 @@ class ALProcedureParallel(ALProcedure):
         It listens for incoming data asynchronously, calculates
         DFT and sends the results back. Continuously listens for
         a signal to stop and then killing the processes.
-        
+
         Returns:
             bool: True if a kill signal was received, False otherwise.
         """
@@ -628,7 +628,7 @@ class ALProcedureParallel(ALProcedure):
         if self.config.analysis:
             self._dft_parallel_analysis_tasks()
         return False
-        
+
     def _dft_parallel_analysis_tasks(self):
         """
         Handles the analysis tasks in parallel DFT procedure.
@@ -985,6 +985,7 @@ class ALProcedurePARSL(ALProcedure):
             path_to_geometry=path_to_geometry,
             use_mpi=False,
         )
+
         self.data_manager = ALDataManager(
             config=self.config,
             ensemble_manager=self.ensemble_manager,

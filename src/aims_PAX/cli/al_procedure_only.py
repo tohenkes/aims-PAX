@@ -14,17 +14,33 @@ def main():
     with open("./active_learning_settings.yaml", "r") as file:
         al_settings = safe_load(file)
 
+    path_to_control = al_settings["MISC"].get(
+        "path_to_control", "./control.in"
+    )
+    path_to_geometry = al_settings["MISC"].get(
+        "path_to_geometry", "./geometry.in"
+    )
+
     if al_settings["ACTIVE_LEARNING"].get("parallel", False):
         al = ALProcedureParallel(
-            mace_settings=mace_settings, al_settings=al_settings
+            mace_settings=mace_settings,
+            al_settings=al_settings,
+            path_to_control=path_to_control,
+            path_to_geometry=path_to_geometry,
         )
     elif al_settings.get("CLUSTER", False):
         al = ALProcedurePARSL(
-            mace_settings=mace_settings, al_settings=al_settings
+            mace_settings=mace_settings,
+            al_settings=al_settings,
+            path_to_control=path_to_control,
+            path_to_geometry=path_to_geometry,
         )
     else:
         al = ALProcedureSerial(
-            mace_settings=mace_settings, al_settings=al_settings
+            mace_settings=mace_settings,
+            al_settings=al_settings,
+            path_to_control=path_to_control,
+            path_to_geometry=path_to_geometry,
         )
 
     if not al.check_al_done():
