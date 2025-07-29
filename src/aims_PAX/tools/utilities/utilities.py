@@ -595,6 +595,33 @@ def save_checkpoint(
     return None
 
 
+def save_models(
+    ensemble: dict, training_setups: dict, model_dir: str, current_epoch: int
+):
+    for tag, model in ensemble.items():
+        training_setup = training_setups[tag]
+
+        param_context = (
+            training_setup["ema"].average_parameters()
+            if training_setup["ema"] is not None
+            else nullcontext()
+        )
+
+        with param_context:
+            torch.save(
+                model,
+                Path(model_dir) / (tag + ".model"),
+            )
+
+        save_checkpoint(
+            checkpoint_handler=training_setup["checkpoint_handler"],
+            training_setup=training_setup,
+            model=model,
+            epoch=current_epoch,
+            keep_last=False,
+        )
+
+
 def Z_from_geometry_in(path_to_geometry: str = "geometry.in") -> list:
     """
     Extract atomic numbers from a aims geometry file.

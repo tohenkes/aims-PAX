@@ -1,4 +1,5 @@
 import os
+import random
 from pathlib import Path
 import torch
 import numpy as np
@@ -11,6 +12,7 @@ from aims_PAX.tools.uncertainty import (
 from aims_PAX.tools.utilities.data_handling import (
     load_ensemble_sets_from_folder,
     ase_to_mace_ensemble_sets,
+    create_dataloader,
 )
 from aims_PAX.tools.utilities.utilities import (
     ensemble_training_setups,
@@ -21,7 +23,17 @@ from aims_PAX.tools.utilities.utilities import (
     create_ztable,
     get_atomic_energies_from_pt,
     dtype_mapping,
+    setup_ensemble_dicts,
+    setup_mace_training,
+    create_seeds_tags_dict,
+    setup_logger,
+    update_model_auxiliaries,
+    AIMSControlParser,
     ModifyMD,
+)
+from aims_PAX.tools.train_epoch_mace import (
+    train_epoch,
+    validate_epoch_ensemble,
 )
 from aims_PAX.tools.utilities.mpi_utils import CommHandler
 import ase
@@ -32,11 +44,701 @@ from ase.md.langevin import Langevin
 from ase.md.nptberendsen import NPTBerendsen
 from ase.md.npt import NPT
 from ase import units
-
+from contextlib import nullcontext
 try:
     import asi4py
 except Exception as e:
     asi4py = None
+
+
+class PrepareInitialDatasetProcedure:
+    """
+    Class to prepare the inital dataset generation procedure for
+    active learning. It handles all the input files, prepares the
+    calculators, models, directories etc.
+    TODO: change training so it uses the code from AL
+    """
+
+    def __init__(
+        self,
+        mace_settings: dict,
+        al_settings: dict,
+        path_to_control: str = "./control.in",
+        path_to_geometry: str = "./geometry.in",
+        use_mpi: bool = True,
+    ) -> None:
+        """
+        Args:
+            mace_settings (dict): Settings for the MACE model and its training.
+            al_settings (dict): Settings for the active learning procedure.
+            path_to_aims_lib (str): Path to the compiled AIMS library.
+            atomic_energies_dict (dict, optional): Dictionary containing the
+                                            atomic energies. Defaults to None.
+            species_dir (str, optional): Path to the basis set settings
+                                                of AIMS. Defaults to None.
+            path_to_control (str, optional): Path to the AIMS control file.
+                                                Defaults to "./control.in".
+            path_to_geometry (str, optional): Path to the initial geometry.
+                                                Defaults to "./geometry.in".
+            ensemble_seeds (np.array, optional): Seeds for the individual
+                                        ensemble members. Defaults to None.
+        """
+
+        self.comm_handler = CommHandler(use_mpi=use_mpi)
+        self.rank = self.comm_handler.get_rank()
+        self.world_size = self.comm_handler.get_size()
+
+        self.log_dir = Path(mace_settings["GENERAL"]["log_dir"])
+        logger_level = (
+            logging.DEBUG
+            if mace_settings["MISC"]["log_level"].lower() == "debug"
+            else logging.INFO
+        )
+
+        self.logger = setup_logger(
+            level=logger_level,
+            tag="initial_dataset",
+            directory=self.log_dir,
+        )
+        if self.rank == 0:
+            logging.info("Initializing initial dataset procedure.")
+            logging.info(f"Procedure runs on {self.world_size} workers.")
+
+        self.control_parser = AIMSControlParser()
+        self._handle_mace_settings(mace_settings)
+        self._handle_al_settings(al_settings)
+        self._handle_aims_settings(path_to_control)
+        self._create_folders()
+
+        if self.restart:
+            if self.rank == 0:
+                logging.info(
+                    "Restarting initial dataset acquisition from checkpoint."
+                )
+            try:
+                self.init_ds_restart_dict = np.load(
+                    "restart/initial_ds/initial_ds_restart.npy",
+                    allow_pickle=True,
+                ).item()
+            except FileNotFoundError:
+                logging.error(
+                    "Restart file under 'restart/initial_ds/"
+                    "initial_ds_restart.npy' not found."
+                )
+                raise
+            self.atoms = self.init_ds_restart_dict["last_geometry"]
+            self.step = self.init_ds_restart_dict["step"]
+        else:
+            self.atoms = read(path_to_geometry)
+            self.step = 0
+
+        self.z = Z_from_geometry_in()
+        self.n_atoms = len(self.z)
+        self.z_table = create_ztable(self.z)
+
+        np.random.seed(self.seed)
+        random.seed(self.seed)
+        self.ensemble_seeds = np.random.randint(
+            0, 10000, size=self.ensemble_size
+        )
+        self.seeds_tags_dict = create_seeds_tags_dict(
+            seeds=self.ensemble_seeds,
+            mace_settings=self.mace_settings,
+            al_settings=self.al,
+        )
+
+        self._handle_atomic_energies()
+        self.epoch = 0
+
+        # the ensemble dictionary contains the models and their tags as values
+        # and keys the seeds_tags_dict connects the seeds to the tags of each
+        # ensemble member the training_setups dictionary contains the training
+        # setups (optimizer, scheduler etc.) for each ensemble member
+        if self.rank == 0:
+            self.ensemble = setup_ensemble_dicts(
+                seeds_tags_dict=self.seeds_tags_dict,
+                mace_settings=self.mace_settings,
+                z_table=self.z_table,
+                ensemble_atomic_energies_dict=self.ensemble_atomic_energies_dict,
+            )
+            self.training_setups = ensemble_training_setups(
+                ensemble=self.ensemble,
+                mace_settings=self.mace_settings,
+                restart=self.restart,
+                checkpoints_dir=self.checkpoints_dir,
+                al_settings=self.al,
+            )
+            if self.restart:
+                self.epoch = (
+                    self.training_setups[list(self.ensemble.keys())[0]][
+                        "epoch"
+                    ]
+                    + 1
+                )
+
+        self.comm_handler.barrier()
+        self.epoch = self.comm_handler.bcast(self.epoch, root=0)
+        self.comm_handler.barrier()
+
+        # each ensemble member has their own initial dataset.
+        # we create a ASE and MACE dataset because it makes
+        # conversion and saving easier
+        if self.rank == 0:
+            if self.restart:
+                self.ensemble_ase_sets = load_ensemble_sets_from_folder(
+                    ensemble=self.ensemble,
+                    path_to_folder=self.dataset_dir / "initial",
+                )
+                self.ensemble_mace_sets = ase_to_mace_ensemble_sets(
+                    ensemble_ase_sets=self.ensemble_ase_sets,
+                    z_table=self.z_table,
+                    r_max=self.r_max,
+                    seed=self.seed,
+                )
+
+            else:
+                self.ensemble_mace_sets, self.ensemble_ase_sets = (
+                    {
+                        tag: {"train": [], "valid": []}
+                        for tag in self.ensemble.keys()
+                    },
+                    {
+                        tag: {"train": [], "valid": []}
+                        for tag in self.ensemble.keys()
+                    },
+                )
+
+        if self.analysis:
+            if self.restart:
+                self.collect_losses = self.init_ds_restart_dict[
+                    "last_initial_losses"
+                ]
+            else:
+                self.collect_losses = {
+                    "epoch": [],
+                    "avg_losses": [],
+                    "ensemble_losses": [],
+                }
+
+    def _handle_mace_settings(self, mace_settings: dict) -> None:
+        """
+        Saves the MACE settings to class attributes.
+        TODO: Create function to check if all necessary settings are present
+        and fall back to defaults if not.
+
+        Args:
+            mace_settings (dict): Dictionary containing the MACE settings.
+        """
+
+        self.mace_settings = mace_settings
+        self.seed = self.mace_settings["GENERAL"]["seed"]
+        self.r_max = self.mace_settings["ARCHITECTURE"]["r_max"]
+        self.set_batch_size = self.mace_settings["TRAINING"]["batch_size"]
+        self.set_valid_batch_size = self.mace_settings["TRAINING"][
+            "valid_batch_size"
+        ]
+        self.checkpoints_dir = (
+            self.mace_settings["GENERAL"]["checkpoints_dir"] + "/initial"
+        )
+        self.scaling = self.mace_settings["TRAINING"]["scaling"]
+        self.dtype = self.mace_settings["GENERAL"]["default_dtype"]
+        torch.set_default_dtype(dtype_mapping[self.dtype])
+        self.device = self.mace_settings["MISC"]["device"]
+        self.atomic_energies_dict = self.mace_settings["ARCHITECTURE"].get(
+            "atomic_energies", None
+        )
+        self.compute_stress = self.mace_settings.get("compute_stress", False)
+        self.properties = ["energy", "forces"]
+        if self.compute_stress:
+            self.properties.append("stress")
+
+    def _handle_al_settings(self, al_settings: dict) -> None:
+        """
+        Saves the active learning settings to class attributes.
+        TODO: Create function to check if all necessary settings are present
+        and fall back to defaults if not.
+
+        Args:
+            al_settings (dict): Dictionary containing the active
+                                learning settings.
+        """
+
+        self.al = al_settings["ACTIVE_LEARNING"]
+        self.misc = al_settings["MISC"]
+        self.md_settings = al_settings["MD"]
+        self.cluster_settings = al_settings.get("CLUSTER", None)
+        self.ensemble_size = self.al["ensemble_size"]
+        self.desired_acc = self.al["desired_acc"]
+        self.lamb = self.al["lambda"]
+        self.n_samples = self.al["n_samples"]
+        self.max_initial_epochs = self.al["max_initial_epochs"]
+        self.max_final_epochs = self.al["max_final_epochs"]
+        self.valid_skip = self.al["valid_skip"]
+        self.skip_step = self.al["skip_step_initial"]
+        self.intermediate_epochs = self.al["intermediate_epochs"]
+        self.valid_ratio = self.al["valid_ratio"]
+        self.ASI_path = self.al["aims_lib_path"]
+        self.species_dir = self.al["species_dir"]
+        self.analysis = self.al.get("analysis", False)
+        self.margin = self.al.get("margin", 0.001)
+        if not self.al["scheduler_initial"]:
+            self.mace_settings["lr_scheduler"] = None
+
+        self.initial_foundational_size = self.al.get(
+            "initial_foundational_size", None
+        )
+        if self.initial_foundational_size is not None:
+            assert self.al["initial_foundational_size"] in (
+                "small",
+                "medium",
+                "large",
+            ), "Initial foundational size not recognized."
+
+        self.restart = os.path.exists(
+            "restart/initial_ds/initial_ds_restart.npy"
+        )
+        self.create_restart = self.misc.get("create_restart", False)
+        if self.create_restart:
+            self.init_ds_restart_dict = {
+                "last_geometry": None,
+                "last_initial_losses": None,
+                "initial_ds_done": False,
+            }
+
+    def _update_restart_dict(self):
+        self.init_ds_restart_dict["last_geometry"] = self.last_point
+        self.init_ds_restart_dict["step"] = self.step
+        if self.analysis:
+            self.init_ds_restart_dict["last_initial_losses"] = (
+                self.collect_losses
+            )
+
+    def _create_folders(self):
+        """
+        Creates the necessary directories for saving the datasets.
+        """
+        self.dataset_dir = Path(self.al["dataset_dir"])
+        (self.dataset_dir / "initial" / "training").mkdir(
+            parents=True, exist_ok=True
+        )
+        (self.dataset_dir / "initial" / "validation").mkdir(
+            parents=True, exist_ok=True
+        )
+        os.makedirs("model", exist_ok=True)
+        if self.analysis:
+            os.makedirs("analysis", exist_ok=True)
+        if self.create_restart:
+            os.makedirs("restart/initial_ds", exist_ok=True)
+
+    def _setup_aims_calculator(
+        self,
+        atoms: ase.Atoms,
+    ) -> ase.Atoms:
+        """
+        Attaches the AIMS calculator to the atoms object.
+        Uses the AIMS settings from the control.in to set up the calculator.
+
+        Args:
+            atoms (ase.Atoms): Atoms object to attach the calculator to.
+            pbc (bool, optional): If periodic boundry conditions are required
+                                    or not.
+            Defaults to False.
+
+        Returns:
+            ase.Atoms: Atoms object with the calculator attached.
+        """
+        aims_settings = self.aims_settings.copy()
+
+        def init_via_ase(asi):
+            from ase.calculators.aims import Aims, AimsProfile
+
+            aims_settings["profile"] = AimsProfile(
+                command="asi-doesnt-need-command"
+            )
+            calc = Aims(**aims_settings)
+            calc.write_inputfiles(asi.atoms, properties=self.properties)
+
+        if asi4py is None:
+            raise ImportError(
+                "asi4py is not properly installed. "
+                "Please install it to use the AIMS calculator."
+            )
+        calc = asi4py.asecalc.ASI_ASE_calculator(
+            self.ASI_path, init_via_ase, self.comm_handler.comm, atoms
+        )
+        return calc
+
+    def _handle_aims_settings(self, path_to_control: str):
+        """
+        Parses the AIMS control file to get the settings for the AIMS
+        calculator.
+
+        Args:
+            path_to_control (str): Path to the AIMS control file.
+            species_dir (str): Path to the species directory of AIMS.
+        """
+
+        self.aims_settings = self.control_parser(path_to_control)
+        self.aims_settings["compute_forces"] = True
+        self.aims_settings["species_dir"] = self.species_dir
+        self.aims_settings["postprocess_anyway"] = (
+            True  # this is necesssary to check for convergence in ASI
+        )
+
+    def _setup_md(self, atoms: ase.Atoms, md_settings: dict):
+        """
+        Sets up the ASE molecular dynamics object for the atoms object.
+        TODO: Add more flexibility and support for other settings
+
+        Args:
+            atoms (ase.Atoms): Atoms to be propagated.
+            md_settings (dict): Dictionary containing the MD settings.
+
+        Returns:
+            ase.md.MolecularDynamics: ASE MD engine.
+        """
+
+        if md_settings["stat_ensemble"].lower() == "nvt":
+            if md_settings["thermostat"].lower() == "langevin":
+                dyn = Langevin(
+                    atoms,
+                    timestep=md_settings["timestep"] * units.fs,
+                    friction=md_settings["friction"] / units.fs,
+                    temperature_K=md_settings["temperature"],
+                    rng=np.random.RandomState(md_settings["seed"]),
+                )
+        elif md_settings["stat_ensemble"].lower() == "npt":
+            if md_settings["barostat"].lower() == "berendsen":
+                npt_settings = {
+                    "atoms": atoms,
+                    "timestep": md_settings["timestep"] * units.fs,
+                    "temperature": md_settings["temperature"],
+                    "pressure_au": md_settings["pressure_au"],
+                }
+
+                if md_settings.get("taup", False):
+                    npt_settings["taup"] = md_settings["taup"] * units.fs
+                if md_settings.get("taut", False):
+                    npt_settings["taut"] = md_settings["taut"] * units.fs
+                if md_settings.get("compressibility_au", False):
+                    npt_settings["compressibility_au"] = md_settings[
+                        "compressibility_au"
+                    ]
+                if md_settings.get("fixcm", False):
+                    npt_settings["fixcm"] = md_settings["fixcm"]
+
+                dyn = NPTBerendsen(**npt_settings)
+            if md_settings["barostat"].lower() == "npt":
+                npt_settings = {
+                    "atoms": atoms,
+                    "timestep": md_settings["timestep"] * units.fs,
+                    "temperature_K": md_settings["temperature"],
+                    "externalstress": md_settings["externalstress"]
+                    * units.bar,
+                    "ttime": md_settings["ttime"] * units.fs,
+                    "pfactor": md_settings["pfactor"] * units.fs,
+                }
+
+                if md_settings.get("mask", False):
+                    npt_settings["mask"] = md_settings["mask"]
+
+                dyn = NPT(**npt_settings)
+
+        if not self.restart:
+            MaxwellBoltzmannDistribution(
+                atoms, temperature_K=md_settings["temperature"]
+            )
+
+        return dyn
+
+    def _handle_atomic_energies(
+        self,
+    ):
+        """
+        Handles the atomic energies for the initial dataset generation.
+        Either they are loaded from a model checkpoint, initialized to zero
+        or specified by the user in the model settings.
+        """
+        self.ensemble_atomic_energies = None
+        self.ensemble_atomic_energies_dict = None
+        self.update_atomic_energies = False
+        if self.rank == 0:
+            if self.atomic_energies_dict is None:
+                if self.restart:
+
+                    logging.info("Loading atomic energies from checkpoint.")
+                    (
+                        self.ensemble_atomic_energies,
+                        self.ensemble_atomic_energies_dict,
+                    ) = get_atomic_energies_from_pt(
+                        path_to_checkpoints=self.checkpoints_dir,
+                        z=self.z,
+                        seeds_tags_dict=self.seeds_tags_dict,
+                        dtype=self.dtype,
+                    )
+                else:
+
+                    logging.info(
+                        "No atomic specified. Initializing with 0 and fit to "
+                        "training data."
+                    )
+                    self.ensemble_atomic_energies_dict = {
+                        tag: {z: 0 for z in np.sort(np.unique(self.z))}
+                        for tag in self.seeds_tags_dict.keys()
+                    }
+                    self.ensemble_atomic_energies = {
+                        tag: np.array(
+                            [
+                                self.ensemble_atomic_energies_dict[tag][z]
+                                for z in self.ensemble_atomic_energies_dict[
+                                    tag
+                                ].keys()
+                            ]
+                        )
+                        for tag in self.seeds_tags_dict.keys()
+                    }
+
+                self.update_atomic_energies = True
+
+            else:
+
+                logging.info("Using specified atomic energies.")
+                self.ensemble_atomic_energies_dict = {
+                    tag: self.atomic_energies_dict
+                    for tag in self.seeds_tags_dict.keys()
+                }
+
+                self.ensemble_atomic_energies = {
+                    tag: np.array(
+                        [
+                            self.ensemble_atomic_energies_dict[tag][z]
+                            for z in self.ensemble_atomic_energies_dict[
+                                tag
+                            ].keys()
+                        ]
+                    )
+                    for tag in self.seeds_tags_dict.keys()
+                }
+
+            logging.info(
+                f"{self.ensemble_atomic_energies_dict[list(self.seeds_tags_dict.keys())[0]]}"
+            )
+
+    def check_initial_ds_done(self) -> bool:
+        """
+        Checks if the initial dataset generation is already done.
+        This is mostly relevant when one is restarting using the
+        aims_PAX command which runs both the initial dataset generation
+        and active learning.
+
+        Returns:
+            bool: Whether the initial dataset generation is done or not.
+        """
+        if self.create_restart:
+            check = self.init_ds_restart_dict.get("initial_ds_done", False)
+            if check:
+                if self.rank == 0:
+                    logging.info(
+                        "Initial dataset generation is already done. Closing"
+                    )
+                    self.logger.handlers.clear()
+            return check
+        else:
+            return False
+
+    def _run_MD(self, atoms: ase.Atoms, dyn) -> ase.Atoms:
+        """
+        Runs molecular dynamics simulation for the atoms object. Saves
+        energy and forces in a MACE readable format.
+
+        Args:
+            atoms (ase.Atoms): Atoms object to be propagated.
+            dyn (ase.md.MolecularDynamics): ASE MD engine.
+        Returns:
+            ase.Atoms: Atoms object with the energy and forces saved in the
+                        MACE readable format.
+        """
+
+        dyn.run(self.skip_step)
+        current_energy = np.array(atoms.get_potential_energy())
+        current_forces = np.array(atoms.get_forces())
+        current_point = atoms.copy()
+        # MACE reads energies and forces from the info & arrays dictionary
+        current_point.info["REF_energy"] = current_energy
+        current_point.arrays["REF_forces"] = current_forces
+
+        if self.create_restart:
+            current_point.set_velocities(atoms.get_velocities())
+            current_point.set_masses(atoms.get_masses())
+            self.last_point = current_point
+
+        return current_point
+
+    def converge(self):
+        """
+        Converges the ensemble on the acquired initial dataset.
+        Stops when the validation loss does not improve for a certain number
+        of epochs (defined in patience) or when the maximum number of epochs
+        is reached.
+
+        """
+        if self.rank == 0:
+            logging.info("Converging.")
+            for _, (tag, model) in enumerate(self.ensemble.items()):
+
+                (
+                    self.ensemble_mace_sets[tag]["train_loader"],
+                    self.ensemble_mace_sets[tag]["valid_loader"],
+                ) = create_dataloader(
+                    self.ensemble_mace_sets[tag]["train"],
+                    self.ensemble_mace_sets[tag]["valid"],
+                    self.set_batch_size,
+                    self.set_valid_batch_size,
+                )
+
+                update_model_auxiliaries(
+                    model=model,
+                    mace_sets=self.ensemble_mace_sets[tag],
+                    atomic_energies_list=self.ensemble_atomic_energies[tag],
+                    scaling=self.scaling,
+                    update_atomic_energies=self.update_atomic_energies,
+                    z_table=self.z_table,
+                    atomic_energies_dict=self.ensemble_atomic_energies_dict[
+                        tag
+                    ],
+                    dtype=self.dtype,
+                    device=self.device,
+                )
+
+            self.training_setups_convergence = {}
+            for tag in self.ensemble.keys():
+                self.training_setups_convergence[tag] = setup_mace_training(
+                    settings=self.mace_settings,
+                    model=self.ensemble[tag],
+                    tag=tag,
+                    restart=self.restart,
+                    convergence=True,
+                    checkpoints_dir=self.checkpoints_dir,
+                    al_settings=self.al,
+                )
+            best_valid_loss = np.inf
+            epoch = 0
+            if self.restart:
+                epoch = self.training_setups_convergence[
+                    list(self.ensemble.keys())[0]
+                ]["epoch"]
+
+            patience = self.al["patience"]
+            no_improvement = 0
+            ensemble_valid_losses = {
+                tag: np.inf for tag in self.ensemble.keys()
+            }
+            for j in range(self.max_final_epochs):
+                for tag, model in self.ensemble.items():
+                    logger = tools.MetricsLogger(
+                        directory=self.mace_settings["GENERAL"]["results_dir"],
+                        tag=tag + "_train",
+                    )
+                    train_epoch(
+                        model=model,
+                        train_loader=self.ensemble_mace_sets[tag][
+                            "train_loader"
+                        ],
+                        loss_fn=self.training_setups_convergence[tag][
+                            "loss_fn"
+                        ],
+                        optimizer=self.training_setups_convergence[tag][
+                            "optimizer"
+                        ],
+                        lr_scheduler=self.training_setups_convergence[tag][
+                            "lr_scheduler"
+                        ],
+                        valid_loss=ensemble_valid_losses[tag],
+                        epoch=epoch,
+                        start_epoch=epoch,
+                        logger=logger,
+                        device=self.training_setups_convergence[tag]["device"],
+                        max_grad_norm=self.training_setups_convergence[tag][
+                            "max_grad_norm"
+                        ],
+                        output_args=self.training_setups_convergence[tag][
+                            "output_args"
+                        ],
+                        ema=self.training_setups_convergence[tag]["ema"],
+                    )
+
+                if (
+                    epoch % self.valid_skip == 0
+                    or epoch == self.max_final_epochs - 1
+                ):
+                    ensemble_valid_losses, valid_loss, _ = (
+                        validate_epoch_ensemble(
+                            ensemble=self.ensemble,
+                            training_setups=self.training_setups_convergence,
+                            ensemble_set=self.ensemble_mace_sets,
+                            logger=logger,
+                            log_errors=self.mace_settings["MISC"][
+                                "error_table"
+                            ],
+                            epoch=epoch,
+                        )
+                    )
+                    if (
+                        best_valid_loss > valid_loss
+                        and (best_valid_loss - valid_loss) > self.margin
+                    ):
+                        best_valid_loss = valid_loss
+                        best_epoch = epoch
+                        no_improvement = 0
+                        for tag, model in self.ensemble.items():
+                            param_context = (
+                                self.training_setups_convergence[tag][
+                                    "ema"
+                                ].average_parameters()
+                                if self.training_setups_convergence[tag]["ema"]
+                                is not None
+                                else nullcontext()
+                            )
+                            with param_context:
+                                torch.save(
+                                    model,
+                                    Path(
+                                        self.mace_settings["GENERAL"][
+                                            "model_dir"
+                                        ]
+                                    )
+                                    / (tag + ".model"),
+                                )
+                            save_checkpoint(
+                                checkpoint_handler=self.training_setups_convergence[
+                                    tag
+                                ][
+                                    "checkpoint_handler"
+                                ],
+                                training_setup=self.training_setups_convergence[
+                                    tag
+                                ],
+                                model=model,
+                                epoch=epoch,
+                                keep_last=False,
+                            )
+                    else:
+                        no_improvement += 1
+
+                epoch += 1
+                if no_improvement > patience:
+                    logging.info(
+                        f"No improvements for {patience} epochs. "
+                        "Training converged. Best model based on validation"
+                        " loss saved"
+                    )
+                    break
+                if j == self.max_final_epochs - 1:
+                    logging.info(
+                        f"Maximum number of epochs reached. Best model "
+                        f"(Epoch {best_epoch}) based on validation loss saved."
+                    )
+                    break
 
 
 class ALConfigurationManager:
@@ -128,7 +830,10 @@ class ALConfigurationManager:
         self.create_restart = self.misc.get("create_restart", False)
 
     def _setup_molecular_indices(self):
-        """Setup molecular indices configuration."""
+        """
+        Setup molecular indices configuration.
+        Only needed if intermolecular uncertainty is used.
+        """
         mol_idxs_path = self.al.get("mol_idxs", None)
         self.mol_idxs = (
             np.load(mol_idxs_path, allow_pickle=True)["arr_0"].tolist()
@@ -169,6 +874,7 @@ class ALStateManager:
         self.uncert_not_crossed = {}
 
         # Ensemble state
+        self.seeds_tags_dict = {}
         self.ensemble_reset_opt = {}
         self.ensemble_no_improvement = {}
         self.ensemble_best_valid = {}
@@ -386,7 +1092,7 @@ class ALEnsembleManager:
         self.comm_handler.barrier()
 
 
-class ALCalculatorManager:
+class ALCalculatorMLFFManager:
     """Manages calculators for active learning procedure."""
 
     def __init__(
@@ -523,6 +1229,7 @@ class ALMDManager:
         self.state_manager = state_manager
         self.comm_handler = comm_handler
         self.rank = comm_handler.get_rank()
+        self.train_dataset_len = 0
 
         # MD drivers will be stored here
         self.md_drivers = {}
@@ -1018,6 +1725,7 @@ class PrepareALProcedure:
         """Initialize the active learning procedure."""
         # Setup communication first
         self._setup_communication(comm_handler, use_mpi)
+
         # Initialize configuration
         self.config = ALConfigurationManager(mace_settings, al_settings)
 
@@ -1026,7 +1734,7 @@ class PrepareALProcedure:
             self.config, self.comm_handler
         )
         self.state_manager = ALStateManager(self.config, self.comm_handler)
-        self.calc_manager = ALCalculatorManager(
+        self.mlff_manager = ALCalculatorMLFFManager(
             self.config, self.ensemble_manager, self.comm_handler
         )
         self.md_manager = ALMDManager(
@@ -1045,7 +1753,8 @@ class PrepareALProcedure:
 
         # Setup calculators and datasets
         self.ensemble_manager.setup_ensemble_and_datasets()
-        self.calc_manager.setup_ml_calculators()
+        self.mlff_manager.setup_ml_calculators()
+
         # Pass train_dataset_len to MD manager for modification
         self.md_manager.train_dataset_len = (
             self.ensemble_manager.train_dataset_len
@@ -1061,7 +1770,7 @@ class PrepareALProcedure:
 
         if self.rank == 0:
             self.md_manager.setup_md_drivers(
-                self.state_manager.trajectories, self.calc_manager.mace_calc
+                self.state_manager.trajectories, self.mlff_manager.mace_calc
             )
 
         # TODO: Remove hardcode
@@ -1132,12 +1841,8 @@ class PrepareALProcedure:
         return self.state_manager.trajectories
 
     @property
-    def md_drivers(self):
-        return self.md_manager.md_drivers
-
-    @property
     def mace_calc(self):
-        return self.calc_manager.mace_calc
+        return self.mlff_manager.mace_calc
 
     @property
     def ensemble(self):

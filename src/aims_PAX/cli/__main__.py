@@ -33,11 +33,11 @@ def main():
         == "mace-mp0"
     ):
 
-        if al_settings["ACTIVE_LEARNING"].get("parallel", False):
-            initial_ds = InitialDatasetFoundationalParallel(
-                mace_settings=mace_settings, al_settings=al_settings
-            )
-        elif al_settings.get("CLUSTER", False):
+        #if al_settings["ACTIVE_LEARNING"].get("parallel", False):
+        #    initial_ds = InitialDatasetFoundationalParallel(
+        #        mace_settings=mace_settings, al_settings=al_settings
+        #    )
+        if al_settings.get("CLUSTER", False):
             initial_ds = InitialDatasetPARSL(
                 mace_settings=mace_settings,
                 al_settings=al_settings,

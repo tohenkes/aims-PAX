@@ -198,7 +198,7 @@ def handle_parsl_logger(log_dir: Path = Path("./")):
 
 
 @python_app
-def recalc_aims_parsl(
+def recalc_dft_parsl(
     positions: np.ndarray,
     species: np.ndarray,
     cell: np.ndarray,

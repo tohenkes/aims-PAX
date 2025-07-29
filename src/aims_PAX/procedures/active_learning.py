@@ -1,7 +1,10 @@
+import logging
 from typing import Optional
 import numpy as np
+import ase
 from .preparation import PrepareALProcedure
-from .al_helpers import (
+from .al_managers import (
+    ALRunningManager,
     ALDataManager,
     ALTrainingManager,
     ALAnalysisManager,
@@ -11,36 +14,16 @@ from .al_helpers import (
     ALDFTManagerPARSL,
     ALAnalysisManagerPARSL,
 )
-from aims_PAX.tools.uncertainty import (
-    get_threshold,
-)
 from aims_PAX.tools.utilities.data_handling import (
     save_datasets,
 )
-from aims_PAX.tools.utilities.utilities import (
-    atoms_full_copy,
-)
+from aims_PAX.tools.utilities.utilities import atoms_full_copy, save_models
 from aims_PAX.tools.utilities.mpi_utils import CommHandler
-from aims_PAX.tools.utilities.parsl_utils import (
-    prepare_parsl,
-    recalc_aims_parsl,
-    handle_parsl_logger,
-)
-import shutil
-import ase
-import logging
-import threading
-import queue
-import time
 
 try:
     import parsl
 except ImportError:
     parsl = None
-try:
-    import asi4py
-except Exception as e:
-    asi4py = None
 
 
 class ALProcedure(PrepareALProcedure):
@@ -68,11 +51,20 @@ class ALProcedure(PrepareALProcedure):
             use_mpi=use_mpi,
             comm_handler=comm_handler,
         )
+
         self.data_manager = None
         self.train_manager = None
         self.converge = None
         self.dft_manager = None
         self.analysis_manager = None
+        self.run_manager = ALRunningManager(
+            config=self.config,
+            state_manager=self.state_manager,
+            ensemble_manager=self.ensemble_manager,
+            comm_handler=self.comm_handler,
+            rank=self.rank,
+            dft_manager=self.dft_manager,
+        )
 
     def _al_loop(self):
         while True:
@@ -205,182 +197,57 @@ class ALProcedure(PrepareALProcedure):
 
         Args:
             idx (int): Index of the trajectory worker.
-
         """
-
         current_MD_step = self.state_manager.trajectory_MD_steps[idx]
 
-        # kill the worker if the maximum number of MD steps is reached
-        if (
-            current_MD_step > self.config.max_MD_steps
-            and self.state_manager.trajectory_status[idx] == "running"
-        ):
-            if self.rank == 0:
-                logging.info(
-                    f"Trajectory worker {idx} reached maximum MD steps and is killed."
-                )
-            self.state_manager.num_MD_limits_reached += 1
-            self.state_manager.trajectory_status[idx] = "killed"
+        if self.run_manager.should_terminate_worker(current_MD_step, idx):
             return "killed"
 
-        else:
-            # TODO:
-            # ideally we would first check the uncertainty, then optionally
-            # calculate the aims forces and use them to propagate
-            # currently the mace forces are used even if the uncertainty is too high
-            # but ase is weird and i don't want to change it so whatever. when we have our own
-            # MD engine we can adress this.
+        self.run_manager.execute_md_step(
+            idx,
+            self.md_manager,
+            self.md_manager.md_drivers,
+            self.restart_manager,
+            self.trajectories,
+        )
+        current_MD_step = self.run_manager.update_md_step(idx, current_MD_step)
 
-            if self.md_manager.mod_md:
-                if self.rank == 0:
-                    modified = self.md_manager.md_modifier(
-                        driver=self.md_drivers[idx],
-                        metric=self.md_manager.get_md_mod_metric(),
-                        idx=idx,
-                    )
-                    if modified and self.config.create_restart:
-                        self.restart_manager.update_restart_dict(
-                            trajectories_keys=self.trajectories.keys(),
-                            md_drivers=self.md_drivers,
-                            save_restart="restart/al/al_restart.npy",
-                        )
+        self.run_manager.handle_periodic_checkpoint(
+            current_MD_step,
+            self.restart_manager,
+            self.trajectories,
+            self.md_manager.md_drivers,
+        )
 
-            if self.rank == 0:
-                self.md_drivers[idx].run(self.config.skip_step)
-            self.state_manager.trajectory_MD_steps[
-                idx
-            ] += self.config.skip_step
-            current_MD_step += self.config.skip_step
-
-            # somewhat arbitrary; i just want to save checkpoints if the MD phase
-            # is super long
-            if self.rank == 0:
-                if current_MD_step % (self.config.skip_step * 100) == 0:
-                    self.restart_manager.update_restart_dict(
-                        trajectories_keys=self.trajectories.keys(),
-                        md_drivers=self.md_drivers,
-                        save_restart="restart/al/al_restart.npy",
-                    )
-
-                logging.info(
-                    f"Trajectory worker {idx} at MD step {current_MD_step}."
-                )
-
-                self.point = self.trajectories[idx].copy()
-                prediction = self.trajectories[idx].calc.results["forces_comm"]
-                uncertainty = self.get_uncertainty(prediction)
-
-                self.state_manager.uncertainties.append(uncertainty)
-
-                if (
-                    len(self.state_manager.uncertainties) > 10
-                ):  # TODO: remove hardcode
-                    if (
-                        self.ensemble_manager.train_dataset_len
-                        >= self.config.freeze_threshold_dataset
-                    ) and not self.config.freeze_threshold:
-                        if self.rank == 0:
-                            logging.info(
-                                f"Train data has reached size {self.ensemble_manager.train_dataset_len}: freezing threshold at {self.state_manager.threshold :.3f}."
-                            )
-                        self.config.freeze_threshold = True
-
-                    if not self.config.freeze_threshold:
-                        self.state_manager.threshold = get_threshold(
-                            uncertainties=self.state_manager.uncertainties,
-                            c_x=self.config.c_x,
-                            max_len=400,  # TODO: remove hardcode
-                        )
-
-                    if self.config.analysis:
-                        self.state_manager.collect_thresholds[idx].append(
-                            self.state_manager.threshold
-                        )
-
-            if self.rank != 0:
-                uncertainty = None
-                prediction = None
-                self.point = None
-                self.state_manager.threshold = None
-                current_MD_step = None
-
-            self.comm_handler.barrier()
-            self.state_manager.threshold = self.comm_handler.bcast(
-                self.state_manager.threshold, root=0
+        point, prediction, uncertainty = (
+            self.run_manager.calculate_uncertainty_data(
+                idx, current_MD_step, self.trajectories, self.get_uncertainty
             )
-            self.point = self.comm_handler.bcast(self.point, root=0)
-            uncertainty = self.comm_handler.bcast(uncertainty, root=0)
-            prediction = self.comm_handler.bcast(prediction, root=0)
-            current_MD_step = self.comm_handler.bcast(current_MD_step, root=0)
-            self.comm_handler.barrier()
+        )
 
-            if (
-                uncertainty > self.state_manager.threshold
-            ).any() or self.state_manager.uncert_not_crossed[
-                idx
-            ] > self.config.skip_step * self.config.uncert_not_crossed_limit:
-                self.state_manager.uncert_not_crossed[idx] = 0
-                if self.rank == 0:
-                    if (uncertainty > self.state_manager.threshold).any():
-                        logging.info(
-                            f"Uncertainty of point is beyond threshold {np.round(self.state_manager.threshold ,3)} at worker {idx}: {np.round(uncertainty,3)}."
-                        )
-                if self.config.mol_idxs is not None:
-                    crossings = uncertainty > self.state_manager.threshold
-                    cross_global = crossings[0]
-                    cross_inter = crossings[1]
+        self.point, prediction, uncertainty, current_MD_step = (
+            self.run_manager.synchronize_mpi_data(
+                point, prediction, uncertainty, current_MD_step
+            )
+        )
 
-                    if cross_inter and not cross_global:
-                        self.config.intermol_crossed += 1
+        self.run_manager.process_uncertainty_decision(
+            idx, uncertainty, self.point
+        )
 
-                    if cross_global:
-                        self.config.intermol_crossed = 0
-
-                    if self.config.intermol_crossed != 0:
-                        if self.rank == 0:
-                            logging.info(
-                                f"Intermolecular uncertainty crossed {self.config.intermol_crossed} consecutive times."
-                            )
-
-                    if (
-                        self.config.intermol_crossed
-                        >= self.config.intermol_crossed_limit
-                        and not self.config.switched_on_intermol
-                        and self.config.using_intermol_loss
-                    ):
-                        if self.rank == 0:
-                            logging.info(
-                                f"Intermolecular uncertainty crossed "
-                                f"{self.config.intermol_crossed_limit} consecutive "
-                                "times. Turning intermol_loss weight to "
-                                f"{self.config.intermol_forces_weight}."
-                            )
-                            for tag in self.ensemble.keys():
-                                self.ensemble_manager.training_setups[tag][
-                                    "loss_fn"
-                                ].intermol_forces_weight = (
-                                    self.config.intermol_forces_weight
-                                )
-                            self.config.switched_on_intermol = True
-
-                self.dft_manager.handle_dft_call(point=self.point, idx=idx)
-
-            else:
-                self.state_manager.uncert_not_crossed[idx] += 1
-
-            if self.config.analysis:
-                self.analysis_manager.perform_analysis(
-                    point=self.point,
-                    idx=idx,
-                    prediction=prediction,
-                    current_MD_step=current_MD_step,
-                    uncertainty=uncertainty,
-                )
+        if self.config.analysis:
+            self.analysis_manager.perform_analysis(
+                point=self.point,
+                idx=idx,
+                prediction=prediction,
+                current_MD_step=current_MD_step,
+                uncertainty=uncertainty,
+            )
 
     def run(self):
         """
-        Main function to run the active learning procedure. Initializes variables and
-        controls the workers tasks.
+        Main function to run the active learning procedure.
+        Saves the datasets, restart information and analysis results.
         """
 
         if self.rank == 0:
@@ -388,25 +255,31 @@ class ALProcedure(PrepareALProcedure):
 
         self.comm_handler.barrier()
         self._al_loop()
-        # turn keys which are ints into strings
-        # save the datasets and the intervals for analysis
+
         if self.rank == 0:
             logging.info(
-                f"Active learning procedure finished. The best ensemble member based on validation loss is {self.train_manager.best_member}."
+                "Active learning procedure finished. The best ensemble member"
+                " based on validation loss is "
+                f"{self.train_manager.best_member}."
             )
             save_datasets(
                 ensemble=self.ensemble,
                 ensemble_ase_sets=self.ensemble_manager.ensemble_ase_sets,
                 path=self.config.dataset_dir / "final",
             )
-
+            save_models(
+                ensemble=self.ensemble,
+                training_setups=self.ensemble_manager.training_setups,
+                model_dir=self.config.mace_settings["GENERAL"]["model_dir"],
+                current_epoch=self.state_manager.total_epoch,
+            )
             if self.config.analysis:
                 self.analysis_manager.save_analysis()
 
             if self.config.create_restart:
                 self.restart_manager.update_restart_dict(
                     trajectories_keys=self.trajectories.keys(),
-                    md_drivers=self.md_drivers,
+                    md_drivers=self.md_manager.md_drivers,
                     save_restart="restart/al/al_restart.npy",
                 )
                 self.restart_manager.al_restart_dict["al_done"] = True
@@ -444,7 +317,7 @@ class ALProcedureSerial(ALProcedure):
         self.train_manager = ALTrainingManager(
             config=self.config,
             ensemble_manager=self.ensemble_manager,
-            calc_manager=self.calc_manager,
+            mlff_manager=self.mlff_manager,
             state_manager=self.state_manager,
             md_manager=self.md_manager,
             restart_manager=self.restart_manager,
@@ -458,6 +331,7 @@ class ALProcedureSerial(ALProcedure):
             ensemble_manager=self.ensemble_manager,
             state_manager=self.state_manager,
             comm_handler=self.comm_handler,
+            path_to_geometry=path_to_geometry,
         )
 
         self.analysis_manager = ALAnalysisManager(
@@ -468,6 +342,15 @@ class ALProcedureSerial(ALProcedure):
             md_manager=self.md_manager,
             comm_handler=self.comm_handler,
             rank=self.rank,
+        )
+
+        self.run_manager = ALRunningManager(
+            config=self.config,
+            state_manager=self.state_manager,
+            ensemble_manager=self.ensemble_manager,
+            comm_handler=self.comm_handler,
+            rank=self.rank,
+            dft_manager=self.dft_manager,
         )
 
 
@@ -514,11 +397,10 @@ class ALProcedureParallel(ALProcedure):
 
         if self.rank == 0:
             logging.info(f"Procedure runs on {self.world_size} workers.")
-        setattr(
-            self.state_manager,
-            "first_wait_after_restart",
-            {idx: True for idx in range(self.config.num_trajectories)},
-        )
+
+        self.first_wait_after_restart = {
+            idx: True for idx in range(self.config.num_trajectories)
+        }
         self.data_manager = ALDataManager(
             config=self.config,
             ensemble_manager=self.ensemble_manager,
@@ -530,7 +412,7 @@ class ALProcedureParallel(ALProcedure):
         self.train_manager = ALTrainingManager(
             config=self.config,
             ensemble_manager=self.ensemble_manager,
-            calc_manager=self.calc_manager,
+            mlff_manager=self.mlff_manager,
             state_manager=self.state_manager,
             md_manager=self.md_manager,
             restart_manager=self.restart_manager,
@@ -546,6 +428,7 @@ class ALProcedureParallel(ALProcedure):
             comm_handler=self.comm_handler,
             color=self.color,
             world_comm=self.world_comm,
+            path_to_geometry=path_to_geometry,
         )
         if self.config.analysis:
             self.analysis_manager = ALAnalysisManagerParallel(
@@ -559,6 +442,15 @@ class ALProcedureParallel(ALProcedure):
                 color=self.color,
                 world_comm=self.world_comm,
             )
+
+        self.run_manager = ALRunningManager(
+            config=self.config,
+            state_manager=self.state_manager,
+            ensemble_manager=self.ensemble_manager,
+            comm_handler=self.comm_handler,
+            rank=self.rank,
+            dft_manager=self.dft_manager,
+        )
 
     def _al_loop(self):
         self.worker_reqs = {
@@ -661,138 +553,154 @@ class ALProcedureParallel(ALProcedure):
                     break
 
             # this color handles DFT
-            # TODO: put into a separate method
             if self.color == 1:
-
-                self.comm_handler.barrier()
-                # if any rank gets a kill signal,
-                # all ranks will stop
-                local_kill_int = self.req_kill.Test()
-                global_kill_int = self.comm_handler.comm.allreduce(
-                    local_kill_int, op=self.comm_handler.mpi.LOR
-                )
-                kill_signal = bool(global_kill_int)
-
-                if kill_signal:
-                    return None
-
-                if self.rank != 1:
-                    self.geo_info_buf = None
-                    self.sys_info_buf = None
-                    received = False
-
-                if self.rank == 1:
-                    received = self._listening_task()
-
-                self.comm_handler.barrier()
-                received = self.comm_handler.bcast(
-                    received, root=0
-                )  # global rank 1 is 0 of split comm
-                self.current_num_atoms = self.comm_handler.bcast(
-                    self.current_num_atoms, root=0
-                )
-                self.comm_handler.barrier()
-
-                if received:
-                    if self.rank != 1:
-                        self.sys_info_buf = np.empty(
-                            shape=(14,), dtype=np.float64
-                        )
-                        self.geo_info_buf = np.empty(
-                            shape=(2, self.current_num_atoms, 3),
-                            dtype=np.float64,
-                        )
-                    self.comm_handler.barrier()
-                    self.comm_handler.comm.Bcast(buf=self.sys_info_buf, root=0)
-                    self.comm_handler.comm.Bcast(buf=self.geo_info_buf, root=0)
-                    self.comm_handler.barrier()
-
-                    self.comm_handler.barrier()
-                    dft_result = self._calculate_received()
-
-                    if self.rank == 1:
-                        self._send_result_back(
-                            idx=int(self.sys_info_buf[0]),
-                            dft_result=dft_result,
-                            num_atoms=self.current_num_atoms,
-                        )
-
-                if self.config.analysis:
-
-                    if self.rank != 1:
-                        self.analysis_manager.geo_info_buf_analysis = None
-                        self.analysis_manager.sys_info_buf_analysis = None
-                        received_analysis = False
-
-                    if self.rank == 1:
-                        received_analysis = (
-                            self.analysis_manager.analysis_listening_task()
-                        )
-
-                    self.comm_handler.barrier()
-                    received_analysis = self.comm_handler.bcast(
-                        received_analysis, root=0
-                    )  # global rank 1 is 0 of split comm
-                    self.analysis_manager.current_num_atoms_analysis = (
-                        self.comm_handler.bcast(
-                            self.analysis_manager.current_num_atoms_analysis,
-                            root=0,
-                        )
-                    )
-                    self.comm_handler.barrier()
-
-                    if received_analysis:
-                        if self.rank != 1:
-                            self.analysis_manager.sys_info_buf_analysis = (
-                                np.empty(shape=(14,), dtype=np.float64)
-                            )
-                            self.analysis_manager.geo_info_buf_analysis = np.empty(
-                                shape=(
-                                    2,
-                                    self.analysis_manager.current_num_atoms_analysis,
-                                    3,
-                                ),
-                                dtype=np.float64,
-                            )
-                        self.comm_handler.barrier()
-                        self.comm_handler.comm.Bcast(
-                            buf=self.analysis_manager.sys_info_buf_analysis,
-                            root=0,
-                        )
-                        self.comm_handler.comm.Bcast(
-                            buf=self.analysis_manager.geo_info_buf_analysis,
-                            root=0,
-                        )
-                        self.comm_handler.barrier()
-
-                        dft_result_analysis = (
-                            self.analysis_manager.analysis_calculate_received()
-                        )
-
-                        if self.rank == 1:
-                            current_num_atoms_analysis = (
-                                self.analysis_manager.current_num_atoms_analysis
-                            )
-                            self._send_result_back(
-                                idx=int(
-                                    self.analysis_manager.sys_info_buf_analysis[
-                                        0
-                                    ]
-                                ),
-                                dft_result=dft_result_analysis,
-                                num_atoms=current_num_atoms_analysis,
-                            )
+                killed = self._dft_parallel_tasks()
+                if killed:
+                    break
 
         if self.color == 1:
             self.dft_manager.aims_calculator.asi.close()
-        logging.info(f"RANK {self.rank} finished AL procedure.")
+
+    def _dft_parallel_tasks(
+        self,
+    ) -> bool:
+        """
+        Handles DFT management for the parallel AL procedure.
+        It listens for incoming data asynchronously, calculates
+        DFT and sends the results back. Continuously listens for
+        a signal to stop and then killing the processes.
+        
+        Returns:
+            bool: True if a kill signal was received, False otherwise.
+        """
+
+        self.comm_handler.barrier()
+        # if any rank gets a kill signal,
+        # all ranks will stop
+        local_kill_int = self.req_kill.Test()
+        global_kill_int = self.comm_handler.comm.allreduce(
+            local_kill_int, op=self.comm_handler.mpi.LOR
+        )
+        kill_signal = bool(global_kill_int)
+
+        if kill_signal:
+            return True
+
+        if self.rank != 1:
+            self.geo_info_buf = None
+            self.sys_info_buf = None
+            received = False
+
+        if self.rank == 1:
+            received = self._listening_task()
+
+        self.comm_handler.barrier()
+        received = self.comm_handler.bcast(
+            received, root=0
+        )  # global rank 1 is 0 of split comm
+        self.current_num_atoms = self.comm_handler.bcast(
+            self.current_num_atoms, root=0
+        )
+        self.comm_handler.barrier()
+
+        if received:
+            if self.rank != 1:
+                self.sys_info_buf = np.empty(shape=(14,), dtype=np.float64)
+                self.geo_info_buf = np.empty(
+                    shape=(2, self.current_num_atoms, 3),
+                    dtype=np.float64,
+                )
+            self.comm_handler.barrier()
+            self.comm_handler.comm.Bcast(buf=self.sys_info_buf, root=0)
+            self.comm_handler.comm.Bcast(buf=self.geo_info_buf, root=0)
+            self.comm_handler.barrier()
+
+            self.comm_handler.barrier()
+            dft_result = self._calculate_received()
+
+            if self.rank == 1:
+                self._send_result_back(
+                    idx=int(self.sys_info_buf[0]),
+                    dft_result=dft_result,
+                    num_atoms=self.current_num_atoms,
+                )
+
+        if self.config.analysis:
+            self._dft_parallel_analysis_tasks()
+        return False
+        
+    def _dft_parallel_analysis_tasks(self):
+        """
+        Handles the analysis tasks in parallel DFT procedure.
+        Basicially does the same as self._dft_parallel_tasks but
+        for the analysis calculations.
+        """
+
+        if self.rank != 1:
+            self.analysis_manager.geo_info_buf_analysis = None
+            self.analysis_manager.sys_info_buf_analysis = None
+            received_analysis = False
+
+        if self.rank == 1:
+            received_analysis = self.analysis_manager.analysis_listening_task()
+
+        self.comm_handler.barrier()
+        received_analysis = self.comm_handler.bcast(
+            received_analysis, root=0
+        )  # global rank 1 is 0 of split comm
+        self.analysis_manager.current_num_atoms_analysis = (
+            self.comm_handler.bcast(
+                self.analysis_manager.current_num_atoms_analysis,
+                root=0,
+            )
+        )
+        self.comm_handler.barrier()
+
+        if received_analysis:
+            if self.rank != 1:
+                self.analysis_manager.sys_info_buf_analysis = np.empty(
+                    shape=(14,), dtype=np.float64
+                )
+                self.analysis_manager.geo_info_buf_analysis = np.empty(
+                    shape=(
+                        2,
+                        self.analysis_manager.current_num_atoms_analysis,
+                        3,
+                    ),
+                    dtype=np.float64,
+                )
+            self.comm_handler.barrier()
+            self.comm_handler.comm.Bcast(
+                buf=self.analysis_manager.sys_info_buf_analysis,
+                root=0,
+            )
+            self.comm_handler.comm.Bcast(
+                buf=self.analysis_manager.geo_info_buf_analysis,
+                root=0,
+            )
+            self.comm_handler.barrier()
+
+            dft_result_analysis = (
+                self.analysis_manager.analysis_calculate_received()
+            )
+
+            if self.rank == 1:
+                current_num_atoms_analysis = (
+                    self.analysis_manager.current_num_atoms_analysis
+                )
+                self._send_result_back(
+                    idx=int(self.analysis_manager.sys_info_buf_analysis[0]),
+                    dft_result=dft_result_analysis,
+                    num_atoms=current_num_atoms_analysis,
+                )
 
     def _waiting_task(self, idx: int):
         """
         Handles waiting for DFT calculation results from workers.
 
-        This method manages the MPI communication to receive DFT results including
-        energy, forces, and optionally stress tensor from worker processes.
+        This method manages the MPI communication to receive DFT results
+        including energy, forces, and optionally stress tensor from
+        worker processes.
 
         Args:
             idx (int): Index of the trajectory worker.
@@ -834,7 +742,10 @@ class ALProcedureParallel(ALProcedure):
         )
 
     def _handle_scf_failure(self, idx: int):
-        """Handle SCF convergence failure by resetting worker and restarting MD."""
+        """
+        Handle SCF convergence failure by resetting
+        worker and restarting MD.
+        """
         if self.rank == 0:
             logging.info(
                 f"SCF not converged at worker {idx}. "
@@ -847,22 +758,21 @@ class ALProcedureParallel(ALProcedure):
         self.state_manager.trajectory_status[idx] = "running"
 
     def _process_successful_calculation(self, idx: int):
-        """Process successful DFT calculation by receiving forces and stress."""
-        # Setup and receive forces
+        """
+        Process successful DFT calculation by
+        receiving forces and stress.
+        """
         if self.worker_reqs["forces"][idx] is None:
             num_atoms = int(self.worker_reqs_bufs["energy"][idx][1])
             self._setup_forces_request(idx, num_atoms)
 
-            # Setup stress request if needed
             if self.config.compute_stress:
                 self._setup_stress_request(idx)
 
-        # Wait for all data to arrive
         self.worker_reqs["forces"][idx].Wait()
         if self.config.compute_stress:
             self.worker_reqs["stress"][idx].Wait()
 
-        # Process the received point
         self._finalize_received_point(idx)
 
     def _setup_forces_request(self, idx: int, num_atoms: int):
@@ -889,18 +799,15 @@ class ALProcedureParallel(ALProcedure):
 
     def _finalize_received_point(self, idx: int):
         """Finalize processing of successfully received DFT point."""
-        # Reset request trackers
         self._reset_worker_requests(idx)
 
         if self.rank == 0:
             logging.info(f"Worker {idx} received a point from DFT.")
 
-            # Update MD checkpoint for better trajectory restart
             self.state_manager.MD_checkpoints[idx] = atoms_full_copy(
                 self.trajectories[idx]
             )
 
-        # Create received point with DFT results
         received_point = self.trajectories[idx].copy()
         received_point.info["REF_energy"] = self.worker_reqs_bufs["energy"][
             idx
@@ -914,7 +821,6 @@ class ALProcedureParallel(ALProcedure):
                 "stress"
             ][idx]
 
-        # Hand off to data manager
         self.data_manager.handle_received_point(
             idx=idx, received_point=received_point
         )
@@ -985,7 +891,7 @@ class ALProcedureParallel(ALProcedure):
             cell=current_cell,
         )
         self.comm_handler.barrier()
-        dft_result = self.dft_manager.recalc_aims(point)
+        dft_result = self.dft_manager.recalc_dft(point)
         return dft_result
 
     # TODO: put this to tools/utilities/mpi_utils.py
@@ -1090,7 +996,7 @@ class ALProcedurePARSL(ALProcedure):
         self.train_manager = ALTrainingManager(
             config=self.config,
             ensemble_manager=self.ensemble_manager,
-            calc_manager=self.calc_manager,
+            mlff_manager=self.mlff_manager,
             state_manager=self.state_manager,
             md_manager=self.md_manager,
             restart_manager=self.restart_manager,
@@ -1119,6 +1025,14 @@ class ALProcedurePARSL(ALProcedure):
                 md_manager=self.md_manager,
                 comm_handler=self.comm_handler,
             )
+        self.run_manager = ALRunningManager(
+            config=self.config,
+            state_manager=self.state_manager,
+            ensemble_manager=self.ensemble_manager,
+            comm_handler=self.comm_handler,
+            rank=self.rank,
+            dft_manager=self.dft_manager,
+        )
 
     def _waiting_task(self, idx):
 
@@ -1127,7 +1041,9 @@ class ALProcedurePARSL(ALProcedure):
             # procedure, we have to relaunch the dft job and then
             # leave the function
             logging.info(f"Worker {idx} is restarting DFT job after restart.")
-            self.dft_manager.handle_dft_call(idx)
+            self.dft_manager.handle_dft_call(
+                point=self.trajectories[idx], idx=idx
+            )
             self.first_wait_after_restart[idx] = False
             return None
 
@@ -1135,12 +1051,14 @@ class ALProcedurePARSL(ALProcedure):
         job_result = self.dft_manager.ab_intio_results.get(idx, "not_done")
 
         if job_result == "not_done":
-            # if the job is not done, we return None and wait for the next iteration
+            # if the job is not done, we return None and
+            # wait for the next iteration
             return None
         else:
             if not job_result:
                 logging.info(
-                    f"SCF not converged at worker {idx}. Discarding point and restarting MD from last checkpoint."
+                    f"SCF not converged at worker {idx}. Discarding point and"
+                    " restarting MD from last checkpoint."
                 )
                 self.trajectories[idx] = atoms_full_copy(
                     self.state_manager.MD_checkpoints[idx]

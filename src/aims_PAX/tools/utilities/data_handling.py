@@ -2,6 +2,7 @@ import random
 import logging
 import os
 import numpy as np
+import torch
 from typing import (
     Optional,
     Sequence,
@@ -9,6 +10,7 @@ from typing import (
     Dict,
     List,
 )
+from contextlib import nullcontext
 from pathlib import Path
 from ase.io import write
 from mace import data as mace_data
