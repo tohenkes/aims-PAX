@@ -25,7 +25,7 @@ The latter will install the PARSL tools, other packages specified in `requiremen
 
 To install FHI aims you can follow the instruction in the [official manual](https://fhi-aims.org/uploads/documents/FHI-aims.250320_1.pdf).
 
-Here is a quick rundown how to compile it on [Meluixna](https://docs.lxp.lu/):
+Here is a quick rundown how to compile it on [Meluxina](https://docs.lxp.lu/):
 
 1. Clone the source code from the FHI aims gitlab.
 2. Move to the root FHI aims directory
