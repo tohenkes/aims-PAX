@@ -94,6 +94,7 @@ def read_input_files(
 
 def read_geometry(
     path: str,
+    log: bool = False
 ) -> Union[ase.Atoms, List]:
     """
     Checks if the path is a single ase readable file or a directory.
@@ -112,7 +113,11 @@ def read_geometry(
 
     if os.path.isdir(path):
         atoms_list = []
-        for filename in os.listdir(path):
+        for i, filename in enumerate(sorted(os.listdir(path))):
+            if log:
+                logging.info(
+                    f"Geometry {i}: {filename.split('.')[0]} is at index {i}."
+                )
             complete_path = os.path.join(path, filename)
             if os.path.isfile(complete_path):
                 try:
@@ -989,7 +994,7 @@ class AIMSControlParser:
             #'cube',
             #'preconditioner',
             "relativistic": re.compile(
-                r"^\s*(relativistic)\s+(\S+)\s+(\S+)(?:\s+(\d+))?",
+                r"^\s*(relativistic)(?:\s+(\S+))?(?:\s+(\S+))?(?:\s+(\d+))?",
                 re.IGNORECASE,
             ),
             #'relax_geometry',
@@ -1114,6 +1119,7 @@ class AIMSControlParser:
                                     match.group(2),
                                     match.group(3),
                                 ]
+
 
                 for key, pattern in self.special_patterns.items():
                     match = pattern.match(line)

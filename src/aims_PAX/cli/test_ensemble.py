@@ -1,5 +1,6 @@
-from aims_PAX.tools.utilities import test_ensemble, ensemble_from_folder
-from ase.io import read
+from aims_PAX.tools.utilities.eval_utils import test_ensemble
+from aims_PAX.tools.utilities.utilities import ensemble_from_folder
+import torch
 import argparse
 import numpy as np
 from prettytable import PrettyTable
@@ -8,9 +9,6 @@ import logging
 
 def main():
 
-    # setup logger to save to 'test_ensemble.log'
-    logging.basicConfig(filename="test_ensemble.log", level=logging.INFO)
-    logging.info("Starting test.")
     parser = argparse.ArgumentParser(description="Test ensemble of models")
     parser.add_argument(
         "--models", type=str, help="Path to models", required=True
@@ -41,7 +39,18 @@ def main():
         help="Return predictions",
         default=False,
     )
-
+    parser.add_argument(
+        "--log_file",
+        type=str,
+        help="Path to log file",
+        default="test_ensemble.log",
+    )
+    parser.add_argument(
+        "--results_file",
+        type=str,
+        help="Path to file where save results",
+        default="ensemble_test_results.npz",
+    )
     parser.add_argument(
         "--energy_key", type=str, help="Energy key", default="REF_energy"
     )
@@ -65,9 +74,11 @@ def main():
     )
 
     args = parser.parse_args()
-
+    # setup logger to save to 'test_ensemble.log'
+    logging.basicConfig(filename=args.log_file, level=logging.INFO)
+    logging.info("Starting test.")
     ensemble = ensemble_from_folder(
-        path_to_models=args.models, device=args.device
+        path_to_models=args.models, device=args.device, dtype=torch.float32
     )
 
     possible_args = ["energy", "forces", "stress", "virials"]
@@ -103,12 +114,13 @@ def main():
         dipole_key=args.dipole_key,
         charges_key=args.charges_key,
         head_key=args.head_key,
+        log=True,  # Enable logging for detailed output
     )
     results = {
         "avg_ensemble_metrics": avg_ensemble_metrics,
         "ensemble_metrics": ensemble_metrics,
     }
-    np.savez(args.save + "ensemble_test_results.npz", **results)
+    np.savez(args.save + args.results_file, **results)
 
     table = PrettyTable()
     table.field_names = [
@@ -139,6 +151,7 @@ def main():
     )
 
     print(table)
+    logging.info(table)
 
 
 if __name__ == "__main__":

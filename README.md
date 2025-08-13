@@ -407,6 +407,7 @@ The *aims-PAX* code is published and distributed under the [MIT License](MIT.md)
 - [ ] explain example in readme
 - [ ] create minimal log
 - [ ] make loading existing ensembles to use in AL easier
+- [ ] fix duplicate logger in IDG
 - [ ] AIMD with PARSL support
 - [ ] unit tests
 - [ ] git push workflow
