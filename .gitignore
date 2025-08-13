@@ -12,12 +12,12 @@
 *.txt
 *.npz
 *.npy
-*.in
-*.yaml
-*.sh
+#*.in
+#*.yaml
+#*.sh
 src/aims_PAX.egg-info
 /build
-
+/examples_dev
 
 
 

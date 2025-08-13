@@ -10,6 +10,7 @@ from mace import tools, modules
 from mace.tools import AtomicNumberTable
 from aims_PAX.tools.setup_MACE import setup_mace
 from aims_PAX.tools.setup_MACE_training import setup_mace_training
+from .input_checks import check_aimsPAX_settings, check_MACE_settings
 import ase.data
 from ase.io import read
 from ase import units
@@ -17,6 +18,9 @@ from contextlib import nullcontext
 import time
 from threading import Thread
 import pandas as pd
+import yaml
+from copy import deepcopy
+from yaml import safe_load
 
 # !!!
 # Many functions are taken from the MACE code:
@@ -34,6 +38,58 @@ Pbc = tuple  # (3,)
 
 DEFAULT_CONFIG_TYPE = "Default"
 DEFAULT_CONFIG_TYPE_WEIGHTS = {DEFAULT_CONFIG_TYPE: 1.0}
+
+
+def read_input_files(
+    path_to_mace_settings: str = "./mace.yaml",
+    path_to_aimsPAX_settings: str = "./aimsPAX.yaml",
+    procedure: str = "full",
+) -> tuple:
+    """
+    Reads the input files for MACE and aimsPAX settings.
+    Checks the settings and returns the checked settings
+    and paths to control and geometry files.
+
+    Args:
+        path_to_mace_settings (str, optional): Path to the MACE settings file.
+                                        Defaults to "./mace.yaml".
+        path_to_aimsPAX_settings (str, optional): Path to the AIMS PAX
+                                settings file. Defaults to "./aimsPAX.yaml".
+        procedure (str, optional): The procedure for which the settings are
+            checked. Can be "initial-ds", "al" or "full". Defaults to "full".
+
+    Returns:
+        tuple: A tuple containing the checked MACE settings, checked AIMS PAX
+            settings, path to control file, and path to geometry file.
+
+    Returns:
+        tuple: A tuple containing the checked MACE settings, checked AIMS PAX
+        settings, path to control file, and path to geometry file.
+    """
+    with open(path_to_mace_settings, "r") as file:
+        mace_settings = safe_load(file)
+    with open(path_to_aimsPAX_settings, "r") as file:
+        aimsPAX_settings = safe_load(file)
+
+    aimsPAX_settings = check_aimsPAX_settings(
+        aimsPAX_settings, procedure=procedure
+    )
+
+    mace_settings = check_MACE_settings(mace_settings)
+
+    path_to_control = aimsPAX_settings["MISC"].get(
+        "path_to_control", "./control.in"
+    )
+    path_to_geometry = aimsPAX_settings["MISC"].get(
+        "path_to_geometry", "./geometry.in"
+    )
+
+    return (
+        mace_settings,
+        aimsPAX_settings,
+        path_to_control,
+        path_to_geometry,
+    )
 
 
 def read_geometry(
@@ -102,96 +158,6 @@ def compute_average_E0s(
         for i, z in enumerate(z_table.zs):
             atomic_energies_dict[z] = 0.0
     return atomic_energies_dict
-
-
-def max_sd_2(
-    ensemble_prediction: np.array,
-    return_argmax: bool = False,
-) -> np.array:
-    """
-    Compute the maximum standard deviation of the ensemble prediction.
-
-    Args:
-        ensemble_prediction (np.array): Ensemble prediction of forces:
-        [n_ensemble_members, n_mols, n_atoms, xyz].
-
-    Returns:
-        np.array: Maximum standard deviation of atomic forces per
-                molecule: [n_mols].
-    """
-    # average prediction over ensemble of models
-    pred_av = np.average(ensemble_prediction, axis=0, keepdims=True)
-    diff_sq = (ensemble_prediction - pred_av) ** 2.0
-    diff_sq_mean = np.mean(diff_sq, axis=(0, -1))
-    max_sd = np.max(np.sqrt(diff_sq_mean), axis=-1)
-    if return_argmax:
-        return max_sd, np.argmax(np.sqrt(diff_sq_mean), axis=-1)
-    else:
-        return max_sd
-
-
-def avg_sd(
-    ensemble_prediction: np.array,
-) -> np.array:
-    """
-    Compute the average standard deviation of the ensemble prediction.
-
-    Args:
-        ensemble_prediction (np.array): Ensemble prediction of forces:
-                        [n_ensemble_members, n_mols, n_atoms, xyz].
-
-    Returns:
-        np.array: Average standard deviation of atomic forces per
-                    molecule: [n_mols].
-    """
-    # average prediction over ensemble of models
-    pred_av = np.average(ensemble_prediction, axis=0, keepdims=True)
-    diff_sq = (ensemble_prediction - pred_av) ** 2.0
-    diff_sq_mean = np.mean(diff_sq, axis=(0, -1))
-    avg_sd = np.mean(np.sqrt(diff_sq_mean), axis=-1)
-    return avg_sd
-
-
-def atom_wise_sd(
-    ensemble_prediction: np.array,
-) -> np.array:
-    """
-    Compute the atom-wise standard deviation of the ensemble prediction.
-
-    Args:
-        prediction (np.array): Prediction of forces:
-                            [n_ensemble_members, n_mols, n_atoms, xyz].
-
-    Returns:
-        np.array: Atom-wise standard deviation of atomic forces per
-                    molecule: [n_mols, n_atoms].
-    """
-    # average prediction over ensemble of models
-    pred_av = np.average(ensemble_prediction, axis=0, keepdims=True)
-    diff_sq = (ensemble_prediction - pred_av) ** 2.0
-    diff_sq_mean = np.mean(diff_sq, axis=(0, -1))
-    atom_wise_sd = np.sqrt(diff_sq_mean)
-    return atom_wise_sd
-
-
-def atom_wise_f_error(
-    prediction: np.array,
-    target: np.array,
-) -> np.array:
-    """
-    Compute the atom-wise force error of the ensemble prediction.
-
-    Args:
-        prediction (np.array): Prediction of forces:
-                                [n_mols, n_atoms, xyz].
-        target (np.array): Target forces: [n_mols, n_atoms, xyz].
-
-    Returns:
-        np.array: Atom-wise force error of atomic forces per molecule:
-                        [n_mols, n_atoms].
-    """
-    atom_wise_f_error = np.sqrt(np.mean((prediction - target) ** 2, axis=(-1)))
-    return atom_wise_f_error
 
 
 def ensemble_from_folder(path_to_models: str, device: str, dtype) -> list:
@@ -268,50 +234,12 @@ def select_best_member(
     return min(ensemble_valid_loss, key=ensemble_valid_loss.get)
 
 
-def E_uncert(
-    prediction: np.array,
-) -> float:
-    """
-    Computes the standard deviation of the ensemble prediction on energies.
-
-    Args:
-        prediction (np.array): Ensemble prediction of energies:
-                                        [n_ensemble_members, n_mols].
-
-    Returns:
-        float: Standard deviation of the ensemble prediction.
-    """
-
-    M = prediction.shape[0]  # number of ensemble members
-    prediction_avg = np.mean(prediction, axis=0, keepdims=True)
-    uncert = 1 / (M - 1) * np.sum((prediction_avg - prediction) ** 2, axis=0)
-    return uncert
-
-
-def get_uncert_alpha(reference, ensemble_avg, uncertainty) -> float:
-    """
-    Estimate distribution shift for a given dataset.
-
-    https://arxiv.org/abs/1809.07653
-
-    Args:
-        reference (_type_): Reference property.
-        ensemble_avg (_type_): Average ensemple prediction.
-        uncertainty (_type_): Uncertainty measure for the ensemble.
-
-    Returns:
-        float: Distribution shift coefficient.
-    """
-
-    return np.mean((reference - ensemble_avg) ** 2 / uncertainty**2)
-
-
 def ensemble_training_setups(
     ensemble: dict,
     mace_settings: dict,
     checkpoints_dir: str = None,
     restart: bool = False,
-    al_settings: dict = None,
+    mol_idxs: Optional[np.ndarray] = None,
 ) -> dict:
     """
     Creates a dictionary of training setups for each model in the ensemble.
@@ -340,7 +268,7 @@ def ensemble_training_setups(
             tag=tag,
             restart=restart,
             checkpoints_dir=checkpoints_dir,
-            al_settings=al_settings,
+            mol_idxs=mol_idxs,
         )
     return training_setups
 
@@ -348,7 +276,7 @@ def ensemble_training_setups(
 def create_seeds_tags_dict(
     seeds: np.array,
     mace_settings: dict,
-    al_settings: dict,
+    misc_settings: dict,
     save_seeds_tags_dict: str = "seeds_tags_dict.npz",
 ) -> dict:
     """
@@ -372,7 +300,7 @@ def create_seeds_tags_dict(
         seeds_tags_dict[tag] = seed
     if save_seeds_tags_dict:
         np.savez(
-            al_settings["dataset_dir"] + "/" + save_seeds_tags_dict,
+            misc_settings["dataset_dir"] + "/" + save_seeds_tags_dict,
             **seeds_tags_dict,
         )
     return seeds_tags_dict
@@ -1307,3 +1235,110 @@ def setup_logger(
         fh_debug.addFilter(lambda record: record.levelno >= logging.DEBUG)
         logger.addHandler(fh_debug)
     return logger
+
+
+class _LiteralStr(str):
+    pass
+
+
+def _represent_literal_str(dumper, data):
+    return dumper.represent_scalar("tag:yaml.org,2002:str", data, style="|")
+
+
+# Ensure SafeDumper knows how to emit our literal strings
+yaml.SafeDumper.add_representer(_LiteralStr, _represent_literal_str)
+
+
+def dump_yaml_for_log(
+    data: dict,
+    force_literal_keys=("slurm_str", "worker_str", "launch_str"),
+    width: int = 10000,
+) -> str:
+    """
+    Return a nicely formatted YAML string for logging.
+    Multiline strings (or keys in force_literal_keys) are rendered with the '|' block style.
+    """
+
+    def convert(obj):
+        if isinstance(obj, dict):
+            new_dict = {}
+            for k, v in obj.items():
+                if isinstance(v, str) and (
+                    "\n" in v or k in force_literal_keys
+                ):
+                    new_dict[k] = _LiteralStr(v)
+                elif isinstance(v, (dict, list)):
+                    new_dict[k] = convert(v)
+                else:
+                    new_dict[k] = v
+            return new_dict
+        elif isinstance(obj, list):
+            new_list = []
+            for item in obj:
+                if isinstance(item, str) and "\n" in item:
+                    new_list.append(_LiteralStr(item))
+                elif isinstance(item, (dict, list)):
+                    new_list.append(convert(item))
+                else:
+                    new_list.append(item)
+            return new_list
+        else:
+            return obj
+
+    # Create a deep copy and then convert it
+    data_copy = deepcopy(data)
+    converted_data = convert(data_copy)
+
+    # Convert any non-serializable objects to strings
+    def make_serializable(obj):
+        if isinstance(obj, dict):
+            return {k: make_serializable(v) for k, v in obj.items()}
+        elif isinstance(obj, list):
+            return [make_serializable(item) for item in obj]
+        elif hasattr(obj, "__dict__") or not isinstance(
+            obj, (str, int, float, bool, type(None), _LiteralStr)
+        ):
+            # Convert complex objects to string representation
+            return str(obj)
+        else:
+            return obj
+
+    safe_data = make_serializable(converted_data)
+
+    return yaml.safe_dump(
+        safe_data,
+        sort_keys=False,
+        default_flow_style=False,
+        indent=2,
+        allow_unicode=True,
+        width=width,
+    )
+
+
+def log_yaml_block(
+    title: str,
+    data: dict,
+    logger: logging.Logger = logging.getLogger(__name__),
+    level: int = logging.INFO,
+    force_literal_keys=("slurm_str", "worker_str", "launch_str"),
+    width: int = 10000,
+    indent: str = "    ",  # 4 spaces; use "\t" for a tab if preferred
+    indent_title: bool = False,
+    no_indent_titles: tuple[str, ...] | None = None,
+):
+    """
+    Log a YAML block so every line is prefixed by the logger (timestamp/level),
+    and indented for readability.
+    If the title matches one of `no_indent_titles` (or indent_title=False), the title is not indented.
+    """
+    no_indent_titles = no_indent_titles or ()
+    title_prefix = (
+        "" if (not indent_title or title in no_indent_titles) else indent
+    )
+
+    logger.log(level, "%s%s:", title_prefix, title)
+    yaml_text = dump_yaml_for_log(
+        data, force_literal_keys=force_literal_keys, width=width
+    ).rstrip()
+    for line in yaml_text.splitlines():
+        logger.log(level, "%s%s", indent, line)

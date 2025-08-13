@@ -1,66 +1,75 @@
+import argparse
+
 from aims_PAX.procedures.initial_dataset import (
     InitialDatasetAIMD,
     InitialDatasetFoundational,
-    #  InitialDatasetFoundationalParallel,
     InitialDatasetPARSL,
 )
-from yaml import safe_load
-
-# import time
+from aims_PAX.tools.utilities.utilities import read_input_files
 
 
 def main():
-    with open("./mace_settings.yaml", "r") as file:
-        mace_settings = safe_load(file)
-    with open("./active_learning_settings.yaml", "r") as file:
-        al_settings = safe_load(file)
-
-    path_to_control = al_settings["MISC"].get(
-        "path_to_control", "./control.in"
+    parser = argparse.ArgumentParser(
+        description="Create initial dataset for AIMLFF."
     )
-    path_to_geometry = al_settings["MISC"].get(
-        "path_to_geometry", "./geometry.in"
+    parser.add_argument(
+        "--mace-settings",
+        type=str,
+        default="./mace.yaml",
+        help="Path to mace.yaml file",
+    )
+    parser.add_argument(
+        "--aimsPAX-settings",
+        type=str,
+        default="./aimsPAX.yaml",
+        help="Path to aimsPAX settings file",
+    )
+    args = parser.parse_args()
+
+    (mace_settings, aimsPAX_settings, path_to_control, path_to_geometry) = (
+        read_input_files(
+            path_to_mace_settings=args.mace_settings,
+            path_to_aimsPAX_settings=args.aimsPAX_settings,
+            procedure="initial-ds",
+        )
     )
 
-    if al_settings["ACTIVE_LEARNING"]["initial_sampling"].lower() == "aimd":
+    if (
+        aimsPAX_settings["INITIAL_DATASET_GENERATION"][
+            "initial_sampling"
+        ].lower()
+        == "aimd"
+    ):
         initial_ds = InitialDatasetAIMD(
             mace_settings=mace_settings,
-            al_settings=al_settings,
+            aimsPAX_settings=aimsPAX_settings,
             path_to_control=path_to_control,
             path_to_geometry=path_to_geometry,
         )
     elif (
-        al_settings["ACTIVE_LEARNING"]["initial_sampling"].lower()
+        aimsPAX_settings["INITIAL_DATASET_GENERATION"][
+            "initial_sampling"
+        ].lower()
         == "mace-mp0"
     ):
-        # if al_settings["ACTIVE_LEARNING"].get("parallel", False):
-        #    initial_ds = InitialDatasetFoundationalParallel(
-        #        mace_settings=mace_settings, al_settings=al_settings
-        #    )
-        if al_settings.get("CLUSTER", False):
+        if aimsPAX_settings.get("CLUSTER", False):
             initial_ds = InitialDatasetPARSL(
                 mace_settings=mace_settings,
-                al_settings=al_settings,
+                aimsPAX_settings=aimsPAX_settings,
                 path_to_control=path_to_control,
                 path_to_geometry=path_to_geometry,
             )
         else:
             initial_ds = InitialDatasetFoundational(
                 mace_settings=mace_settings,
-                al_settings=al_settings,
+                aimsPAX_settings=aimsPAX_settings,
                 path_to_control=path_to_control,
                 path_to_geometry=path_to_geometry,
             )
 
     if not initial_ds.check_initial_ds_done():
-        # start_time = perf_counter()
         initial_ds.run()
-        # end_time = perf_counter()
-        # with open("./initial_ds_time.txt", "w") as f:
-        #    f.write(
-        #        f"Initial Dataset Generation Time: {end_time - start_time} seconds\n"
-        #    )
-    if al_settings["ACTIVE_LEARNING"].get("converge_initial", False):
+    if aimsPAX_settings["ACTIVE_LEARNING"].get("converge_initial", False):
         initial_ds.converge()
 
 

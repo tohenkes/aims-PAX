@@ -3,7 +3,7 @@ from yaml import safe_load
 
 
 def main():
-    with open("./mace_settings.yaml", "r") as file:
+    with open("./mace.yaml", "r") as file:
         mace_settings = safe_load(file)
     with open("./active_learning_settings.yaml", "r") as file:
         al_settings = safe_load(file)

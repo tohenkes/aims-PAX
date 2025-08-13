@@ -1,7 +1,5 @@
 #######################################
 xc                                  pbe
-#many_body_dispersion
-#many_body_dispersion
 
 spin                                none
 relativistic                        atomic_zora scalar
@@ -14,18 +12,9 @@ sc_accuracy_rho                     1e-05
 sc_accuracy_forces                  1E-4
 sc_iter_limit                       1000
 
-#load_balancing                     .true.
 compute_forces                      .true.
 final_forces_cleaned                .true.
 
 KS_method                           parallel
-#postprocess_anyway                  .true.
 
-#output                              dipole
-#output                              quadrupole
-
-#restart_write_only                  eigenvectors.dat
-#force_single_restartfile            .true.
-#restart                              aims_MD_restart.dat
-#elsi_restart                        read_and_write
 

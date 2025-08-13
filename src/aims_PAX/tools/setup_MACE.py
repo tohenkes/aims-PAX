@@ -71,7 +71,6 @@ def setup_mace(
             hidden_irreps += f" + {architecture_settings['num_channels']:d}x2e"
         if architecture_settings["max_L"] > 2:
             hidden_irreps += f" + {architecture_settings['num_channels']:d}x3o"
-
     model_config = dict(
         r_max=architecture_settings["r_max"],
         num_bessel=architecture_settings["num_radial_basis"],
@@ -90,7 +89,7 @@ def setup_mace(
         radial_MLP=architecture_settings["radial_MLP"],
     )
 
-    model: torch.nn.Module
+    MLP_irreps = o3.Irreps(architecture_settings["MLP_irreps"])
 
     model = modules.ScaleShiftMACE(
         **model_config,
@@ -99,7 +98,7 @@ def setup_mace(
         interaction_cls_first=modules.interaction_classes[
             architecture_settings["interaction_first"]
         ],
-        MLP_irreps=o3.Irreps(architecture_settings["MLP_irreps"]),
+        MLP_irreps=MLP_irreps,
         atomic_inter_scale=atomic_inter_scale,
         atomic_inter_shift=atomic_inter_shift,
     )

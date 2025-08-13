@@ -1,66 +1,314 @@
-# Tutorial
+
+<center><img src="readme_figs/preliminary_logo_w.png" alt="drawing" width="200"/>
+
+*aims-PAX*, short for **a**b **i**nitio **m**olecular **s**imulation-**P**arallel **A**ctive e**X**ploration, is a flexible, fully automated, open-source software package for performing active learning for machine learning force fields using a parallelized algorithm that enables efficient resource management. 
+</center>
+
+# Documentation
+
+**Note**: *aims-PAX* is under active development. Backward compatibility with older versions is not currently guaranteed.
 
 ## Installation 
 
-The required libraries for aims PAX are:
+### *aims-PAX*
 
-1. ASE
-2. numpy
-3. asi4py
-4. mace
-5. pyTorch
-6. pyYaml
+To install *aims-PAX* and all its requirements do the following steps:
+1. Create a(n) (mini)conda environment (if not existing already) e.g.: `conda create -n my_env python=3.10.14`
+2. Activate the conda environment: `conda activate my_env`
+3. Clone this repository
+4. Move to the *aims-PAX* directory: `cd *aims-PAX*`
+5. run the setup script: `bash setup.sh`
 
-Also, you have to compile FHI aims as a library (BUILD_SHARED_LIBS has to be set to ON in the CMake file).
+The latter will install the PARSL tools, other packages specified in `requirements.txt`, and *aims-PAX* itself.
 
-If you want to use the automatic resource managment feature of aims PAX for computing multiple DFT runs in parallel you also need:
+### FHI aims
 
-7. PARSL
+To install FHI aims you can follow the instruction in the [official manual](https://fhi-aims.org/uploads/documents/FHI-aims.250320_1.pdf).
 
-For this you need to compile FHI AIMS as an executable (standard installation).
+Here is a quick rundown how to compile it on [Meluixna](https://docs.lxp.lu/):
 
+1. Clone the source code from the FHI aims gitlab.
+2. Move to the root FHI aims directory
+3. Create a build directory and change to it: `mkdir build && cd build`
+4. Create a `initial_cache.cmake` file with all necessary flags (an example is provided under:  `fhi_aims_help/example_initial_cache.cmake`)
+5. Load necessary modules (if you are on a HPC environment) e.g. intel compilers etc.
+6. run `cmake -C initial_cache.cmake ..`
+7. run `make -j x` (x being the number of processes)
 
-To install the dependencies you can clone the repository and run inside the directory:
+After compilation you will find an exectuable e.g. `aims.XXX.scalapack.mpi.x` which can then be used in *aims-PAX*.
 
-```
-pip install -r requirements.txt
-```
-
-!!! Note: Make sure to uncomment PARSL in requirements.txt if you want to use the PARSL version of aims PAX. Additionally you have to install the `Work Queue` (https://cctools.readthedocs.io/en/latest/) tools. This can be done with a simple `conda install`. You can just run the `setup.sh` script to handle this.
-
-In order to install aims PAX itself, run:
-
-```
-pip install .
-```
-
+A `.cmake` file for [Meluixna](https://docs.lxp.lu/) can be found in `fhi_aims_help`, alongside a script to run the compilation (step 7 above). The latter also includes the necessary modules that have to be loaded at step 5 above.
 
 ## Running 
 
-To run aims PAX, one has to specify the settings for FHI aims, the MACE model and active learning. 
+To run *aims-PAX*, one has to specify the settings for FHI aims, the MACE model and active learning. 
 
 1. make sure the following files are in the working directory:
     - ```control.in```, 
-    - ```geometry.in```,
-    - ```mace_settings.yaml```,
-    - ```active_learning_settings.yaml``` 
-2. ```aims_PAX ``` (for example)
+    - ```mace.yaml```,
+    - ```aimsPAX.yaml```
+    - either specify a geometry as `geometry.in` or provide a path in the `MISC` settings under `path_to_geometry`. For the latter, you can also specify a path to folder containing multiple geometry files (see Multi-system sampling).
+2. run ```*aims-PAX* ``` in the directory
 
-!!! Note: Running the parallel procedure on one node using the MPI implementation, you need to run the command using e.g. ```mpirun``` or ```srun```.
+The settings are explained below and *aims-PAX* automatically runs the all necessary steps. During the run you can observe its progress in the `initial_dataset.log`and `active_learning.log` inside the log directory (default is `./logs`). At the end, the model(s) and data can be found in the `results/` folder.
 
-The settings are explained below and aims PAX automatically runs the all necessary steps. Both procedures, initial dataset acquisition and active learning, are classes that can be used independently from each other.
+**Note:** The models are named like this: `{name_exp}_{seed}.model` where `name_exp` is set in `mace.yaml` (see Settings/MACE settings section below)
 
-To only create an initial dataset you can run ```aims_PAX-initial-ds ``` in the terminal. Equivalently, to only run the active learning procedure (given that the previous step has been done or all the necessary files are present), just run ```aims_PAX-al```.
+Both procedures, initial dataset acquisition and active learning, are classes that can be used independently from each other. To only create an initial dataset you can run ```*aims-PAX*-initial-ds ```. Equivalently, to only run the active learning procedure (given that the previous step has been done or all the necessary files are present), just run ```*aims-PAX*-al```.
+
+**Note:** you can also change the names of the settings file and run `aims-PAX --mace_settings path/to/my_mace.yaml --aimsPAX-settings path/to/my_aimspax.yaml` for example.
+
+### Common Pitfalls
+
+1. **Not specifying all required settings:** Take a look at the settings below. Mandatory ones are marked by *.
+2. **Not properly specifying slurm settings in `CLUSTER` settings:** PARSL launches independent jobs from the main process, which collects the jobs' results. This means that these jobs need all the infos and settings that a normal job on an HPC enviroment also needs. In practice, you have to make sure that all the necessary `slurm` variables are provided under `slurm_str`. Setting of environment variables, loading modules as well as sourcing the correct conda environment has to be specified under `worker_str`. You can find an example in the `example` folder.
+
+### Multi-system sampling
+
+One of the major strengths of *aims-PAX* is running multiple trajectories at once to sample new points during active learning. It is possible to have multiple distinct geometries or chemical species in these different trajectories. For example, perhaps you want to start sampling for the same systems from various starting geometries or train a model different molecules, materials etc. at the same time. 
+
+To do so, as mentioned in the **Running** section above, you must provide the path to a folder containing [`ASE` readable files](https://ase-lib.org/ase/io/io.html) under `path_to_geometry` under the `MISC` settings in the `aimsPAX.yaml` file.
+
+*aims-PAX* then automatically reads all `ASE` readable files inside that directory and assigns it to a trajectory. If `num_trajectories` is smaller than the number of geometries present in the folder, *aims-PAX* will warn you and adjust `num_trajectories` to the number of actual geometries. If `num_trajectories` is larger than the number of geometries, *aims-PAX* will loop through the geometries again, assigning them to new trajectories until `num_trajectories` is satisfied.
+
+If you want to use varying numbers of trajectories for each geometry you provide, the simplest solution for now is to duplicate each geometry file in the specified directory as many times as the number of trajectories you wish to run for that geometry.
+
+During the **initial dataset generation**, at each step `(n_points_per_sampling_step_idg *times* ensemble_size *times* number of geometries)` will be sampled so that points are sampled for each geometry. 
+
+During **active learning**, the uncertainty threshold is shared across all geometries, at the moment.
+
+### Restarting
+
+By default `create_restart` is set to `True` in `MISC` in the settings (see below). In that case, the state of the initial dataset generation or active learning run is frequently saved to a `.npy` file inside the `restart` directory. The procedure can be continued by just running `*aims-PAX*(-al/initial-ds)` again.
+
+## Settings 
+
+Description of all settings and their default values for FHI aims, *aims-PAX*, and MACE.
+
+### FHI aims settings (control.in)
+
+The settings here are the same as for usual FHI aims calculations (see [manual]https://fhi-aims.org/uploads/documents/FHI-aims.250320_1.pdf) and are 
+parsed internally in *aims-PAX*. MD settings are not specified here.
+
+As we are using ASE/ASI for running FHI aims, it is not needed to add the basis set information at the ned of the ```control.in``` file. That information is taken straight from the indicated species directory (see ```species_dir``` in the settings).
+
+### *aims-PAX* (aimsPAX.yaml)
+
+Settings are given in a `.yaml` file. The file itself is split into multiple dictionaries: `INITIAL_DATASET_GENERATION`, `ACTIVE_LEARNING`, `MD`, `MISC`, `CLUSTER`.
+
+Mandatory settings are indicated by \*. Otherwise, they are optional and default settings are used if not specified differently.
+
+Example settings can be found in the `examples` folder.
+
+#### INITIAL_DATASET_GENERATION:
+
+| Parameter                       | Type             | Default           | Description                                                                                     |
+| ------------------------------- | ---------------- | ----------------- | ----------------------------------------------------------------------------------------------- |
+| \*species\_dir                | `str`            | —                 | Path to the directory containing the FHI AIMS species defaults.                                 |
+| \*n_points_per_sampling_step_idg           | `int`            | —                 |  Number of points that is sampled at each step for each model in the ensemble and each geometry.                   |
+| ensemble_size | `int` | `4` | Number of models in the ensemble for uncertainty estimation. |
+| initial_sampling | `str` | `"mace-mp0"` | Method for selecting initial structures for training. Possible options are: `aimd` and `mace-mp0`. The latter is strongly recommended.|
+| initial_foundational_size | `str` | `"small"` | Size of the foundational model used when `initial_sampling` is set to `mace-mp0`. |
+| desired_acc | `float` | `0.0` | Force MAE that the ensemble should reach on the validation set. Needs to be combined with `desired_acc_scale_idg`.|
+| desired_acc_scale_idg | `float` | `10.0` | Scales `desired_acc` during initial dataset generation. Resulting product is accuracy that the model has to reach on the validation set before stopping the procedure at this stage. |
+| max_initial_set_size | `int` or `float` | `np.inf` | Maximum size of the initial training dataset. |
+| max_initial_epochs | `int` or `float` | `np.inf` | Maximum number of epochs for the initial training stage. |
+| intermediate_epochs_idg | `int` | `5` | Number of intermediate epochs between dataset growth steps in initial training. |
+| valid_skip | `int` | `1` | Number of training steps between validation runs in initial training. |
+| valid_ratio | `float` | `0.1` | Fraction of data reserved for validation. |
+| scheduler_initial | `bool` | `True` | Whether to use a learning rate scheduler during initial training. |
+| converge_initial | `bool` | `False` | Whether to converge the model(s) on the initial training set after a stopping criterion was met. |
+| max_convergence_epochs | `int` | `500` | Maximum total epochs allowed before halting convergence |
+| convergence_patience | `int` | `50` | Number of epochs without improvement before halting convergence. |
+| skip_step_initial | `int` | `25` | Step interval for evaluating the ML force field during initial training. |
+| margin | `float` | `0.002` | Margin to decide if a model has improved over the previous training epoch. |
+| analysis | `bool` | `False` | Saves metrics such as losses during initial dataset generation.|
+| progress_dft_update | `int` | `10` | Intervals at which progress of DFT calculations is logged.|
+<!---
+| aims_lib_path | `str` or `None` | `None` | Path to the compiled FHI-aims library for direct force and energy evaluation. |
+-->
+
+#### ACTIVE_LEARNING:
+
+| Parameter                       | Type             | Default           | Description                                                                                     |
+| ------------------------------- | ---------------- | ----------------- | ----------------------------------------------------------------------------------------------- |
+| \*species\_dir                | `str`            | —                 | Path to the directory containing the FHI AIMS species defaults.                                 |
+| \*num\_trajectories           | `int`            | —                 | How many trajectories are sampled from during the active learning phase.                        |
+| desired\_acc                | `float`          | `0.`                 | Force MAE that the ensemble should reach on the validation set.                                 |
+| max\_MD\_steps              | `int`            | `np.inf`                 | Maximum number of steps taken using the MLFF during active learning per trajectory.             |
+| max\_train\_set\_size       | `int`            | `np.inf`                 | Maximum size of training set before procedure is stopped.                                       |
+| ensemble\_size              | `int`            | `4`               | Number of models in the ensemble for uncertainty estimation.                                    |
+| c\_x                        | `float`          | `0.0`             | Weighting factor for the uncertainty threshold (see Eq. 2 in the paper). < 0 tightens, > 0 relaxes the threshold           |
+| freeze\_threshold\_dataset  | `float`          | `np.inf`          | Training set size at which the uncertainty threshold is frozen; `np.inf` disables freezing.                     |
+| uncertainty\_type           | `str`            | `"max_atomic_sd"` | Method for estimating prediction uncertainty. Default is max force standard deviation (See Eq. 1 in the paper).                                                   |
+| skip\_step\_mlff            | `int`            | `25`              | Step interval for evaluating the ML force field during MD in active learning.                   |
+| intermediate\_epochs\_al    | `int`            | `1`               | Number of intermediate training epochs during active learning.       |
+| max\_epochs\_worker         | `int`            | `2`               | Maximum number of training epochs per worker after DFT is done.                         |
+| valid\_skip                 | `int`            | `1`               | Rate at which validation of model during training is performed.                                               |
+| valid\_ratio                | `float`          | `0.1`             | Fraction of data reserved for validation during active learning.                                                       |
+| converge\_al                | `bool`           | `True`            | Whether to converge the model(s) on the final training set at the end of active learning.                                 |
+| converge\_best              | `bool`           | `True`            | Whether to only converge the best performing model of the ensemble.      |
+| convergence\_patience       | `int`            | `50`              | Number of epochs without improvement before halting convergence.                             |
+| max\_convergence\_epochs    | `int`            | `500`             | Maximum total epochs allowed before halting convergence.                            |
+| margin                      | `float`          | `0.002`           | Margin to decide if a model has improved over the previous training epoch.                               |
+| uncert\_not\_crossed\_limit | `int`            | `50000`             | Max consecutive steps without crossing uncertainty threshold after which the a point is treated as if it crossed the threshold. This is done in case the models are overly confident for a long time.          |
+| analysis                    | `bool`           | `False`           | Whether to run DFT calculations at specified intervals and save predicitions, uncertainties etc.                     |
+| analysis\_skip              | `int`            | `50`              | Interval (in MD steps) at which analysis DFT calculations are performed.                     |
+| seeds\_tags\_dict           | `dict` or `None` | `None`            | Optional mapping of seed indices to trajectory tags for reproducible runs.                      |
+
+<!---
+THESE ARE NOT ACTIVELY USED IN *aims-PAX* BUT ARE WORKING
+| aims\_lib\_path             | `str` or `None`  | `None`            | Path to the compiled FHI-aims library for direct force and energy evaluation.                   |
+| parallel                    | `bool`           | `False`           | Whether to run multiple active learning trajectories in parallel.                               |
+| intermol\_crossed\_limit    | `int`            | `10`              | Max uncertainty threshold crossings allowed for intermolecular interactions before stopping.    |
+| intermol\_forces\_weight    | `float`          | `100`             | Weight factor applied to intermolecular force contributions in the loss.                        |
+-->
+
+#### CLUSTER:
+
+Settings for PARSL.
+
+| Parameter | Type | Default | Description |
+|-----------|------|---------|-------------|
+| type | `str` | `'slurm'` | Cluster backend type. Currently only `slurm` is available. |
+| \*project_name | `str` | — | Name of the PARSL run. |
+| \*parsl_options | `dict` | — | Parsl configuration options. |
+| &nbsp;&nbsp;&nbsp;&nbsp;&nbsp;\*nodes_per_block | `int` | — | Number of nodes per block. |
+| &nbsp;&nbsp;&nbsp;&nbsp;&nbsp;\*init_blocks | `int` | — | Initial number of blocks to launch. |
+| &nbsp;&nbsp;&nbsp;&nbsp;&nbsp;\*min_blocks | `int` | — | Minimum number of blocks allowed. |
+| &nbsp;&nbsp;&nbsp;&nbsp;&nbsp;\*max_blocks | `int` | — | Maximum number of blocks allowed. |
+| &nbsp;&nbsp;&nbsp;&nbsp;&nbsp;\*label | `str` | —| Unique label for this Parsl configuration. |
+| &nbsp;&nbsp;&nbsp;&nbsp;&nbsp;run_dir | `str` | `None` | Directory to store runtime files. |
+| &nbsp;&nbsp;&nbsp;&nbsp;&nbsp;function_dir | `str`| `None` | Directory for Parsl function storage. |
+| \*slurm_str | `str` (multiline) | — | SLURM job script header specifying job resources and options. |
+| \*worker_str | `str` (multiline) | — | Shell commands to configure the environment for each worker process e.g. loading modules, activating conda environment. |
+| \*launch_str | `str` | — | Command to run FHI aims e.g. `"srun path/to/aims/aims.XXX.scalapack.mpi.x >> aims.out"` |
+| \*calc_dir | `str` | — | Path to the directory used for calculation outputs. |
+| clean_dirs | `bool` | `True` | Whether to remove calculation directories after DFT computations. |
+
+#### MD:
+For now we have only one MD setting for all trajectories and the selection for settings is limited to Langevin dynamics, Berendsen and Nosé-Hoover-Parinello-Rahman NPT. Currently these settings are used for *ab initio* and MLFF MD.
+
+| Parameter | Type | Default | Description |
+|-----------|------|---------|-------------|
+| \*stat_ensemble | `str` | — | Statistical ensemble for molecular dynamics (e.g., `NVT`, `NPT`). |
+| timestep | `float` | — | Time step for molecular dynamics (in femtoseconds). |
+| temperature | `float` | `300`|   |
+| thermostat | `str` | `Langevin` | Thermostat used when `NVT` is chosen. |
+| friction | `float` | `0.001` | Friction coefficient for Langevin dynamics (in fs<sup>-1</sup>). |
+| MD_seed | `int` | `42` | Random number generator seed for Langevin dynamics. |
+| barostat | `str` | `Berendsen`| Barostat used when `NPT` is chosen. Nosé-Hoover-Parinello-Rahman NPT is simply `"npt"`  |
+| pressure_au | `float` | `3.4e-7`| Pressure used for Berendesen dynamics (atomic units).  |
+| external_stress | `float` | `6.24e-7`| Pressure used for Nosé-Hoover-Parinello-Rahman dynamics (eV/Å<sup>3</sup>) |
+| ttime | `float` | `30`| Characteristic timescale of the thermostat in Nosé-Hoover-Parinello-Rahman dynamics.  |
+| pfactor | `float` | `100`| [Constant in barostat differential equation](https://ase-lib.org/ase/md.html#constant-npt-simulations-the-isothermal-isobaric-ensemble).  |
+
+
+#### MISC:
+
+| Parameter       | Type          | Default     | Description                                          |
+|-----------------|---------------|-------------|------------------------------------------------------|
+| path_to_control | `str`       | `"./control.in"` | Path to the FHI aims control input file.                      |
+| path_to_geometry | `str`      | `"./geometry.in"` | Path to the geometry input file or folder.                     |
+| dataset_dir   | `str`        | `"./data"`    | Directory where dataset files will be stored.            |
+| log_dir       | `str`        | `"./logs"`    | Directory where log files are saved.                 |
+| create_restart | `bool`       | `True`       | Whether to create restart files during the run.     |
+
+<!---
+| **mol_idxs       | `list` or `None` | `None`   | List of molecule indices to consider; `None` means all. |
+-->
+
+### MACE settings (mace.yaml)
+
+The settings for the MACE model(s) are specified in the YAML file called 'mace.yaml'.
+We use exactly the same names as employed in the [MACE code](https://github.com/ACEsuit/mace). This is mostly to show the structure of the `.yaml` file and its default values.
+
+#### GENERAL
+
+| Parameter       | Type          | Default     | Description                                          |
+|-----------------|---------------|-------------|------------------------------------------------------|
+| name_exp    | `str`         | -           | This is the name given to the experiment and subsequently to the models and datasets. |
+| checkpoints_dir | `str`         | `"./checkpoints"` | Directory path for storing model checkpoints. |
+| loss_dir     | `str`         | `"./losses"`  | Directory path for storing training losses for each ensemble member. |
+| model_dir       | `str`         | `"./model"`   | Directory path for storing final trained models. |
+| default_dtype   | `str`         | `"float32"`   | Default data type for model parameters (float32/float64). |
+| compute_stress  | `bool`        | `False`       | Whether to compute stress tensors. |
+| seed            | `int`         | `42`          | Random seed (ensemble seeds are randomly chosen using this seed here.) |
+
+#### ARCHITECTURE
+
+| Parameter       | Type          | Default     | Description                                          |
+|-----------------|---------------|-------------|------------------------------------------------------|
+| atomic_energies | `list` or `None` | `None `    | Atomic energy references for each element. If `None`, atomic energies are determined using the training set using linear least squares. |
+| r_max           | `float`       | `5.0`         | Cutoff radius (Å). |
+| num_channels    | `int`         | `128`         | Number of channels (features). |
+| radial_MLP      | `list`        | `[64, 64, 64]` | Architecture of the radial MLP (hidden layer sizes). |
+| max_L           | `int`         | `1`           | Maximum degree for equivariant features. |
+| radial_type     | `str`         | `"bessel"`    | Type of radial basis functions. |
+| num_radial_basis| `int`         | `8`           | Number of radial basis functions. |
+| num_cutoff_basis| `int`         | `5`           | Number of cutoff basis functions. |
+| num_interactions| `int`         | `2`           | Number of interaction layers. |
+| correlation     | `int`         | `3`           | Correlation order for many-body interactions. |
+| gate            | `str`         | `"silu"`      | Activation function. |
+| MLP_irreps      | `str`         | `"16x0e"` | Irreps of the multi-layer perceptron in the last readout. Format is a `str` as defined in [`e3nn`](https://github.com/e3nn/e3nn/) |
+| interaction     | `str`         | `"RealAgnosticResidualInteractionBlock"` | Type of interaction block. |
+| interaction_first| `str`        | `"RealAgnosticResidualInteractionBlock"` | Type of first interaction block. |
+| compute_avg_num_neighbors | `bool` | `True`      | Whether to compute average number of neighbors. |
+| scaling         | `str`         | `"rms_forces_scaling"` | Scaling method used. |
+| max_ell         | `int`         | `3`           | Maximum degree of direction embeddings. |
+| model           | `str`         | `"ScaleShiftMACE"` | Type of MACE model architecture to use. |
+
+#### TRAINING
+
+| Parameter       | Type          | Default     | Description                                          |
+|-----------------|---------------|-------------|------------------------------------------------------|
+| batch_size      | `int`         | `5`           | Batch size for training data. |
+| valid_batch_size| `int`         | `5`           | Batch size for validation data. |
+| weight_decay    | `float`       | `5.e-07`      | L2 regularization weight decay factor. |
+| lr              | `float`       | `0.01`        | Initial learning rate for optimizer. |
+| amsgrad         | `bool`        | `True`        | Whether to use AMSGrad variant of Adam optimizer. |
+| optimizer       | `str`         | `"adam"`      | Optimizer type (adam/adamw). |
+| scheduler       | `str`         | `"ReduceLROnPlateau"` | Learning rate scheduler type. |
+| lr_scheduler_gamma | `float`    | `0.9993`      | Learning rate decay factor for scheduler. |
+| lr_factor       | `float`       | `0.8`         | Factor by which learning rate is reduced. |
+| scheduler_patience | `int`      | `5`           | Number of epochs to wait before reducing LR. |
+| swa             | `bool`        | `False`       | Whether to use Stochastic Weight Averaging. |
+| ema             | `bool`        | `True`        | Whether to use Exponential Moving Average. |
+| ema_decay       | `float`       | `0.99`        | Decay factor for exponential moving average. |
+| loss            | `str`         | `"weighted"`  | Loss function type. |
+| energy_weight   | `float`       | `1.0`         | Weight for energy loss component. |
+| forces_weight   | `float`       | `1000.0`      | Weight for forces loss component. |
+| virials_weight  | `float`       | `1.0`         | Weight for virials loss component. |
+| stress_weight   | `float`       | `1.0`         | Weight for stress loss component. |
+| config_type_weights | `dict`    | `{"Default": 1.0}` | Weights for different configuration types. |
+| clip_grad       | `float`       | `10.0`        | Gradient clipping threshold. |
+
+#### MISC
+
+| Parameter       | Type          | Default     | Description                                          |
+|-----------------|---------------|-------------|------------------------------------------------------|
+| device          | `str`         | `"cpu"`       | Device for training (cpu/cuda). |
+| error_table     | `str`         | `"PerAtomMAE"` | Type of error metrics to compute and display. |
+| log_level       | `str`         | `"INFO"`      | Logging level (DEBUG/INFO/WARNING/ERROR). |
+
+<!---
+| keep_checkpoints| `bool`        | `False`       | Whether to keep all checkpoint files. |
+| restart_latest  | `bool`        | `False`       | Whether to restart from the latest checkpoint. |
+-->
+
+
 
 ## The workflow 
+<img src="readme_figs/aims_PAX_overview.png" alt="drawing" width="650"/>
+TODO: add link
 
-![Image](readme_figs/aims_PAX_overview.png)
+Please consult the [publication]() for a description of the *aims-PAX* workflow.
 
-We briefly explain the workflow that is performed automatically by aims PAX. For more details consult the publication (CITE).
+<!---
 
 The overall workflow of the procedure and some comments thereupon are written here. For more details on specific parameters take a look at the settings glossary at the bottom.
 
-**Creating the initial ensemble and dataset.**
+Creating the initial ensemble and dataset.
 
 In the beginning a set of MACE models is trained on a initial dataset to serve as a starting point for the actual active learning. Each ensemble member gets their own initial training and validation set. See a) in the figure above.
 
@@ -74,176 +322,103 @@ Optionally, the model(s) can be converged on the dataset. This means that the mo
 
 
 
-**Active Learning**
+Active Learning
 
 During the active learning procedure (c in the figure above), multiple MD trajectories are launched and run with the MLFF model(s). At a specified interval the uncertainty of the forces are computed. After a warmup (currently 10 uncertainty estimations) the moving average of the uncertainties is calculated. Using this the uncertainty threshold (with c~x) is computed. If the threshold is crossed during MD the DFT energies and forces are calculated for that point. The point is then added to the training or validation set.  
 
 In the former case the MD is halted for the given trajectory and when the program loops back to it the models are trained for some epochs instead before continuing to the next trajectory. This state is kept until a maximum number of epochs is reached and the trajectory is propageted again.
 
-In the serial version of aims PAX, the whole workflow halts when a DFT calculation is being run. In contrast, using the MPI version on a single node, the other trajectories can be propagated. In that case, once all trajectories have crossed the uncertainty threshold, the workflow is halted again and all DFT calculations are processed sequentially. When using the recommended PARSL version, all these DFT calculations can be processed in parallel depending on the available resources.
+In the serial version of *aims-PAX*, the whole workflow halts when a DFT calculation is being run. In contrast, using the MPI version on a single node, the other trajectories can be propagated. In that case, once all trajectories have crossed the uncertainty threshold, the workflow is halted again and all DFT calculations are processed sequentially. When using the recommended PARSL version, all these DFT calculations can be processed in parallel depending on the available resources.
 
 
 Similarly to the creation of the initial dataset, the models are updated throughout the whole process and are not reinitialized. As we are only adding a few points at a time this can lead to models getting stuck on a local minimum. If this happens, the optimizer state is reinitialized, which is supposed to kick the model out of the local minimum.
 
 If the ```analysis``` keyword is set to ```True```, points from the MLFF MD are taken at fixed intervals and re-computed using FHI AIMS. The results and other metrics are saved in a dictionary. This can be used to track how the uncertainty behaves etc. As this results in many more DFT calculations it is generally not recommended for production runs.
-
-
+-->
 <!---
-**Atomic Energies**
+Atomic Energies
 
 ```THIS IS NOT IMPLEMENTED PROPERLY, RIGHT NOW!!!```
 
-It is recommended to use the isolated atomic energies of the elements in a given system as the *zero point* energy in MACE. This enables the model have the correct asymptotic behavior when dissocating molecules. The package includes a script that calculates the energies of all the elements found in a the ```geometry.in``` file. For this run ```aims_PAX-atomic-energies```. Make sure to have defined the path to aims, the species directory in the ```active_learning_settings.yaml``` and also that a ```control.in``` file is present. The results are saved in a log file. The energies can then be included in ```mace_settings.yaml```.
+It is recommended to use the isolated atomic energies of the elements in a given system as the *zero point* energy in MACE. This enables the model have the correct asymptotic behavior when dissocating molecules. The package includes a script that calculates the energies of all the elements found in a the ```geometry.in``` file. For this run ```aims_PAX-atomic-energies```. Make sure to have defined the path to aims, the species directory in the ```active_learning_settings.yaml``` and also that a ```control.in``` file is present. The results are saved in a log file. The energies can then be included in ```mace.yaml```.
 -->
 
-## Settings 
+# References
 
-### FHI aims settings 
+If you are using *aims-PAX* cite the main publication: 
 
-The settings here are the same as for usual FHI aims calculations and are 
-parsed internally in aims PAX. MD settings are not specified here.
-Currently only one system and geometry can serve as an input (```geometry.in```).
-
-As we are using ASE/ASI for running FHI aims, it is not needed to add the basis set information at the ned of the ```control.in``` file. That information is taken straight from the indicated species directory (see ```species_dir```) in the ```Active Learning Settings```.
-
-### MACE settings 
-
-The settings for the MACE model(s) are specified in the YAML file called 'mace_settings.yaml'. In the future, we'll use the settings stuff from the original mace code.
-Inside the workflow, a dictionary is created with the 
-following subdictionaries and keys:
-
-- GENERAL:
-    - **name_exp** *(str)*: This is the name given to the experiment and subsequently to the models and datasets.
-    - **log_dir** *(str)*: Path to save the log files to.
-    - **checkpoints_dir** *(str)*: Path to save the checkpoints from training to.
-    - **results_dir** *(str)*: Path to save the training history to (see below).
-    - **model_dir** *(str)*: Path to save the models to (see below).
-    - **default_dtype** *(str)*: To specify whether to use float32 or float64 for the model.
-    - **compute_stress** *(str)*: *Not implemented yet* 
-    - **seed** *(int)*: Seed for RNG. Is used for batching and parameter initialization (or generating more seeds for ensembles)
-
-- ARCHITECTURE:
-    - **atomic_energies** *(dict)*: One can specify isolated atomic energies that will be used as E0s inside the model. If it's not specified, average values are computed from the data.
-    - For the rest see official MACE documentation (the names are the same):
-    *(model, r_max, num_channels, max_L, max_ell, radial_type, num_radial_basis, num_cutoff_basis, interaction, num_interactions, correlation, radial_MLP, gate, MLP_irreps, interaction_first, compute_avg_num_neighbors)*
-
-- TRAINING:
-    - See official MACE documentation (names are the same):
-    *(valid_fraction, batch_size, valid_batch_size, weight_decay, scaling, lr, amsgrad, optimizer, scheduler, lr_scheduler_gamma, lr_factor, scheduler_patience, swa, ema, ema_decay, max_num_epochs, loss, energy_weight, forces_weight, virials_weight, stress_weight, config_type_weights, patience, clip_grad, eval_interval)*
-
-- MISC:
-    - See official MACE documentation (names are the same):
-    *(device, keep_checkpoints, restart_latest, error_table, log_level)*
-
-### Active Learning Settings 
-- ACTIVE LEARNING
-    - **desired_acc** *(float)*: Force MAE that the ensemble should reach on the validation set. 
-    - **lambda** *Rename* *(float)*: lambda * desired_acc determines the Force MAE that the ensemble should reach on the validation set in the initial dataset collection phase.
-    - **n_samples** *(int)*: Number of points that are sampled for each ensemble member using *ab initio* MD in the initial dataset collection phase before the models are trained.
-    - **valid_ratio** *(float)*: Ratio of sampled points that is added to the validation set.
-    - **converge_initial** *(bool)*: Whether to converge the model(s) on the initial dataset or not.
-    - **converge_al** *(bool)*: Whether to converge the model(s) on the active learned dataset or not.
-    - **converge_best** *(bool)*: Whether to pick the best performing model (force MAE on validation) from an ensemble and only converging this one.
-    - **scheduler_initial** *(bool)*: Whether to use a learning rate scheduler when training the model(s) during the initial dataset collection phase.
-    - **max_initial_epochs** *(int)*: Maximum numbers of epochs that are used when training the model(s) during the initial dataset collection phase.
-    - **max_epochs_worker** *(int)*: Maximum number of epochs before the trajectory worker changes back to sampling instead of training mode.
-    - **max_final_epochs** *(int)*: Maximum numbers of epochs when converging the model(s) on a dataset.
-    - **intermediate_epochs** *(int)*: Number of epochs performed by a worker during the active learning phase before switching to the next worker.
-    - **patience** *(int)*: Number of epochs without improvement before the training is stopped (for converging).
-    - **max_MD_steps** *(int)*: Maximum number of steps taken using the MLFF during active learning per trajectory.
-    - **max_set_size** *(int)*: Maximum size of training set size before procedure is stopped.
-    - **valid_skip** *(int)*: How many epochs to skip before evaluating the model(s) on the validation set.
-    - **analysis_skip** *(int)*: How many MD steps to skip before performing a DFT calculation for analysis.
-    - **ensemble_size** *(int)*: Number of models in the ensemble.
-    - **c_x** *Rename* *(float)*: Parameter to calculate the uncertainty threshold based on the formula threshold = moving_avg_uncert * (1 - c_x).
-    - **dataset_dir** *(str)*: Path to save the generated datasets to (see below).
-    - **skip_step_initial** *(int)*: How many MD steps to skip during *ab initio*/foundational model sampling for initial dataset.
-    - **skip_step_mlff** *(int)*: How many MD steps to skip during MLFF sampling for active learning.
-    - **num_trajectories** *(int)*: How many trajectories are sampled from during the active learning phase.
-    - **species_dir** *(str)*: Path to the directory containing the FHI AIMS species defaults.
-    - **aims_lib_path** *(str)*: Path to the compiled FHI AIMS library (*not* executable).
-    - **margin** *(float)*: The threshold used to determine whether a change in error is considered an improvement, contributing to metrics such as patience or convergence.
-    - **analysis** *(bool)*: If True the losses and uncertainties are saved throughout the whole process.
-    - **initial_sampling** *(str)*: Choice of method for sampling the initial points when creating the initial training sets. For now the choice are: ```"mace-mp0"``` or ```"aimd"```.
-    - **initial_foundational_size** *(str)*: If one sets ```initial_sampling = "mace-mp0"```, the size (```"small"```,```"medium"```,```"large"```) of the foundational model can be chosen here. It is recommended to use ```"small"```.
-    - **converge_best** *(bool)*: Whether to converge to whole ensemble (```False```) or only the best performing (based on validation loss) member (```True```) on the acquired dataset (only applies to convergence after AL procedure).
-    - **parallel** *(bool)*: Whether to use the parallel version of the algorithm for creating an initial dataset and performing active learning.
-
-For now we have only one MD setting for all trajectories and the selection for settings is limited to Langevin dynamics. Currently these settings are used for *ab initio* and MLFF MD.
-- MD
-    - **stat_ensemble** *(str)*: NVE, NVT, NPT etc.
-    - **thermostat** *(str)*: Which thermostat is used when NVT is chosen.
-    - **timestep** *(float)*: Time step for MD (in fs).
-    - **friction** *(float)*: Friction for Langevin dynamics (in fs^-1).
-    - **seed** *(int)*: RNG seed for Langevin dynamics.
-
-- MISC
-    - **create_restart** *(bool)*: If True then each time a checkpoint for the model training is created and if the ensemble runs MD for a long time without interruption, important parameters are saved in a dictionary. The run can then be restarted using this by just running the respecitve command for the procedure again.
-
-In case PARSL is used, one has to specifiy certain settings that are needed to perform the distributed jobs. Currently, this is only implemented for SLURM based systems.
-
-- CLUSTER
-
-    - **type** *(str)*: Cluster backend type. Must be `'slurm'` for SLURM-based job scheduling.
-    - **project_name** *(str)*: Name of the project or job label (e.g., `'EXAMPLE'`).
-
-    - **parsl_options** 
-
-        - **nodes_per_block** *(int)*: Number of nodes per Parsl block.
-        - **init_blocks** *(int)*: Initial number of blocks to launch.
-        - **min_blocks** *(int)*: Minimum number of blocks allowed.
-        - **max_blocks** *(int)*: Maximum number of blocks allowed.
-        - **label** *(str)*: Unique label for this Parsl configuration.
-        - **run_dir** *(str, optional)*: Directory to store runtime files. 
-        - **function_dir** *(str, optional)*: Directory for Parsl function storage.
-
-    - **slurm_str** *(str)*: SLURM job script header, specifying job resources and options.
-    - **worker_str** *(str)*: Shell commands to configure the environment for each worker process.
-    - **launch_str** *(str)*: Command to launch the simulation workload via `srun` or similar SLURM launcher.
-    - **clean_dirs** *(bool)*: Whether to remove calculation directories after the run.
-    - **calc_dir** *(str)*: Path to the directory used output of calculations.
+***aims-PAX*:**
 
 
-## Folders & Files
+[**FHI-aims**](https://fhi-aims.org/)**:**
 
-- The script creates some folders and files these are:
-    - **checkpoints/**: model checkpoints during training are saved here
-    - **data/**: the initial and final datasets are saved here, as well as a dictionary that specifies the seeds for each ensemble member *(TODO: maybe move somewhere else)*
-    - **results/** *(TODO: rename)*: losses over time for each individual ensemble member
-    - **model/**: saves the final model(s) here
-    - **initial_dataset.log**: Log file for the creation of the initial dataset. Loss and errors are ensemble averages.
-    - **AL.log**: Log file for the actual active learning procedure. Loss and errors are ensemble averages.
-    - **restart/**: Contains dictionaries for restarting the procedures from a checkpoint.
+```bibtex
+@misc{aims-roadmap-2025,
+      title={Roadmap on Advancements of the FHI-aims Software Package}, 
+      author={FHI aims community},
+      year={2025},
+      eprint={2505.00125},
+      archivePrefix={arXiv},
+      primaryClass={cond-mat.mtrl-sci},
+      url={https://arxiv.org/abs/2505.00125}, 
+}
+```
+
+
+**MACE**:
+```bibtex
+@inproceedings{Batatia2022mace,
+  title={{MACE}: Higher Order Equivariant Message Passing Neural Networks for Fast and Accurate Force Fields},
+  author={Ilyes Batatia and David Peter Kovacs and Gregor N. C. Simm and Christoph Ortner and Gabor Csanyi},
+  booktitle={Advances in Neural Information Processing Systems},
+  editor={Alice H. Oh and Alekh Agarwal and Danielle Belgrave and Kyunghyun Cho},
+  year={2022},
+  url={https://openreview.net/forum?id=YPpSngE-ZU}
+}
+
+@misc{Batatia2022Design,
+  title = {The Design Space of E(3)-Equivariant Atom-Centered Interatomic Potentials},
+  author = {Batatia, Ilyes and Batzner, Simon and Kov{\'a}cs, D{\'a}vid P{\'e}ter and Musaelian, Albert and Simm, Gregor N. C. and Drautz, Ralf and Ortner, Christoph and Kozinsky, Boris and Cs{\'a}nyi, G{\'a}bor},
+  year = {2022},
+  number = {arXiv:2205.06643},
+  eprint = {2205.06643},
+  eprinttype = {arxiv},
+  doi = {10.48550/arXiv.2205.06643},
+  archiveprefix = {arXiv}
+ }
+```
+
+## Contact
+
+If you have questions you can reach us at: tobias.henkes@uni.lu or igor.poltavskyi@uni.lu
+
+For bugs or feature requests, please use [GitHub Issues](https://github.com/tohenkes/*aims-PAX*/issues).
+
+## License
+
+The *aims-PAX* code is published and distributed under the [MIT License](MIT.md).
 
 
 
 # ToDo
 ### High Priority:
-- [x] update depencies and check for conflics
-- [x] specify min version for dependencies
-- [x] Rename repo
-- [x] Merge PARSL features
-- [x] Update README
-- [x] hide non-working CLI commands
-- [x] format code with BLACK
-- [x] split up utilities into utilities, eval_tools, data_handling
-- [x] intermol loss weight switch
-- [x] add WorkQueueExecutor to requirements
-- [x] refactor active_learning.py
-- [x] manual reformatting
-- [x] add more comments and docstrings
-- [ ] refactor input file (split between IDG and AL)
-- [ ] copy original MACE input file
-- [ ] implement default settings and create checks when reading the input
+- [ ] create good example (aspirin)
+- [ ] provide bash files for running *aims-PAX* example on meluxina
+- [ ] explain example in readme
+- [ ] check installation and running w/o asi4py
+- [ ] create minimal log
+- [ ] make loading existing ensembles to use in AL easier
+- [ ] AIMD with PARSL support
 - [ ] unit tests
 - [ ] git push workflow
 - [ ] create container
+- [ ] add possible options for all settings if categorical
 ### Low Priority:
 - [ ] look at "current temperatures" more closely, does it even make sense?
-- [ ] Start multiple trajectories from different starting geometries
+- [x] Start multiple trajectories from different starting geometries
 - [ ] take epoch function from mace directly
-- [ ] check if scratch_train.py and test_ensemble.py still work
-- [ ] change recalculator to use parsl
+- [x] test_ensemble.py still work
+- [x] change recalculator to use parsl
 - [ ] change epoch saved in AL for ckpt
 - [ ] update to new mace and torch version
 - [ ] clear logger -- prints warning from mace: Standard deviation of the scaling is zero, Changing to no scaling
@@ -251,10 +426,11 @@ In case PARSL is used, one has to specifiy certain settings that are needed to p
 - [ ] energy, force weight swap in loss fn during convergence
 - [ ] multiple MD settings
 - [ ] multi GPU parallelism for AL
-- [ ] multiple species at once
+- [x] multiple species at once
 - [ ] multiple trajectories in IDG
 - [ ] compile models at the end
 - [ ] fine-tuning of foundational models
+- [ ] use H5MD file format
 - [ ] Implement SO3LR (needed: (ensemble) calculator, model setup, training setup, one epoch function, update model auxiliaries)
 
 

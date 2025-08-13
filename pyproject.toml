@@ -7,7 +7,7 @@ name = "aims_PAX"
 version = "0.1"
 description = "Active learning for FHI-aims"
 readme = "README.md"
-requires-python = ">=3.9"
+requires-python = ">=3.10.14"
 license = { text = "Placeholder" }
 authors = [
     { name = "Tobias Henkes", email = "tobias.henkes@uni.lu" }
@@ -37,7 +37,7 @@ homepage = "https://github.com/tohenkes/aims_PAX"
 where = ["src"]
 
 [project.scripts]
-aims_PAX = "aims_PAX.cli.__main__:main"
-aims_PAX-initial-ds = "aims_PAX.cli.create_initial_ds:main"
-aims_PAX-al = "aims_PAX.cli.al_procedure_only:main"
-aims_PAX-recalc = "aims_PAX.cli.recalculate_data:main"
+aims-PAX = "aims_PAX.cli.__main__:main"
+aims-PAX-initial-ds = "aims_PAX.cli.create_initial_ds:main"
+aims-PAX-al = "aims_PAX.cli.al_procedure_only:main"
+aims-PAX-recalc = "aims_PAX.cli.recalculate_data:main"

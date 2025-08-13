@@ -30,6 +30,8 @@ from aims_PAX.tools.utilities.utilities import (
     setup_logger,
     update_model_auxiliaries,
     read_geometry,
+    save_checkpoint,
+    log_yaml_block,
     AIMSControlParser,
     ModifyMD,
 )
@@ -64,7 +66,7 @@ class PrepareInitialDatasetProcedure:
     def __init__(
         self,
         mace_settings: dict,
-        al_settings: dict,
+        aimsPAX_settings: dict,
         path_to_control: str = "./control.in",
         path_to_geometry: str = "./geometry.in",
         use_mpi: bool = True,
@@ -90,7 +92,7 @@ class PrepareInitialDatasetProcedure:
         self.rank = self.comm_handler.get_rank()
         self.world_size = self.comm_handler.get_size()
 
-        self.log_dir = Path(mace_settings["GENERAL"]["log_dir"])
+        self.log_dir = Path(aimsPAX_settings["MISC"]["log_dir"])
         logger_level = (
             logging.DEBUG
             if mace_settings["MISC"]["log_level"].lower() == "debug"
@@ -105,10 +107,21 @@ class PrepareInitialDatasetProcedure:
         if self.rank == 0:
             logging.info("Initializing initial dataset procedure.")
             logging.info(f"Procedure runs on {self.world_size} workers.")
+            logging.info(
+                "Using followng settings for the initial dataset procedure:"
+            )
+            log_yaml_block(
+                "INITIAL_DATASET_GENERATION",
+                aimsPAX_settings["INITIAL_DATASET_GENERATION"],
+            )
 
         self.control_parser = AIMSControlParser()
         self._handle_mace_settings(mace_settings)
-        self._handle_al_settings(al_settings)
+        if self.rank == 0:
+            logging.info("Using following settings for MACE:")
+            log_yaml_block("MACE", mace_settings)
+
+        self._handle_settings(aimsPAX_settings)
         self._handle_aims_settings(path_to_control)
         self._create_folders()
 
@@ -158,7 +171,7 @@ class PrepareInitialDatasetProcedure:
         self.seeds_tags_dict = create_seeds_tags_dict(
             seeds=self.ensemble_seeds,
             mace_settings=self.mace_settings,
-            al_settings=self.al,
+            misc_settings=self.misc,
         )
 
         self._handle_atomic_energies()
@@ -180,7 +193,7 @@ class PrepareInitialDatasetProcedure:
                 mace_settings=self.mace_settings,
                 restart=self.restart,
                 checkpoints_dir=self.checkpoints_dir,
-                al_settings=self.al,
+                mol_idxs=self.mol_idxs,
             )
             if self.restart:
                 self.epoch = (
@@ -245,28 +258,27 @@ class PrepareInitialDatasetProcedure:
         """
 
         self.mace_settings = mace_settings
-        self.seed = self.mace_settings["GENERAL"]["seed"]
-        self.r_max = self.mace_settings["ARCHITECTURE"]["r_max"]
-        self.set_batch_size = self.mace_settings["TRAINING"]["batch_size"]
-        self.set_valid_batch_size = self.mace_settings["TRAINING"][
-            "valid_batch_size"
-        ]
-        self.checkpoints_dir = (
-            self.mace_settings["GENERAL"]["checkpoints_dir"] + "/initial"
-        )
-        self.scaling = self.mace_settings["TRAINING"]["scaling"]
-        self.dtype = self.mace_settings["GENERAL"]["default_dtype"]
+        general = mace_settings["GENERAL"]
+        architecture = mace_settings["ARCHITECTURE"]
+        training = mace_settings["TRAINING"]
+        misc = mace_settings["MISC"]
+
+        self.seed = general["seed"]
+        self.r_max = architecture["r_max"]
+        self.set_batch_size = training["batch_size"]
+        self.set_valid_batch_size = training["valid_batch_size"]
+        self.checkpoints_dir = general["checkpoints_dir"] + "/initial"
+        self.scaling = architecture["scaling"]
+        self.dtype = general["default_dtype"]
         torch.set_default_dtype(dtype_mapping[self.dtype])
-        self.device = self.mace_settings["MISC"]["device"]
-        self.atomic_energies_dict = self.mace_settings["ARCHITECTURE"].get(
-            "atomic_energies", None
-        )
-        self.compute_stress = self.mace_settings.get("compute_stress", False)
+        self.device = misc["device"]
+        self.atomic_energies_dict = architecture.get("atomic_energies")
+        self.compute_stress = misc.get("compute_stress", False)
         self.properties = ["energy", "forces"]
         if self.compute_stress:
             self.properties.append("stress")
 
-    def _handle_al_settings(self, al_settings: dict) -> None:
+    def _handle_settings(self, aimsPAX_settings: dict) -> None:
         """
         Saves the active learning settings to class attributes.
         TODO: Create function to check if all necessary settings are present
@@ -277,32 +289,39 @@ class PrepareInitialDatasetProcedure:
                                 learning settings.
         """
 
-        self.al = al_settings["ACTIVE_LEARNING"]
-        self.misc = al_settings["MISC"]
-        self.md_settings = al_settings["MD"]
-        self.cluster_settings = al_settings.get("CLUSTER", None)
-        self.ensemble_size = self.al["ensemble_size"]
-        self.desired_acc = self.al["desired_acc"]
-        self.lamb = self.al["lambda"]
-        self.n_samples = self.al["n_samples"]
-        self.max_initial_epochs = self.al["max_initial_epochs"]
-        self.max_final_epochs = self.al["max_final_epochs"]
-        self.valid_skip = self.al["valid_skip"]
-        self.skip_step = self.al["skip_step_initial"]
-        self.intermediate_epochs = self.al["intermediate_epochs"]
-        self.valid_ratio = self.al["valid_ratio"]
-        self.ASI_path = self.al["aims_lib_path"]
-        self.species_dir = self.al["species_dir"]
-        self.analysis = self.al.get("analysis", False)
-        self.margin = self.al.get("margin", 0.001)
-        if not self.al["scheduler_initial"]:
+        self.idg_settings = aimsPAX_settings["INITIAL_DATASET_GENERATION"]
+        self.misc = aimsPAX_settings["MISC"]
+        self.md_settings = aimsPAX_settings["MD"]
+        self.cluster_settings = aimsPAX_settings.get("CLUSTER", None)
+
+        self.ensemble_size = self.idg_settings["ensemble_size"]
+        self.desired_acc = self.idg_settings["desired_acc"]
+        self.desired_acc_scale_idg = self.idg_settings["desired_acc_scale_idg"]
+        self.n_points_per_sampling_step_idg = self.idg_settings[
+            "n_points_per_sampling_step_idg"
+        ]
+        self.max_initial_epochs = self.idg_settings["max_initial_epochs"]
+        self.max_convergence_epochs = self.idg_settings[
+            "max_convergence_epochs"
+        ]
+        self.valid_skip = self.idg_settings["valid_skip"]
+        self.skip_step = self.idg_settings["skip_step_initial"]
+        self.intermediate_epochs = self.idg_settings["intermediate_epochs_idg"]
+        self.valid_ratio = self.idg_settings["valid_ratio"]
+        self.ASI_path = self.idg_settings["aims_lib_path"]
+        self.species_dir = self.idg_settings["species_dir"]
+        self.analysis = self.idg_settings["analysis"]
+        self.margin = self.idg_settings["margin"]
+        self.mol_idxs = self.misc["mol_idxs"]
+        self.idg_progress_dft_update = self.idg_settings["progress_dft_update"]
+        if not self.idg_settings["scheduler_initial"]:
             self.mace_settings["lr_scheduler"] = None
 
-        self.initial_foundational_size = self.al.get(
+        self.initial_foundational_size = self.idg_settings.get(
             "initial_foundational_size", None
         )
         if self.initial_foundational_size is not None:
-            assert self.al["initial_foundational_size"] in (
+            assert self.idg_settings["initial_foundational_size"] in (
                 "small",
                 "medium",
                 "large",
@@ -311,7 +330,7 @@ class PrepareInitialDatasetProcedure:
         self.restart = os.path.exists(
             "restart/initial_ds/initial_ds_restart.npy"
         )
-        self.create_restart = self.misc.get("create_restart", False)
+        self.create_restart = self.misc["create_restart"]
         if self.create_restart:
             self.init_ds_restart_dict = {
                 "trajectories": None,
@@ -332,7 +351,7 @@ class PrepareInitialDatasetProcedure:
         """
         Creates the necessary directories for saving the datasets.
         """
-        self.dataset_dir = Path(self.al["dataset_dir"])
+        self.dataset_dir = Path(self.misc["dataset_dir"])
         (self.dataset_dir / "initial" / "training").mkdir(
             parents=True, exist_ok=True
         )
@@ -420,7 +439,7 @@ class PrepareInitialDatasetProcedure:
                     timestep=md_settings["timestep"] * units.fs,
                     friction=md_settings["friction"] / units.fs,
                     temperature_K=md_settings["temperature"],
-                    rng=np.random.RandomState(md_settings["seed"]),
+                    rng=np.random.RandomState(md_settings["MD_seed"]),
                 )
         elif md_settings["stat_ensemble"].lower() == "npt":
             if md_settings["barostat"].lower() == "berendsen":
@@ -639,7 +658,7 @@ class PrepareInitialDatasetProcedure:
                     restart=self.restart,
                     convergence=True,
                     checkpoints_dir=self.checkpoints_dir,
-                    al_settings=self.al,
+                    mol_idxs=self.mol_idxs,
                 )
             best_valid_loss = np.inf
             epoch = 0
@@ -648,15 +667,15 @@ class PrepareInitialDatasetProcedure:
                     list(self.ensemble.keys())[0]
                 ]["epoch"]
 
-            patience = self.al["patience"]
+            convergence_patience = self.idg_settings["convergence_patience"]
             no_improvement = 0
             ensemble_valid_losses = {
                 tag: np.inf for tag in self.ensemble.keys()
             }
-            for j in range(self.max_final_epochs):
+            for j in range(self.max_convergence_epochs):
                 for tag, model in self.ensemble.items():
                     logger = tools.MetricsLogger(
-                        directory=self.mace_settings["GENERAL"]["results_dir"],
+                        directory=self.mace_settings["GENERAL"]["loss_dir"],
                         tag=tag + "_train",
                     )
                     train_epoch(
@@ -689,7 +708,7 @@ class PrepareInitialDatasetProcedure:
 
                 if (
                     epoch % self.valid_skip == 0
-                    or epoch == self.max_final_epochs - 1
+                    or epoch == self.max_convergence_epochs - 1
                 ):
                     ensemble_valid_losses, valid_loss, _ = (
                         validate_epoch_ensemble(
@@ -746,14 +765,14 @@ class PrepareInitialDatasetProcedure:
                         no_improvement += 1
 
                 epoch += 1
-                if no_improvement > patience:
+                if no_improvement > convergence_patience:
                     logging.info(
-                        f"No improvements for {patience} epochs. "
+                        f"No improvements for {convergence_patience} epochs. "
                         "Training converged. Best model based on validation"
                         " loss saved"
                     )
                     break
-                if j == self.max_final_epochs - 1:
+                if j == self.max_convergence_epochs - 1:
                     logging.info(
                         f"Maximum number of epochs reached. Best model "
                         f"(Epoch {best_epoch}) based on validation loss saved."
@@ -764,16 +783,24 @@ class PrepareInitialDatasetProcedure:
 class ALConfigurationManager:
     """Handles all configuration setup for active learning."""
 
-    def __init__(self, mace_settings: dict, al_settings: dict):
+    def __init__(
+        self,
+        mace_settings: dict,
+        aimsPAX_settings: dict,
+        path_to_control: str = "./control.in",
+        path_to_geometry: str = "./geometry.in",
+    ):
         self.mace_settings = mace_settings
-        self.al_settings = al_settings
-        self.al = al_settings["ACTIVE_LEARNING"]
-        self.md_settings = al_settings["MD"]
-        self.cluster_settings = al_settings.get("CLUSTER", None)
-        self.misc = al_settings.get("MISC", {})
+        self.path_to_control = path_to_control
+        self.path_to_geometry = path_to_geometry
+        self.aimsPAX_settings = aimsPAX_settings
+        self.al_settings = aimsPAX_settings["ACTIVE_LEARNING"]
+        self.md_settings = aimsPAX_settings["MD"]
+        self.cluster_settings = aimsPAX_settings.get("CLUSTER", None)
+        self.misc = aimsPAX_settings.get("MISC", {})
 
         self._setup_mace_configuration()
-        self._setup_al_configuration()
+        self._setup_aimsPAX_configuration()
 
     def _setup_mace_configuration(self):
         """Setup MACE-specific configuration."""
@@ -791,7 +818,7 @@ class ALConfigurationManager:
         training = self.mace_settings["TRAINING"]
         self.set_batch_size = training["batch_size"]
         self.set_valid_batch_size = training["valid_batch_size"]
-        self.scaling = training["scaling"]
+        self.scaling = architecture["scaling"]
 
         self.device = self.mace_settings["MISC"]["device"]
         torch.set_default_dtype(dtype_mapping[self.dtype])
@@ -800,46 +827,53 @@ class ALConfigurationManager:
         if self.compute_stress:
             self.properties.append("stress")
 
-    def _setup_al_configuration(self):
+    def _setup_aimsPAX_configuration(self):
         """Setup active learning configuration."""
         # Training parameters
-        self.max_MD_steps = self.al["max_MD_steps"]
-        self.max_epochs_worker = self.al["max_epochs_worker"]
-        self.max_final_epochs = self.al["max_final_epochs"]
-        self.intermediate_epochs = self.al["intermediate_epochs"]
-        self.patience = self.al["patience"]
-        self.desired_accuracy = self.al["desired_acc"]
+        self.max_MD_steps = self.al_settings["max_MD_steps"]
+        self.max_epochs_worker = self.al_settings["max_epochs_worker"]
+        self.max_convergence_epochs = self.al_settings[
+            "max_convergence_epochs"
+        ]
+        self.intermediate_epochs_al = self.al_settings[
+            "intermediate_epochs_al"
+        ]
+        self.convergence_patience = self.al_settings[
+            "convergence_patience"
+        ]  # for convergence only
+        self.desired_accuracy = self.al_settings["desired_acc"]
+        self.margin = self.al_settings["margin"]  # for convergence only
 
         # Data parameters
-        self.num_trajectories = self.al["num_trajectories"]
-        self.skip_step = self.al["skip_step_mlff"]
-        self.valid_skip = self.al["valid_skip"]
-        self.analysis_skip = self.al["analysis_skip"]
-        self.valid_ratio = self.al["valid_ratio"]
-        self.max_set_size = self.al["max_set_size"]
-        self.c_x = self.al["c_x"]
+        self.num_trajectories = self.al_settings["num_trajectories"]
+        self.skip_step = self.al_settings["skip_step_mlff"]
+        self.valid_skip = self.al_settings["valid_skip"]
+        self.analysis_skip = self.al_settings["analysis_skip"]
+        self.valid_ratio = self.al_settings["valid_ratio"]
+        self.max_train_set_size = self.al_settings["max_train_set_size"]
+        self.c_x = self.al_settings["c_x"]
 
         # Paths
-        self.dataset_dir = Path(self.al["dataset_dir"])
-        self.species_dir = self.al["species_dir"]
-        self.ASI_path = self.al["aims_lib_path"]
+        self.dataset_dir = Path(self.misc["dataset_dir"])
+        self.log_dir = self.misc["log_dir"]
+        self.species_dir = self.al_settings["species_dir"]
+        self.ASI_path = self.al_settings["aims_lib_path"]
 
         # Optional settings
-        self.analysis = self.al.get("analysis", False)
-        self.seeds_tags_dict = self.al.get("seeds_tags_dict", None)
+        self.analysis = self.al_settings["analysis"]
+        self.seeds_tags_dict = self.al_settings.get("seeds_tags_dict", None)
 
         # Uncertainty parameters
-        self.margin = self.al.get("margin", 0.001)
-        self.converge_best = self.al.get("converge_best", True)
-        self.uncertainty_type = self.al.get(
-            "uncertainty_type", "max_atomic_sd"
-        )
-        self.uncert_not_crossed_limit = self.al.get(
-            "uncert_not_crossed_limit", 500
-        )
-        self.freeze_threshold_dataset = self.al.get(
-            "freeze_threshold_dataset", np.inf
-        )
+        self.converge_al = self.al_settings["converge_al"]
+        self.converge_best = self.al_settings["converge_best"]
+        self.uncertainty_type = self.al_settings["uncertainty_type"]
+
+        self.uncert_not_crossed_limit = self.al_settings[
+            "uncert_not_crossed_limit"
+        ]
+        self.freeze_threshold_dataset = self.al_settings[
+            "freeze_threshold_dataset"
+        ]
         self.freeze_threshold = False
 
         # Molecular indices
@@ -847,20 +881,14 @@ class ALConfigurationManager:
 
         # Restart handling
         self.restart = os.path.exists("restart/al/al_restart.npy")
-        self.create_restart = self.misc.get("create_restart", False)
-
-        # path to control file and geometries
-        self.path_to_control = self.misc.get("path_to_control", "./control.in")
-        self.path_to_geometry = self.misc.get(
-            "path_to_geometry", "./geometry.in"
-        )
+        self.create_restart = self.misc["create_restart"]
 
     def _setup_molecular_indices(self):
         """
         Setup molecular indices configuration.
         Only needed if intermolecular uncertainty is used.
         """
-        mol_idxs_path = self.al.get("mol_idxs", None)
+        mol_idxs_path = self.misc["mol_idxs"]
         self.mol_idxs = (
             np.load(mol_idxs_path, allow_pickle=True)["arr_0"].tolist()
             if mol_idxs_path is not None
@@ -869,12 +897,12 @@ class ALConfigurationManager:
 
         if self.mol_idxs is not None:
             self.intermol_crossed = 0
-            self.intermol_crossed_limit = self.al.get(
-                "intermol_crossed_limit", 10
-            )
-            self.intermol_forces_weight = self.al.get(
-                "intermol_forces_weight", 100
-            )
+            self.intermol_crossed_limit = self.al_settings[
+                "intermol_crossed_limit"
+            ]
+            self.intermol_forces_weight = self.al_settings[
+                "intermol_forces_weight"
+            ]
             self.switched_on_intermol = False
 
             # Check if using intermolecular loss
@@ -1138,7 +1166,7 @@ class ALEnsembleManager:
             mace_settings=self.config.mace_settings,
             restart=self.config.restart,
             checkpoints_dir=self.config.checkpoints_dir,
-            al_settings=self.config.al,
+            mol_idxs=self.config.mol_idxs,
         )
 
     def _setup_datasets(self):
@@ -1155,7 +1183,7 @@ class ALEnsembleManager:
         self.ensemble_ase_sets = load_ensemble_sets_from_folder(
             ensemble=self.ensemble,
             path_to_folder=Path(
-                self.config.al["dataset_dir"] + f"/{dataset_subdir}"
+                self.config.misc["dataset_dir"] + f"/{dataset_subdir}"
             ),
         )
 
@@ -1393,7 +1421,7 @@ class ALMDManager:
                 timestep=md_settings["timestep"] * units.fs,
                 friction=md_settings["friction"] / units.fs,
                 temperature_K=self.current_temperatures[idx],
-                rng=np.random.RandomState(md_settings["seed"]),
+                rng=np.random.RandomState(md_settings["MD_seed"]),
             )
         else:
             raise ValueError(f"Unsupported thermostat: {thermostat}")
@@ -1803,7 +1831,7 @@ class PrepareALProcedure:
     def __init__(
         self,
         mace_settings: dict,
-        al_settings: dict,
+        aimsPAX_settings: dict,
         path_to_control: str = "./control.in",
         path_to_geometry: str = "./geometry.in",
         use_mpi: bool = True,
@@ -1814,12 +1842,28 @@ class PrepareALProcedure:
         self._setup_communication(comm_handler, use_mpi)
 
         # Initialize configuration
-        self.config = ALConfigurationManager(mace_settings, al_settings)
+        self.config = ALConfigurationManager(
+            mace_settings,
+            aimsPAX_settings,
+            path_to_control=path_to_control,
+            path_to_geometry=path_to_geometry,
+        )
 
         # Setup logging and folders
         self._setup_logging()
         self._create_folders()
 
+        if self.rank == 0:
+            logging.info("Initializing active learning procedure.")
+            logging.info(f"Procedure runs on {self.world_size} workers.")
+            logging.info(
+                "Using followng settings for the active learning procedure:"
+            )
+            log_yaml_block(
+                "ACTIVE_LEARNING", aimsPAX_settings["ACTIVE_LEARNING"]
+            )
+            logging.info("Using following settings for MACE:")
+            log_yaml_block("MACE", mace_settings)
         # Initialize all managers
         self.state_manager = ALStateManager(self.config, self.comm_handler)
         self.ensemble_manager = ALEnsembleManager(
@@ -1854,7 +1898,9 @@ class PrepareALProcedure:
             )
             # Make sure state manager has access to seeds_tags_dict
             self.state_manager.seeds_tags_dict = self.config.seeds_tags_dict
-
+        self.first_wait_after_restart = {
+            idx: True for idx in range(self.config.num_trajectories)
+        }
         if self.rank == 0:
             self.md_manager.setup_md_drivers(
                 self.state_manager.trajectories, self.mlff_manager.mace_calc
@@ -1886,15 +1932,12 @@ class PrepareALProcedure:
             else logging.INFO
         )
 
-        self.log_dir = Path(self.config.mace_settings["GENERAL"]["log_dir"])
+        self.log_dir = Path(self.config.log_dir)
         tools.setup_logger(
             level=logger_level,
             tag="active_learning",
             directory=self.log_dir,
         )
-
-        if self.rank == 0:
-            logging.info("Initializing active learning procedure.")
 
     def _create_folders(self):
         """Create necessary directories."""

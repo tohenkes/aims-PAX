@@ -2,7 +2,6 @@ import random
 import logging
 import os
 import numpy as np
-import torch
 from typing import (
     Optional,
     Sequence,
@@ -10,7 +9,6 @@ from typing import (
     Dict,
     List,
 )
-from contextlib import nullcontext
 from pathlib import Path
 from ase.io import write
 from mace import data as mace_data
@@ -547,7 +545,7 @@ def ase_to_mace_ensemble_sets(
 def save_datasets(
     ensemble: dict,
     ensemble_ase_sets: dict,
-    path: str,
+    path: Path,
     initial: bool = False,
     save_combined_initial: bool = True,
 ):
@@ -570,18 +568,24 @@ def save_datasets(
         save_combined_initial (bool, optional): If True, saves a combined
             initial training and validation set. Defaults to True.
     """
-
     if save_combined_initial:
         combined_init_train_set = []
         combined_init_valid_set = []
+
+    path.mkdir(parents=True, exist_ok=True)
+    training_path = path / "training"
+    valid_path = path / "validation"
+    training_path.mkdir(parents=True, exist_ok=True)
+    valid_path.mkdir(parents=True, exist_ok=True)
+
     for tag in ensemble.keys():
         if initial:
             write(
-                path / "training" / f"initial_train_set_{tag}.xyz",
+                training_path / f"initial_train_set_{tag}.xyz",
                 ensemble_ase_sets[tag]["train"],
             )
             write(
-                path / "validation" / f"initial_valid_set_{tag}.xyz",
+                valid_path / f"initial_valid_set_{tag}.xyz",
                 ensemble_ase_sets[tag]["valid"],
             )
             if save_combined_initial:
@@ -589,20 +593,20 @@ def save_datasets(
                 combined_init_valid_set += ensemble_ase_sets[tag]["valid"]
         else:
             write(
-                path / "training" / f"train_set_{tag}.xyz",
+                training_path / f"train_set_{tag}.xyz",
                 ensemble_ase_sets[tag]["train"],
             )
             write(
-                path / "validation" / f"valid_set_{tag}.xyz",
+                valid_path / f"valid_set_{tag}.xyz",
                 ensemble_ase_sets[tag]["valid"],
             )
     if save_combined_initial and initial:
         write(
-            path / "training" / "combined_initial_train_set.xyz",
+            training_path / "combined_initial_train_set.xyz",
             combined_init_train_set,
         )
         write(
-            path / "validation" / "combined_initial_valid_set.xyz",
+            valid_path / "combined_initial_valid_set.xyz",
             combined_init_valid_set,
         )
 

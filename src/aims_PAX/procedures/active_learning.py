@@ -1,7 +1,9 @@
+import os
 import logging
 from typing import Optional
 import numpy as np
 import ase
+from pathlib import Path
 from .preparation import PrepareALProcedure
 from .al_managers import (
     ALRunningManager,
@@ -17,7 +19,11 @@ from .al_managers import (
 from aims_PAX.tools.utilities.data_handling import (
     save_datasets,
 )
-from aims_PAX.tools.utilities.utilities import atoms_full_copy, save_models
+from aims_PAX.tools.utilities.utilities import (
+    atoms_full_copy,
+    save_models,
+    log_yaml_block,
+)
 from aims_PAX.tools.utilities.mpi_utils import CommHandler
 
 try:
@@ -36,7 +42,7 @@ class ALProcedure(PrepareALProcedure):
     def __init__(
         self,
         mace_settings: dict,
-        al_settings: dict,
+        aimsPAX_settings: dict,
         path_to_control: str = "./control.in",
         path_to_geometry: str = "./geometry.in",
         use_mpi: bool = True,
@@ -45,7 +51,7 @@ class ALProcedure(PrepareALProcedure):
 
         super().__init__(
             mace_settings=mace_settings,
-            al_settings=al_settings,
+            aimsPAX_settings=aimsPAX_settings,
             path_to_control=path_to_control,
             path_to_geometry=path_to_geometry,
             use_mpi=use_mpi,
@@ -107,7 +113,7 @@ class ALProcedure(PrepareALProcedure):
 
             if (
                 self.ensemble_manager.train_dataset_len
-                >= self.config.max_set_size
+                >= self.config.max_train_set_size
             ):
                 if self.rank == 0:
                     logging.info("Maximum size of training set reached.")
@@ -131,6 +137,19 @@ class ALProcedure(PrepareALProcedure):
             idx (int): Index of the trajectory worker.
 
         """
+        # Handle restart case - relaunch DFT job if needed
+
+        if self.config.restart and self.first_wait_after_restart[idx]:
+            self.point = None
+            if self.rank == 0:
+                self.point = self.trajectories[idx].copy()
+
+            self.comm_handler.barrier()
+            self.point = self.comm_handler.bcast(self.point, root=0)
+            self.comm_handler.barrier()
+
+            self.dft_manager.handle_dft_call(point=self.point, idx=idx)
+            self.first_wait_after_restart[idx] = False
 
         self.data_manager.handle_received_point(
             idx,
@@ -273,6 +292,23 @@ class ALProcedure(PrepareALProcedure):
                 model_dir=self.config.mace_settings["GENERAL"]["model_dir"],
                 current_epoch=self.state_manager.total_epoch,
             )
+
+            # save final results in new directory called results:
+            if not self.config.converge_al:
+                os.makedirs("results", exist_ok=True)
+                save_datasets(
+                    ensemble=self.ensemble,
+                    ensemble_ase_sets=self.ensemble_manager.ensemble_ase_sets,
+                    path=Path("results"),
+                )
+                save_models(
+                    ensemble=self.ensemble,
+                    training_setups=self.ensemble_manager.training_setups,
+                    model_dir=Path("results"),
+                    current_epoch=self.state_manager.total_epoch,
+                )
+            #  else: handled in convergence call
+
             if self.config.analysis:
                 self.analysis_manager.save_analysis()
 
@@ -295,14 +331,14 @@ class ALProcedureSerial(ALProcedure):
     def __init__(
         self,
         mace_settings: dict,
-        al_settings: dict,
+        aimsPAX_settings: dict,
         path_to_control: str = "./control.in",
         path_to_geometry: str = "./geometry.in",
     ):
 
         super().__init__(
             mace_settings=mace_settings,
-            al_settings=al_settings,
+            aimsPAX_settings=aimsPAX_settings,
             path_to_control=path_to_control,
             path_to_geometry=path_to_geometry,
         )
@@ -364,7 +400,7 @@ class ALProcedureParallel(ALProcedure):
     def __init__(
         self,
         mace_settings: dict,
-        al_settings: dict,
+        aimsPAX_settings: dict,
         path_to_control: str = "./control.in",
         path_to_geometry: str = "./geometry.in",
     ):
@@ -387,7 +423,7 @@ class ALProcedureParallel(ALProcedure):
         self.comm_handler.comm = self.comm
         super().__init__(
             mace_settings=mace_settings,
-            al_settings=al_settings,
+            aimsPAX_settings=aimsPAX_settings,
             path_to_control=path_to_control,
             path_to_geometry=path_to_geometry,
             comm_handler=self.comm_handler,
@@ -398,9 +434,6 @@ class ALProcedureParallel(ALProcedure):
         if self.rank == 0:
             logging.info(f"Procedure runs on {self.world_size} workers.")
 
-        self.first_wait_after_restart = {
-            idx: True for idx in range(self.config.num_trajectories)
-        }
         self.data_manager = ALDataManager(
             config=self.config,
             ensemble_manager=self.ensemble_manager,
@@ -536,7 +569,7 @@ class ALProcedureParallel(ALProcedure):
 
                 if (
                     self.ensemble_manager.train_dataset_len
-                    >= self.config.max_set_size
+                    >= self.config.max_train_set_size
                 ):
                     if self.rank == 0:
                         logging.info("Maximum size of training set reached.")
@@ -968,7 +1001,7 @@ class ALProcedurePARSL(ALProcedure):
     def __init__(
         self,
         mace_settings: dict,
-        al_settings: dict,
+        aimsPAX_settings: dict,
         path_to_control: str = "./control.in",
         path_to_geometry: str = "./geometry.in",
     ):
@@ -980,12 +1013,14 @@ class ALProcedurePARSL(ALProcedure):
             )
         super().__init__(
             mace_settings=mace_settings,
-            al_settings=al_settings,
+            aimsPAX_settings=aimsPAX_settings,
             path_to_control=path_to_control,
             path_to_geometry=path_to_geometry,
             use_mpi=False,
         )
 
+        logging.info("Using followng settings for the HPC environment:")
+        log_yaml_block("CLUSTER:", self.config.aimsPAX_settings["CLUSTER"])
         self.data_manager = ALDataManager(
             config=self.config,
             ensemble_manager=self.ensemble_manager,
@@ -1012,10 +1047,6 @@ class ALProcedurePARSL(ALProcedure):
             state_manager=self.state_manager,
             comm_handler=self.comm_handler,
         )
-
-        self.first_wait_after_restart = {
-            idx: True for idx in range(self.config.num_trajectories)
-        }
 
         if self.config.analysis:
             self.analysis_manager = ALAnalysisManagerPARSL(

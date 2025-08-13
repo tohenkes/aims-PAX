@@ -28,7 +28,7 @@ def setup_mace_training(
     restart: bool = False,
     convergence: bool = False,
     checkpoints_dir: str = None,
-    al_settings: dict = None,
+    mol_idxs: np.ndarray = None,
 ) -> dict:
     """
     Setup the MACE training according to the settings and return it.
@@ -72,7 +72,6 @@ def setup_mace_training(
             stress_weight=training_settings["stress_weight"],
         )
     elif training_settings["loss"].lower() == "intermol":
-        mol_idxs = al_settings.get("mol_idxs")
         assert mol_idxs is not None, "mol_idxs must be provided"
         mol_idxs = np.load(mol_idxs, allow_pickle=True)["arr_0"].tolist()
 
@@ -204,8 +203,6 @@ def setup_mace_training(
             epoch = 0
         training_setup["checkpoint_handler"] = checkpoint_handler_convergence
 
-    training_setup["eval_interval"] = training_settings["eval_interval"]
-    training_setup["patience"] = training_settings["patience"]
     training_setup["device"] = misc_settings["device"]
     training_setup["max_grad_norm"] = training_settings["clip_grad"]
     training_setup["output_args"] = {

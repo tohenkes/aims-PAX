@@ -1,0 +1,68 @@
+INITIAL_DATASET_GENERATION:
+  valid_ratio: 0.1
+  n_points_per_sampling_step_idg: 10
+  valid_skip: 5
+  intermediate_epochs_idg: 5
+  ensemble_size: 4
+  skip_step_initial: 10
+  initial_sampling: mace-mp0
+  initial_foundational_size: "medium"
+  desired_acc: 0.03
+  desired_acc_scale_idg: 10.
+  species_dir: "/mnt/irisgpfs/projects/tcp/FHIaims-221103/species_defaults/defaults_2020/light"
+
+ACTIVE_LEARNING:
+  desired_acc: 0.03
+  valid_ratio: 0.1
+  max_epochs_worker: 2
+  intermediate_epochs_al: 1
+  converge_al: True
+  converge_best: True
+  max_convergence_epochs: 50
+  convergence_patience: 50
+  valid_skip: 5
+  ensemble_size: 4
+  c_x: -0.1
+  skip_step_mlff: 25 
+  num_trajectories: 8
+  species_dir: "/mnt/irisgpfs/projects/tcp/FHIaims-221103/species_defaults/defaults_2020/light"
+
+
+MD:
+  stat_ensemble: NVT
+  thermostat: Langevin
+  temperature: 500
+  timestep: 1.
+  friction: 0.001
+  seed: 42
+
+MISC:
+  create_restart: True
+
+CLUSTER:
+  type: slurm
+  project_name: 'EXAMPLE'
+  parsl_options:
+    nodes_per_block: 1
+    init_blocks: 1
+    min_blocks: 1
+    max_blocks: 2
+    label: 'EXAMPLE'
+
+  slurm_str: |
+    #!/bin/bash -l
+    #SBATCH --time=01:30:00
+    #SBATCH -N 1
+    #SBATCH --ntasks-per-node=12
+    #SBATCH -p batch
+    #SBATCH -J parsl_test
+  worker_str: |
+    source /home/users/thenkes/miniconda3/bin/activate aimspax
+    module load toolchain/intel
+    ulimit -s unlimited
+
+  launch_str: srun /mnt/irisgpfs/projects/tcp/emoerman/software/FHI-aims/FHIaims/build/aims.250507.scalapack.mpi.x >> aims.out
+  clean_dirs: False
+  calc_dir: "/home/users/thenkes/phd/aimsMLFF/test_install/aims-PAX/example/calc"
+
+  

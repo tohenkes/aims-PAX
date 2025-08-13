@@ -3,56 +3,62 @@ from aims_PAX.procedures.active_learning import (
     ALProcedureParallel,
     ALProcedurePARSL,
 )
-from yaml import safe_load
-
-# from time import perf_counter
+import argparse
+from aims_PAX.tools.utilities.utilities import read_input_files
 
 
 def main():
-    with open("./mace_settings.yaml", "r") as file:
-        mace_settings = safe_load(file)
-    with open("./active_learning_settings.yaml", "r") as file:
-        al_settings = safe_load(file)
-
-    path_to_control = al_settings["MISC"].get(
-        "path_to_control", "./control.in"
+    parser = argparse.ArgumentParser(
+        description="Create initial dataset for AIMLFF."
     )
-    path_to_geometry = al_settings["MISC"].get(
-        "path_to_geometry", "./geometry.in"
+    parser.add_argument(
+        "--mace-settings",
+        type=str,
+        default="./mace.yaml",
+        help="Path to mace.yaml file",
+    )
+    parser.add_argument(
+        "--aimsPAX-settings",
+        type=str,
+        default="./aimsPAX.yaml",
+        help="Path to aimsPAX settings file",
+    )
+    args = parser.parse_args()
+
+    (mace_settings, aimsPAX_settings, path_to_control, path_to_geometry) = (
+        read_input_files(
+            path_to_mace_settings=args.mace_settings,
+            path_to_aimsPAX_settings=args.aimsPAX_settings,
+            procedure="al",
+        )
     )
 
-    if al_settings["ACTIVE_LEARNING"].get("parallel", False):
+    if aimsPAX_settings["ACTIVE_LEARNING"].get("parallel", False):
         al = ALProcedureParallel(
             mace_settings=mace_settings,
-            al_settings=al_settings,
+            aimsPAX_settings=aimsPAX_settings,
             path_to_control=path_to_control,
             path_to_geometry=path_to_geometry,
         )
-    elif al_settings.get("CLUSTER", False):
+    elif aimsPAX_settings.get("CLUSTER", False):
         al = ALProcedurePARSL(
             mace_settings=mace_settings,
-            al_settings=al_settings,
+            aimsPAX_settings=aimsPAX_settings,
             path_to_control=path_to_control,
             path_to_geometry=path_to_geometry,
         )
     else:
         al = ALProcedureSerial(
             mace_settings=mace_settings,
-            al_settings=al_settings,
+            aimsPAX_settings=aimsPAX_settings,
             path_to_control=path_to_control,
             path_to_geometry=path_to_geometry,
         )
 
     if not al.check_al_done():
-        # start_time = perf_counter()
         al.run()
-        # end_time = perf_counter()
-        # with open("./al_procedure_time.txt", "w") as f:
-        #    f.write(
-        #        f"Active Learning Procedure Time: {end_time - start_time} seconds\n"
-        #    )
 
-    if al_settings["ACTIVE_LEARNING"].get("converge_al", False):
+    if aimsPAX_settings["ACTIVE_LEARNING"].get("converge_al", False):
         al.converge()
 
 

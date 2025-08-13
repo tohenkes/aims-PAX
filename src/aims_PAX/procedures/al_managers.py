@@ -1,3 +1,4 @@
+import os
 import logging
 import ase
 from ase.io import read
@@ -202,7 +203,10 @@ class ALDataManager:
         self.comm_handler.barrier()
 
         # Check if maximum dataset size is reached
-        if self.ensemble_manager.train_dataset_len > self.config.max_set_size:
+        if (
+            self.ensemble_manager.train_dataset_len
+            > self.config.max_train_set_size
+        ):
             return True
 
         # Log dataset sizes
@@ -298,7 +302,7 @@ class TrainingOrchestrator:
 
         if logger is None:
             logger = tools.MetricsLogger(
-                directory=self.config.mace_settings["GENERAL"]["results_dir"],
+                directory=self.config.mace_settings["GENERAL"]["loss_dir"],
                 tag=tag + "_train",
             )
 
@@ -417,7 +421,8 @@ class TrainingOrchestrator:
             )
             return (
                 current_intermediate % self.config.valid_skip == 0
-                or current_intermediate == self.config.intermediate_epochs - 1
+                or current_intermediate
+                == self.config.intermediate_epochs_al - 1
             )
 
     def _get_validation_epoch(
@@ -438,7 +443,7 @@ class TrainingOrchestrator:
         """
         Determines if model training has converged i.e.
         the validation loss has not improved over the
-        course of `self.config.patience` epochs.
+        course of `self.config.convergence_patience` epochs.
 
         Args:
             session (TrainingSession): The currrent training session to check.
@@ -468,7 +473,7 @@ class TrainingOrchestrator:
                 keep_last=False,
             )
 
-        return session.no_improvement > self.config.patience
+        return session.no_improvement > self.config.convergence_patience
 
     def _handle_intermediate_validation(
         self,
@@ -629,13 +634,13 @@ class ALTrainingManager:
         session = TrainingSession(
             training_setups=self.ensemble_manager.training_setups,
             ensemble_mace_sets=self.ensemble_manager.ensemble_mace_sets,
-            max_epochs=self.config.intermediate_epochs,
+            max_epochs=self.config.intermediate_epochs_al,
             is_convergence=False,
         )
 
         while (
             self.state_manager.trajectory_intermediate_epochs[idx]
-            < self.config.intermediate_epochs
+            < self.config.intermediate_epochs_al
         ):
 
             logger = None
@@ -667,7 +672,7 @@ class ALTrainingManager:
         session = TrainingSession(
             training_setups=self.training_setups_convergence,
             ensemble_mace_sets=self.ensemble_manager.ensemble_mace_sets,
-            max_epochs=self.config.max_final_epochs,
+            max_epochs=self.config.max_convergence_epochs,
             is_convergence=True,
             initial_epoch=self._get_initial_epoch(),
         )
@@ -678,7 +683,7 @@ class ALTrainingManager:
         }
 
         # Training loop
-        for j in range(self.config.max_final_epochs):
+        for j in range(self.config.max_convergence_epochs):
             session.current_epoch = j
 
             logger = None
@@ -695,25 +700,19 @@ class ALTrainingManager:
 
             if should_stop:
                 logging.info(
-                    f"No improvements for {self.config.patience} epochs. "
+                    f"No improvements for {self.config.convergence_patience} epochs. "
                     "Training converged. Best model(s) "
                     f"(Epoch {session.best_epoch}) saved."
                 )
-                save_models(
-                    ensemble=self.ensemble_manager.ensemble,
-                    training_setups=session.training_setups,
-                    model_dir=self.config.mace_settings["GENERAL"][
-                        "model_dir"
-                    ],
-                    current_epoch=session.current_epoch,
-                )
+                self._final_save(session)
                 break
 
-            if j == self.config.max_final_epochs - 1:
+            if j == self.config.max_convergence_epochs - 1:
                 logging.info(
                     f"Maximum number of epochs reached. "
                     f"Best model (Epoch {session.best_epoch}) saved."
                 )
+                self._final_save(session)
 
     def _setup_convergence(self):
         """Setup convergence training configuration."""
@@ -745,7 +744,7 @@ class ALTrainingManager:
                 restart=self.config.restart,
                 convergence=True,
                 checkpoints_dir=self.config.checkpoints_dir,
-                al_settings=self.config.al,
+                mol_idxs=self.config.mol_idxs,
             )
 
     def _create_convergence_datasets(self):
@@ -838,6 +837,27 @@ class ALTrainingManager:
                 self.config.device,
             )
         return mace_sets
+
+    def _final_save(self, session: TrainingSession):
+        save_models(
+            ensemble=self.ensemble_manager.ensemble,
+            training_setups=session.training_setups,
+            model_dir=self.config.mace_settings["GENERAL"]["model_dir"],
+            current_epoch=session.current_epoch,
+        )
+        # save model(s) and datasets in final results directory
+        os.makedirs("results", exist_ok=True)
+        save_datasets(
+            ensemble=self.ensemble_manager.ensemble,
+            ensemble_ase_sets=self.ensemble_manager.ensemble_ase_sets,
+            path=Path("results"),
+        )
+        save_models(
+            ensemble=self.ensemble_manager.ensemble,
+            training_setups=self.ensemble_manager.training_setups,
+            model_dir=Path("results"),
+            current_epoch=self.state_manager.total_epoch,
+        )
 
 
 class ALDFTManager:
@@ -1153,8 +1173,8 @@ class ALDFTManagerPARSL(ALDFTManager):
                 "PARSL is already initialized. Using existing PARSL context."
             )
         except parsl.errors.NoDataFlowKernelError:
-            parsl_log = Path(self.config.mace_settings["GENERAL"]["log_dir"])
-            handle_parsl_logger(log_dir=parsl_log / "parsl_al.log")
+            parsl_log_dir = Path(self.config.log_dir)
+            handle_parsl_logger(log_dir=parsl_log_dir / "parsl_al.log")
             parsl.load(self.parsl_config)
 
         logging.info("Launching ab initio manager thread for PARSL.")
@@ -1306,7 +1326,10 @@ class ALRunningManager:
         """
         Check if maximum training set size is reached.
         """
-        if self.ensemble_manager.train_dataset_len >= self.config.max_set_size:
+        if (
+            self.ensemble_manager.train_dataset_len
+            >= self.config.max_train_set_size
+        ):
             if self.rank == 0:
                 logging.info("Maximum size of training set reached.")
             return True
@@ -1551,6 +1574,12 @@ class ALRunningManager:
                     f"{np.round(self.state_manager.threshold, 3)} "
                     f"at worker {idx}: "
                     f"{np.round(uncertainty, 3)}."
+                )
+            if self.rank == 0 and timeout_exceeded:
+                logging.info(
+                    f"Uncertainty not exceeded for "
+                    f"{self.config.uncert_not_crossed_limit} steps "
+                    f"at worker {idx}."
                 )
 
             # Handle intermolecular uncertainty if configured

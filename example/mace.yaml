@@ -1,0 +1,31 @@
+GENERAL:
+  name_exp: test
+  checkpoints_dir: ./checkpoints
+  results_dir: ./results
+  model_dir: ./model
+  default_dtype: float32
+  compute_stress: False
+  seed: 100
+
+ARCHITECTURE:
+  r_max: 5.
+  num_channels: 32
+  max_L: 1
+  radial_MLP: 
+  - 16
+  - 16
+  - 16
+  MLP_irreps: 32x0e
+
+TRAINING:
+  batch_size: 5
+  valid_batch_size: 5
+  lr: 0.01
+  amsgrad: True
+  optimizer: adam
+  loss: weighted
+  energy_weight: 1.
+  forces_weight: 1000.
+
+MISC:
+  device: cpu

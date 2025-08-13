@@ -13,6 +13,7 @@ from aims_PAX.tools.utilities.utilities import (
     update_model_auxiliaries,
     save_checkpoint,
     save_ensemble,
+    log_yaml_block,
 )
 from aims_PAX.tools.utilities.parsl_utils import (
     recalc_dft_parsl,
@@ -75,9 +76,9 @@ class InitialDatasetProcedure(PrepareInitialDatasetProcedure):
 
                 member_points = self.sampled_points[
                     len(self.atoms)
-                    * self.n_samples
+                    * self.n_points_per_sampling_step_idg
                     * number : len(self.atoms)
-                    * self.n_samples
+                    * self.n_points_per_sampling_step_idg
                     * (number + 1)
                 ]
 
@@ -147,7 +148,7 @@ class InitialDatasetProcedure(PrepareInitialDatasetProcedure):
                 for tag, model in self.ensemble.items():
 
                     logger = tools.MetricsLogger(
-                        directory=self.mace_settings["GENERAL"]["results_dir"],
+                        directory=self.mace_settings["GENERAL"]["loss_dir"],
                         tag=tag + "_train",
                     )
                     train_epoch(
@@ -216,12 +217,15 @@ class InitialDatasetProcedure(PrepareInitialDatasetProcedure):
                             "restart/initial_ds/initial_ds_restart.npy",
                             self.init_ds_restart_dict,
                         )
-                    if self.desired_acc * self.lamb >= self.current_valid:
+                    if (
+                        self.desired_acc * self.desired_acc_scale_idg
+                        >= self.current_valid
+                    ):
                         logging.info(
                             f"Accuracy criterion reached at step {self.step}."
                         )
                         logging.info(
-                            f"Criterion: {self.desired_acc * self.lamb}; Current accuracy: {self.current_valid}."
+                            f"Criterion: {self.desired_acc * self.desired_acc_scale_idg}; Current accuracy: {self.current_valid}."
                         )
 
                         break
@@ -231,7 +235,7 @@ class InitialDatasetProcedure(PrepareInitialDatasetProcedure):
             if (
                 self.epoch == self.max_initial_epochs
             ):  # TODO: change to a different variable (shares with al-algo right now)
-                logging.info(f"Maximum number of epochs reached.")
+                logging.info("Maximum number of epochs reached.")
                 return True
 
     def _sample_and_train(self):
@@ -305,7 +309,7 @@ class InitialDatasetProcedure(PrepareInitialDatasetProcedure):
         # criterion for initial dataset is multiple of the desired accuracy
         # TODO: add maximum initial dataset len criterion
         while (
-            self.desired_acc * self.lamb <= self.current_valid
+            self.desired_acc * self.desired_acc_scale_idg <= self.current_valid
             and self.epoch < self.max_initial_epochs
         ):
 
@@ -365,7 +369,10 @@ class InitialDatasetAIMD(InitialDatasetProcedure):
                     self._run_MD(
                         atoms=self.trajectories[idx], dyn=self.md_drivers[idx]
                     )
-                    for _ in range(self.ensemble_size * self.n_samples)
+                    for _ in range(
+                        self.ensemble_size
+                        * self.n_points_per_sampling_step_idg
+                    )
                 ]
             )
 
@@ -452,7 +459,7 @@ class InitialDatasetFoundational(InitialDatasetProcedure):
         """
         Samples points using the foundational model.
         For each geometry n points are sampled with
-        n = self.n_samples * self.ensemble_size.
+        n = self.n_points_per_sampling_step_idg * self.ensemble_size.
         Thus, the total number of points sampled are n * n_geometries.
         """
 
@@ -462,7 +469,9 @@ class InitialDatasetFoundational(InitialDatasetProcedure):
             for idx in self.trajectories.keys():
                 dyn = self.md_drivers[idx]
                 atoms = self.trajectories[idx]
-                for _ in range(self.ensemble_size * self.n_samples):
+                for _ in range(
+                    self.ensemble_size * self.n_points_per_sampling_step_idg
+                ):
                     current_point = self._run_MD(atoms, dyn)
                     self.sampled_points.append(current_point)
             logging.info(
@@ -539,7 +548,7 @@ class InitialDatasetFoundationalParallel(InitialDatasetFoundational):
     def __init__(
         self,
         mace_settings: dict,
-        al_settings: dict,
+        aimsPAX_settings: dict,
         path_to_control: str = "./control.in",
         path_to_geometry: str = "./geometry.in",
     ):
@@ -547,7 +556,7 @@ class InitialDatasetFoundationalParallel(InitialDatasetFoundational):
         # this is necessary because of the way the MPI communicator is split
         super().__init__(
             mace_settings=mace_settings,
-            al_settings=al_settings,
+            aimsPAX_settings=aimsPAX_settings,
             path_to_control=path_to_control,
             path_to_geometry=path_to_geometry,
         )
@@ -669,18 +678,22 @@ class InitialDatasetFoundationalParallel(InitialDatasetFoundational):
                     buf_geometries, buf_energies, buf_forces = (
                         np.zeros(
                             (
-                                self.n_samples * self.ensemble_size,
+                                self.n_points_per_sampling_step_idg
+                                * self.ensemble_size,
                                 len(self.atoms),
                                 3,
                             ),
                             dtype=float,
                         ),
                         np.zeros(
-                            self.n_samples * self.ensemble_size, dtype=float
+                            self.n_points_per_sampling_step_idg
+                            * self.ensemble_size,
+                            dtype=float,
                         ),
                         np.zeros(
                             (
-                                self.n_samples * self.ensemble_size,
+                                self.n_points_per_sampling_step_idg
+                                * self.ensemble_size,
                                 len(self.atoms),
                                 3,
                             ),
@@ -713,7 +726,10 @@ class InitialDatasetFoundationalParallel(InitialDatasetFoundational):
                     if status_energies and status_forces and status_geometries:
                         recieved_points = []
 
-                        for i in range(self.n_samples * self.ensemble_size):
+                        for i in range(
+                            self.n_points_per_sampling_step_idg
+                            * self.ensemble_size
+                        ):
                             temp = self.atoms_dummy.copy()
                             temp.set_positions(buf_geometries[i])
                             temp.info["REF_energy"] = buf_energies[i]
@@ -726,7 +742,8 @@ class InitialDatasetFoundationalParallel(InitialDatasetFoundational):
 
                         # checking if the criterion is met
                         criterion_met = (
-                            self.desired_acc * self.lamb >= self.current_valid
+                            self.desired_acc * self.desired_acc_scale_idg
+                            >= self.current_valid
                             or self.epoch >= self.max_initial_epochs
                         )
                         if criterion_met:
@@ -798,7 +815,10 @@ class InitialDatasetFoundationalParallel(InitialDatasetFoundational):
                         # if enough are computed send them to training worker
                     if (
                         len(temp_sampled_energies)
-                        % (self.n_samples * self.ensemble_size)
+                        % (
+                            self.n_points_per_sampling_step_idg
+                            * self.ensemble_size
+                        )
                         == 0
                         and len(temp_sampled_energies) != 0
                     ):
@@ -852,7 +872,7 @@ class InitialDatasetPARSL(InitialDatasetFoundational):
     def __init__(
         self,
         mace_settings: dict,
-        al_settings: dict,
+        aimsPAX_settings: dict,
         path_to_control: str = "./control.in",
         path_to_geometry: str = "./geometry.in",
         close_parsl: bool = True,
@@ -860,7 +880,7 @@ class InitialDatasetPARSL(InitialDatasetFoundational):
 
         super().__init__(
             mace_settings=mace_settings,
-            al_settings=al_settings,
+            aimsPAX_settings=aimsPAX_settings,
             path_to_control=path_to_control,
             path_to_geometry=path_to_geometry,
             use_mpi=False,
@@ -889,8 +909,9 @@ class InitialDatasetPARSL(InitialDatasetFoundational):
             handle_parsl_logger(
                 log_dir=self.log_dir / "parsl_initial_dataset.log",
             )
-
-        self.comm_handler.barrier()
+            logging.info("Using following settings for the HPC environment:")
+            log_yaml_block("CLUSTER:", self.cluster_settings)
+            self.comm_handler.barrier()
 
     def _sample_points(self) -> list:
         """
@@ -939,7 +960,16 @@ class InitialDatasetPARSL(InitialDatasetFoundational):
                         if self.compute_stress:
                             current_point.info["REF_stress"] = temp["stress"]
                         recalculated_points.append(current_point)
-
+                        if (
+                            len(recalculated_points)
+                            % self.idg_progress_dft_update
+                        ) == 0 or (
+                            len(recalculated_points)
+                            == len(self.sampled_points)
+                        ):
+                            logging.info(
+                                f"Recalculated {len(recalculated_points)} points."
+                            )
                         del job_results[i]
                 time.sleep(0.5)
 
