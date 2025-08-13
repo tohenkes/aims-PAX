@@ -405,13 +405,13 @@ The *aims-PAX* code is published and distributed under the [MIT License](MIT.md)
 - [ ] create good example (aspirin)
 - [ ] provide bash files for running *aims-PAX* example on meluxina
 - [ ] explain example in readme
+- [ ] add possible options for all settings if categorical
 - [ ] create minimal log
-- [ ] make loading existing ensembles to use in AL easier
-- [ ] AIMD with PARSL support
 - [ ] unit tests
 - [ ] git push workflow
 - [ ] create container
-- [ ] add possible options for all settings if categorical
+- [ ] make loading existing ensembles to use in AL easier
+- [ ] AIMD with PARSL support
 ### Low Priority:
 - [ ] look at "current temperatures" more closely, does it even make sense?
 - [ ] take epoch function from mace directly
