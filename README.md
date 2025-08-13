@@ -409,9 +409,6 @@ The *aims-PAX* code is published and distributed under the [MIT License](MIT.md)
 
 # ToDo
 ### High Priority:
-- [ ] create good example (aspirin)
-- [ ] provide bash files for running *aims-PAX* example on meluxina
-- [ ] explain example in readme
 - [ ] add possible options for all settings if categorical
 - [ ] create minimal log
 - [ ] make loading existing ensembles to use in AL easier
