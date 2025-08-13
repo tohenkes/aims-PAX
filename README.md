@@ -37,7 +37,7 @@ Here is a quick rundown how to compile it on [Meluxina](https://docs.lxp.lu/):
 
 After compilation you will find an exectuable e.g. `aims.XXX.scalapack.mpi.x` which can then be used in *aims-PAX*.
 
-A `.cmake` file for [Meluixna](https://docs.lxp.lu/) can be found in `fhi_aims_help`, alongside a script to run the compilation (step 7 above). The latter also includes the necessary modules that have to be loaded at step 5 above.
+A `.cmake` file for [Meluxina](https://docs.lxp.lu/) can be found in `fhi_aims_help`, alongside a script to run the compilation (step 7 above). The latter also includes the necessary modules that have to be loaded at step 5 above.
 
 ## Running 
 
