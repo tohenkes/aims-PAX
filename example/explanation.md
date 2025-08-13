@@ -2,22 +2,22 @@
 
 In this example, we use *aims PAX* to create a dataset and model for a rather simple molecule: aspirin.
 
-This is just to explain some settings, the outputs, and to help you run the code yourself. The job files and some of the `CLUSTER` settings are made with [Meluxina]() in mind, so you have to adjust them accordingly.
+This is just to explain some settings, the outputs, and to help you run the code yourself. The job files and some of the `CLUSTER` settings are made with [Meluxina](https://docs.lxp.lu/) in mind, so you have to adjust them accordingly.
 
 **Things to change:**
 
 You'll have to adjust some of the settings in the example depending of your conda and HPC environment.
 
-1. Activation of environment in `example_aimsPAX.sh`
+1. Activation of environment and slurm settings in `example_aimsPAX.sh`
 2. Path to species defaults in `aimsPAX.yaml` under `INITIAL_DATASET_GENERATION` and `ACTIVE_LEARNING`
 3. `slurm_str` and `worker_str` in `aimsPAX.yaml` under `CLUSTER`
 4. `launc_str` in `aimsPAX.yaml` under `CLUSTER`
 5. `calc_dir` in `aimsPAX.yaml` under `CLUSTER`
 
 ### DFT Settings
-[FHI aims]() is used for running DFT, and inside the `control.in` file the functional, dispersion correction, and other settings like SCF convergence criteria are specified. For more details on what settings are possible, consult the official [manual]().
+[FHI-aims](https://fhi-aims.org/) is used for running DFT, and inside the `control.in` file the functional, dispersion correction, and other settings like SCF convergence criteria are specified. For more details on what settings are possible, consult the [official manual](https://fhi-aims.org/uploads/documents/FHI-aims.250320_1.pdf).
 
-In our example, we will use [PBE]() as it is cheap to evaluate.
+In our example, we will use PBE as it is cheap to evaluate.
 
 The species defaults for numerical settings and basis sets are defined in `aimsPAX.yaml` as we will see later on (this is contrary to what is usually done in FHI aims, where these defaults are part of the `control.in` file).
 

@@ -8,7 +8,7 @@
 #SBATCH --qos=default        # SLURM qos
 
 
-module load intel
+module load intel  # needed at Meluxina
 source path/to/your/conda/bin/activate my_env
 
-aims-PAX-al
+aims-PAX

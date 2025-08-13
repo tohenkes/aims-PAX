@@ -36,7 +36,7 @@ Here is a quick rundown how to compile it on [Meluxina](https://docs.lxp.lu/):
 2. Move to the root FHI aims directory
 3. Create a build directory and change to it: `mkdir build && cd build`
 4. Create a `initial_cache.cmake` file with all necessary flags (an example is provided under:  `fhi_aims_help/example_initial_cache.cmake`)
-5. Load necessary modules (if you are on a HPC environment) e.g. intel compilers etc.
+5. Load necessary modules e.g. intel compilers etc.
 6. run `cmake -C initial_cache.cmake ..`
 7. run `make -j x` (x being the number of processes)
 
