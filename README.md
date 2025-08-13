@@ -13,10 +13,10 @@
 ### *aims-PAX*
 
 To install *aims-PAX* and all its requirements do the following steps:
-1. Create a(n) (mini)conda environment (if not existing already) e.g.: `conda create -n my_env python=3.10.14`
+1. Create a(n) (mini)conda environment (if not existing already) e.g.: `conda create -n my_env python=3.10`
 2. Activate the conda environment: `conda activate my_env`
 3. Clone this repository
-4. Move to the *aims-PAX* directory: `cd *aims-PAX*`
+4. Move to the *aims-PAX* directory: `cd aims-PAX`
 5. run the setup script: `bash setup.sh`
 
 The latter will install the PARSL tools, other packages specified in `requirements.txt`, and *aims-PAX* itself.
@@ -48,13 +48,13 @@ To run *aims-PAX*, one has to specify the settings for FHI aims, the MACE model 
     - ```mace.yaml```,
     - ```aimsPAX.yaml```
     - either specify a geometry as `geometry.in` or provide a path in the `MISC` settings under `path_to_geometry`. For the latter, you can also specify a path to folder containing multiple geometry files (see Multi-system sampling).
-2. run ```*aims-PAX* ``` in the directory
+2. run ```aims-PAX ``` in the directory
 
 The settings are explained below and *aims-PAX* automatically runs the all necessary steps. During the run you can observe its progress in the `initial_dataset.log`and `active_learning.log` inside the log directory (default is `./logs`). At the end, the model(s) and data can be found in the `results/` folder.
 
 **Note:** The models are named like this: `{name_exp}_{seed}.model` where `name_exp` is set in `mace.yaml` (see Settings/MACE settings section below)
 
-Both procedures, initial dataset acquisition and active learning, are classes that can be used independently from each other. To only create an initial dataset you can run ```*aims-PAX*-initial-ds ```. Equivalently, to only run the active learning procedure (given that the previous step has been done or all the necessary files are present), just run ```*aims-PAX*-al```.
+Both procedures, initial dataset acquisition and active learning, are classes that can be used independently from each other. To only create an initial dataset you can run ```aims-PAX-initial-ds ```. Equivalently, to only run the active learning procedure (given that the previous step has been done or all the necessary files are present), just run ```aims-PAX-al```.
 
 **Note:** you can also change the names of the settings file and run `aims-PAX --mace_settings path/to/my_mace.yaml --aimsPAX-settings path/to/my_aimspax.yaml` for example.
 
@@ -79,7 +79,7 @@ During **active learning**, the uncertainty threshold is shared across all geome
 
 ### Restarting
 
-By default `create_restart` is set to `True` in `MISC` in the settings (see below). In that case, the state of the initial dataset generation or active learning run is frequently saved to a `.npy` file inside the `restart` directory. The procedure can be continued by just running `*aims-PAX*(-al/initial-ds)` again.
+By default `create_restart` is set to `True` in `MISC` in the settings (see below). In that case, the state of the initial dataset generation or active learning run is frequently saved to a `.npy` file inside the `restart` directory. The procedure can be continued by just running `aims-PAX(-al/initial-ds)` again.
 
 ## Settings 
 
@@ -405,7 +405,6 @@ The *aims-PAX* code is published and distributed under the [MIT License](MIT.md)
 - [ ] create good example (aspirin)
 - [ ] provide bash files for running *aims-PAX* example on meluxina
 - [ ] explain example in readme
-- [ ] check installation and running w/o asi4py
 - [ ] create minimal log
 - [ ] make loading existing ensembles to use in AL easier
 - [ ] AIMD with PARSL support
@@ -415,10 +414,7 @@ The *aims-PAX* code is published and distributed under the [MIT License](MIT.md)
 - [ ] add possible options for all settings if categorical
 ### Low Priority:
 - [ ] look at "current temperatures" more closely, does it even make sense?
-- [x] Start multiple trajectories from different starting geometries
 - [ ] take epoch function from mace directly
-- [x] test_ensemble.py still work
-- [x] change recalculator to use parsl
 - [ ] change epoch saved in AL for ckpt
 - [ ] update to new mace and torch version
 - [ ] clear logger -- prints warning from mace: Standard deviation of the scaling is zero, Changing to no scaling
@@ -426,7 +422,6 @@ The *aims-PAX* code is published and distributed under the [MIT License](MIT.md)
 - [ ] energy, force weight swap in loss fn during convergence
 - [ ] multiple MD settings
 - [ ] multi GPU parallelism for AL
-- [x] multiple species at once
 - [ ] multiple trajectories in IDG
 - [ ] compile models at the end
 - [ ] fine-tuning of foundational models
