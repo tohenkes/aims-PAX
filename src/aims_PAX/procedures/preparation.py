@@ -29,6 +29,7 @@ from aims_PAX.tools.utilities.utilities import (
     create_seeds_tags_dict,
     setup_logger,
     update_model_auxiliaries,
+    save_checkpoint,
     read_geometry,
     save_checkpoint,
     log_yaml_block,
@@ -145,7 +146,7 @@ class PrepareInitialDatasetProcedure:
             self.atoms = list(self.trajectories.values())
             self.step = self.init_ds_restart_dict["step"]
         else:
-            self.atoms = read_geometry(path_to_geometry)
+            self.atoms = read_geometry(path_to_geometry, log=True)
             self.step = 0
             # TODO: multiple trajectories per atoms
             # TODO: make this compatible with the other methods in case the
@@ -166,7 +167,7 @@ class PrepareInitialDatasetProcedure:
         np.random.seed(self.seed)
         random.seed(self.seed)
         self.ensemble_seeds = np.random.randint(
-            0, 10000, size=self.ensemble_size
+            0, 1000, size=self.ensemble_size
         )
         self.seeds_tags_dict = create_seeds_tags_dict(
             seeds=self.ensemble_seeds,
@@ -952,7 +953,7 @@ class ALStateManager:
 
     def initialize_fresh_state(self, path_to_geometry: str):
         """Initialize state for a fresh run."""
-        atoms = read_geometry(path_to_geometry)
+        atoms = read_geometry(path_to_geometry, log=True)
         if self.rank == 0:
             logging.info(
                 "Running Active Learning Procedure with "

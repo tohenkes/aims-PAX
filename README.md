@@ -1,8 +1,13 @@
 
-<center><img src="readme_figs/preliminary_logo_w.png" alt="drawing" width="200"/>
+<!-- Light mode logo -->
+<img src="readme_figs/preliminary_logo.png#gh-light-mode-only" alt="Light Logo" width="250">
+
+<!-- Dark mode logo -->
+<img src="readme_figs/preliminary_logo_w.png#gh-dark-mode-only" alt="Dark Logo" width="250">
+
 
 *aims-PAX*, short for **a**b **i**nitio **m**olecular **s**imulation-**P**arallel **A**ctive e**X**ploration, is a flexible, fully automated, open-source software package for performing active learning for machine learning force fields using a parallelized algorithm that enables efficient resource management. 
-</center>
+
 
 # Documentation
 
@@ -51,6 +56,8 @@ To run *aims-PAX*, one has to specify the settings for FHI aims, the MACE model 
 2. run ```aims-PAX ``` in the directory
 
 The settings are explained below and *aims-PAX* automatically runs the all necessary steps. During the run you can observe its progress in the `initial_dataset.log`and `active_learning.log` inside the log directory (default is `./logs`). At the end, the model(s) and data can be found in the `results/` folder.
+
+Take a look at the example and its explanation (`example/explanation.md`) for more details.
 
 **Note:** The models are named like this: `{name_exp}_{seed}.model` where `name_exp` is set in `mace.yaml` (see Settings/MACE settings section below)
 
@@ -407,6 +414,9 @@ The *aims-PAX* code is published and distributed under the [MIT License](MIT.md)
 - [ ] explain example in readme
 - [ ] add possible options for all settings if categorical
 - [ ] create minimal log
+- [ ] make loading existing ensembles to use in AL easier
+- [ ] fix duplicate logger in IDG
+- [ ] AIMD with PARSL support
 - [ ] unit tests
 - [ ] git push workflow
 - [ ] create container

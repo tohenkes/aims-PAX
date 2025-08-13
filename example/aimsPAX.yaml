@@ -1,4 +1,6 @@
 INITIAL_DATASET_GENERATION:
+  desired_acc: 0.1
+  desired_acc_scale_idg: 3.
   valid_ratio: 0.1
   n_points_per_sampling_step_idg: 10
   valid_skip: 5
@@ -7,12 +9,10 @@ INITIAL_DATASET_GENERATION:
   skip_step_initial: 10
   initial_sampling: mace-mp0
   initial_foundational_size: "medium"
-  desired_acc: 0.03
-  desired_acc_scale_idg: 10.
-  species_dir: "/mnt/irisgpfs/projects/tcp/FHIaims-221103/species_defaults/defaults_2020/light"
+  species_dir: "path/to/FHIaims/species_defaults/defaults_2020/light"
 
 ACTIVE_LEARNING:
-  desired_acc: 0.03
+  desired_acc: 0.1
   valid_ratio: 0.1
   max_epochs_worker: 2
   intermediate_epochs_al: 1
@@ -25,7 +25,7 @@ ACTIVE_LEARNING:
   c_x: -0.1
   skip_step_mlff: 25 
   num_trajectories: 8
-  species_dir: "/mnt/irisgpfs/projects/tcp/FHIaims-221103/species_defaults/defaults_2020/light"
+  species_dir: "path/to/FHIaims/species_defaults/defaults_2020/light"
 
 
 MD:
@@ -41,28 +41,33 @@ MISC:
 
 CLUSTER:
   type: slurm
-  project_name: 'EXAMPLE'
+  project_name: 'aimsPAX_example'
   parsl_options:
     nodes_per_block: 1
     init_blocks: 1
     min_blocks: 1
-    max_blocks: 2
-    label: 'EXAMPLE'
+    max_blocks: 4
+    label: 'aimsPAX_example'
 
   slurm_str: |
-    #!/bin/bash -l
-    #SBATCH --time=01:30:00
-    #SBATCH -N 1
-    #SBATCH --ntasks-per-node=12
-    #SBATCH -p batch
-    #SBATCH -J parsl_test
+    #SBATCH --job-name=aimsPAX_example
+    #SBATCH --partition=cpu
+    #SBATCH --nodes=1
+    #SBATCH --ntasks-per-node=128
+    #SBATCH --time=48:00:00
+    #SBATCH --account=XXX
+    #SBATCH --qos=default
   worker_str: |
-    source /home/users/thenkes/miniconda3/bin/activate aimspax
-    module load toolchain/intel
+    module load env/release/2023
+    source path/to/your/conda/bin/activate my_env
+    module load intel
     ulimit -s unlimited
+    export OMP_NUM_THREADS=1
+    export MKL_NUM_THREADS=1
+    export MKL_DYNAMIC='FALSE'
+    export WORK_QUEUE_DISABLE_SHARED_PORT=1
 
-  launch_str: srun /mnt/irisgpfs/projects/tcp/emoerman/software/FHI-aims/FHIaims/build/aims.250507.scalapack.mpi.x >> aims.out
-  clean_dirs: False
-  calc_dir: "/home/users/thenkes/phd/aimsMLFF/test_install/aims-PAX/example/calc"
+  launch_str: srun path/to/aims.x >> aims.out
+  calc_dir: "path/to/working/dir/calc"
 
   

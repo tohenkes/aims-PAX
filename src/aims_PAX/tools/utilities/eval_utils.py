@@ -15,7 +15,11 @@ from mace.tools.utils import (
     compute_rel_rmse,
     compute_rmse,
 )
+from aims_PAX.tools.utilities.utilities import (
+    compute_max_error,
+)
 from torchmetrics import Metric
+import time
 
 
 def evaluate_model(
@@ -409,6 +413,7 @@ def test_model(
     output_args: dict,
     device: str,
     return_predictions: bool = False,
+    log: bool = False,
 ) -> dict:
     """
     Function to test a MACE model on a set of configurations.
@@ -441,8 +446,10 @@ def test_model(
             predictions["virials"] = []
         if output_args.get("dipole", False):
             predictions["dipole"] = []
-
-    for batch in data_loader:
+    num_batches = len(data_loader)
+    if log:
+        logging.info(f"Testing model on {num_batches} batches")
+    for i, batch in enumerate(data_loader):
         batch = batch.to(device)
         batch_dict = batch.to_dict()
         output = model(
@@ -452,6 +459,10 @@ def test_model(
             compute_virials=output_args["virials"],
             compute_stress=output_args["stress"],
         )
+        if log:
+            logging.info(
+                f"Batch no. {i + 1}/{num_batches} - done!"
+            )
         aux = metrics(batch, output)
 
         if return_predictions:
@@ -498,6 +509,7 @@ def test_ensemble(
     dipole_key: str = "dipoles",
     charges_key: str = "charges",
     head_key: str = "head",
+    log: bool = False,
 ) -> Tuple[dict, dict]:
     """
     Function taken from MACE code and adapted to work with ensembles.
@@ -598,6 +610,7 @@ def test_ensemble(
             output_args=output_args,
             device=device,
             return_predictions=return_predictions,
+            log=log,
         )
         ensemble_metrics[tag] = metrics
 
