@@ -17,7 +17,6 @@
 #*.sh
 src/aims_PAX.egg-info
 /build
-/examples_dev
 
 
 

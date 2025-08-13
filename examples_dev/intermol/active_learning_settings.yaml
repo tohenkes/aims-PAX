@@ -1,0 +1,41 @@
+ACTIVE_LEARNING:
+  desired_acc: 0.0
+  desired_acc_scale_idg: 20.
+  n_samples: 4
+  valid_ratio: 0.25 
+  converge_initial: False
+  converge_al: True
+  scheduler_initial: True
+  max_initial_epochs: 10
+  max_epochs_worker: 10
+  max_final_epochs: 5000
+  intermediate_epochs: 5
+  patience: 50
+  max_MD_steps: 10000000
+  max_set_size: 100
+  valid_skip: 5
+  analysis_skip: 25
+  ensemble_size: 4
+  c_x: -0.3
+  dataset_dir: "./data"
+  skip_step_initial: 20
+  skip_step_mlff: 20 # step to skip in sampling MLFF MD
+  num_trajectories: 3 # number of trajectories to from sample in parallel
+  species_dir: "/mnt/tier2/project/p200243/tcp_software/FHIaims_master_branch/FHIaims/species_defaults/defaults_2020/light"
+  aims_lib_path: "/mnt/tier2/project/p200243/tcp_software/FHIaims_master_branch/FHIaims/build_lib/libaims.250507.scalapack.mpi.so"
+  analysis: True
+  initial_sampling: "mace-mp0"
+  initial_foundational_size: "small"
+  mol_idxs: ./mol_idxs.npz
+  intermol_crossed_limit: 5
+  intermol_forces_weight: 1000
+MD:
+  stat_ensemble: NVT
+  thermostat: Langevin
+  temperature: 250
+  timestep: 0.5
+  friction: 0.001
+  seed: 42
+MISC:
+  create_restart: True
+ 
