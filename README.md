@@ -1,9 +1,9 @@
 
 <!-- Light mode logo -->
-![Light Logo](preliminary_logo.png#gh-light-mode-only)
+<img src="readme_figs/preliminary_logo.png#gh-light-mode-only" alt="Light Logo" width="250">
 
 <!-- Dark mode logo -->
-![Dark Logo](preliminary_logo_w.png#gh-dark-mode-only)
+<img src="readme_figs/preliminary_logo_w.png#gh-dark-mode-only" alt="Dark Logo" width="250">
 
 
 *aims-PAX*, short for **a**b **i**nitio **m**olecular **s**imulation-**P**arallel **A**ctive e**X**ploration, is a flexible, fully automated, open-source software package for performing active learning for machine learning force fields using a parallelized algorithm that enables efficient resource management. 
