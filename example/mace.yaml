@@ -1,7 +1,6 @@
 GENERAL:
   name_exp: test
   checkpoints_dir: ./checkpoints
-  results_dir: ./results
   model_dir: ./model
   default_dtype: float32
   compute_stress: False
@@ -15,7 +14,6 @@ ARCHITECTURE:
   - 16
   - 16
   - 16
-  MLP_irreps: 32x0e
 
 TRAINING:
   batch_size: 5
@@ -28,4 +26,4 @@ TRAINING:
   forces_weight: 1000.
 
 MISC:
-  device: cpu
+  device: cuda

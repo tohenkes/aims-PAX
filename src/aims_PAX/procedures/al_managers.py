@@ -1177,7 +1177,7 @@ class ALDFTManagerPARSL(ALDFTManager):
             handle_parsl_logger(log_dir=parsl_log_dir / "parsl_al.log")
             parsl.load(self.parsl_config)
 
-        logging.info("Launching ab initio manager thread for PARSL.")
+        logging.info("Launching DFT manager thread for PARSL.")
         self.ab_initio_queue = queue.Queue()
         self.ab_intio_results = {}
         self.ab_initio_counter = {
@@ -1571,9 +1571,9 @@ class ALRunningManager:
             if self.rank == 0 and uncertainty_exceeded:
                 logging.info(
                     f"Uncertainty of point is beyond threshold "
-                    f"{np.round(self.state_manager.threshold, 3)} "
+                    f"{self.state_manager.threshold:.4f} "
                     f"at worker {idx}: "
-                    f"{np.round(uncertainty, 3)}."
+                    f"{uncertainty:.4f}."
                 )
             if self.rank == 0 and timeout_exceeded:
                 logging.info(
