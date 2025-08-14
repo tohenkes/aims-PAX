@@ -569,10 +569,10 @@ class TrainingOrchestrator:
             # Check if optimizer reset is needed
             if (
                 self.state_manager.ensemble_no_improvement[tag]
-                > self.config.max_epochs_worker
+                > self.config.per_epochs_worker
             ):
                 logging.info(
-                    f"No improvements for {self.config.max_epochs_worker} epochs "
+                    f"No improvements for {self.config.per_epochs_worker} epochs "
                     f"at ensemble member {tag}. Scheduling optimizer reset."
                 )
                 self.state_manager.ensemble_reset_opt[tag] = True

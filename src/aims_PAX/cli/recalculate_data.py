@@ -33,7 +33,7 @@ def main():
             "--settings",
             type=str,
             help="Path to active learning settings file",
-            default="./active_learning_settings.yaml",
+            default="./aimsPAX.yaml",
         )
         parser.add_argument(
             "--start_idx",

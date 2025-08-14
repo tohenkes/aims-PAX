@@ -178,7 +178,7 @@ class ReCalculatorPARSL:
         path_to_data: str,
         basis_dir: str = None,
         path_to_control: str = "./control.in",
-        path_to_settings: str = "./active_learning_settings.yaml",
+        path_to_settings: str = "./aimsPAX.yaml",
         start_idx: int = 0,
         end_idx: int = None,
         save_interval: int = 10,
