@@ -51,7 +51,7 @@ Finally, under `launch_str` you must write the exact commands that are used to r
 
 ### Active Learning Settings
 
-In the active learning settings, we encounter some keywords we have seen before in the initial dataset generation settings. New ones are, for example, `per_epochs_worker` and `intermediate_epochs_al`. When a DFT calculation is done, the models are trained on the updated datasets for a total of `per_epochs_worker`. This is done in steps of `intermediate_epochs_al`. So the model is trained, then other trajectories are propagated, and training continues. This becomes clear when you take a look inside the logs while the workflow runs.
+In the active learning settings, we encounter some keywords we have seen before in the initial dataset generation settings. New ones are, for example, `epochs_per_worker` and `intermediate_epochs_al`. When a DFT calculation is done, the models are trained on the updated datasets for a total of `epochs_per_worker`. This is done in steps of `intermediate_epochs_al`. So the model is trained, then other trajectories are propagated, and training continues. This becomes clear when you take a look inside the logs while the workflow runs.
 
 Another important setting is `num_trajectories`, where you specify how many trajectories `aims-PAX` samples new points from at the same time. From a purely computational performance perspective, the number of trajectories should be higher than the number of blocks (see **Cluster Settings**).
 
