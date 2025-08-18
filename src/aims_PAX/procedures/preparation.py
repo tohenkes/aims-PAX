@@ -832,7 +832,7 @@ class ALConfigurationManager:
         """Setup active learning configuration."""
         # Training parameters
         self.max_MD_steps = self.al_settings["max_MD_steps"]
-        self.per_epochs_worker = self.al_settings["per_epochs_worker"]
+        self.epochs_per_worker = self.al_settings["epochs_per_worker"]
         self.max_convergence_epochs = self.al_settings[
             "max_convergence_epochs"
         ]

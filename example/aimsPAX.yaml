@@ -14,7 +14,7 @@ INITIAL_DATASET_GENERATION:
 ACTIVE_LEARNING:
   desired_acc: 0.1
   valid_ratio: 0.1
-  per_epochs_worker: 2
+  epochs_per_worker: 2
   intermediate_epochs_al: 1
   converge_al: True
   converge_best: True

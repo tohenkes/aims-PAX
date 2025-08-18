@@ -200,7 +200,7 @@ class ALProcedure(PrepareALProcedure):
 
         if (
             self.state_manager.trajectory_total_epochs[idx]
-            >= self.config.per_epochs_worker
+            >= self.config.epochs_per_worker
         ):
             self.state_manager.trajectory_status[idx] = "running"
             self.state_manager.num_workers_training -= 1
