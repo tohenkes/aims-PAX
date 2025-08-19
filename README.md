@@ -328,9 +328,8 @@ We use exactly the same names as employed in the [MACE code](https://github.com/
 
 ## The workflow 
 <img src="readme_figs/aims_PAX_overview.png" alt="drawing" width="650"/>
-TODO: add link
 
-Please consult the [publication]() for a description of the *aims-PAX* workflow.
+Please consult the [publication](https://arxiv.org/abs/2508.12888) for a description of the *aims-PAX* workflow.
 
 <!---
 
@@ -376,7 +375,18 @@ It is recommended to use the isolated atomic energies of the elements in a given
 If you are using *aims-PAX* cite the main publication: 
 
 ***aims-PAX*:**
-
+```bibtex
+@misc{https://doi.org/10.48550/arxiv.2508.12888,
+  doi = {10.48550/ARXIV.2508.12888},
+  url = {https://arxiv.org/abs/2508.12888},
+  author = {Henkes,  Tobias and Sharma,  Shubham and Tkatchenko,  Alexandre and Rossi,  Mariana and Poltavskyi,  Igor},
+  keywords = {Chemical Physics (physics.chem-ph),  FOS: Physical sciences,  FOS: Physical sciences},
+  title = {aims-PAX: Parallel Active eXploration for the automated construction of Machine Learning Force Fields},
+  publisher = {arXiv},
+  year = {2025},
+  copyright = {arXiv.org perpetual,  non-exclusive license}
+}
+```
 
 [**FHI-aims**](https://fhi-aims.org/)**:**
 
