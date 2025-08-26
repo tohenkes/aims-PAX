@@ -430,7 +430,7 @@ If you are using *aims-PAX* cite the main publication:
 
 If you have questions you can reach us at: tobias.henkes@uni.lu or igor.poltavskyi@uni.lu
 
-For bugs or feature requests, please use [GitHub Issues](https://github.com/tohenkes/*aims-PAX*/issues).
+For bugs or feature requests, please use [GitHub Issues](https://github.com/tohenkes/aims-PAX/issues).
 
 ## License
 
