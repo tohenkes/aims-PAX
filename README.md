@@ -429,10 +429,22 @@ The *aims-PAX* code is published and distributed under the [MIT License](MIT.md)
 
 
 # ToDo
-### High Priority:
 - [ ] add possible options for all settings if categorical
 - [ ] create minimal log
+- [ ] add so3lr (torch) as foundational model for IDG
+- [ ] update to new ase version (keyspec!!! transfrom script!)
+- [ ] update to new mace version
+- [ ] update to new torch version
+- [ ] update training procedure
+- [ ] take epoch function from so3krates_torch directly
+- [ ] ModelEval, loss, atomic data, dataloader form so3krates_torch
+- [ ] Implement SO3LR (needed: model setup, training setup, one epoch function, update model auxiliaries, parsing of dipoles and hirshfeld ratios from fhi aims output)
+- [ ] multiple MD settings
+- [ ] multiple trajectories in IDG
 - [ ] make loading existing ensembles to use in AL easier
+  -  or path to dataset !!!
+  - think about seed-tag dict, how to cirumvent it? or create based on directory of models (use model file names)
+  - make sure all elements can be handled by the model
 - [ ] fix duplicate logger in IDG
 - [ ] AIMD with PARSL support
 - [ ] unit tests
@@ -440,20 +452,14 @@ The *aims-PAX* code is published and distributed under the [MIT License](MIT.md)
 - [ ] create container
 - [ ] make loading existing ensembles to use in AL easier
 - [ ] AIMD with PARSL support
-### Low Priority:
 - [ ] look at "current temperatures" more closely, does it even make sense?
-- [ ] take epoch function from mace directly
 - [ ] change epoch saved in AL for ckpt
-- [ ] update to new mace and torch version
 - [ ] clear logger -- prints warning from mace: Standard deviation of the scaling is zero, Changing to no scaling
-- [ ] spin polarization for E0 calculations
 - [ ] energy, force weight swap in loss fn during convergence
-- [ ] multiple MD settings
 - [ ] multi GPU parallelism for AL
-- [ ] multiple trajectories in IDG
 - [ ] compile models at the end
 - [ ] fine-tuning of foundational models
 - [ ] use H5MD file format
-- [ ] Implement SO3LR (needed: (ensemble) calculator, model setup, training setup, one epoch function, update model auxiliaries)
+- [ ] spin polarization for E0 calculations
 
 

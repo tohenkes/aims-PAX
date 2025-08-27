@@ -85,6 +85,7 @@ SCHEME = {
         "max_train_set_size": np.inf,
         "parallel": False,
         "analysis_skip": 50,
+        "extend_existing_final_ds": False,
     },
     "optional_cluster": {
         "type": "slurm",
@@ -201,6 +202,7 @@ SCHEME_DTYPES = {
         "parallel",
         "create_restart",
         "clean_dirs",
+        "extend_existing_final_ds",
     ],
     "lists": ["mol_idxs"],
     "dicts": ["parsl_options", "MISC"],

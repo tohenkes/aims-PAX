@@ -853,6 +853,9 @@ class ALConfigurationManager:
         self.valid_ratio = self.al_settings["valid_ratio"]
         self.max_train_set_size = self.al_settings["max_train_set_size"]
         self.c_x = self.al_settings["c_x"]
+        self.extend_existing_final_ds = self.al_settings[
+            'extend_existing_final_ds'
+        ]
 
         # Paths
         self.dataset_dir = Path(self.misc["dataset_dir"])
@@ -1172,11 +1175,14 @@ class ALEnsembleManager:
 
     def _setup_datasets(self):
         """Setup initial datasets (rank 0 only)."""
-        dataset_subdir = "final" if self.config.restart else "initial"
+        dataset_subdir = "final" if (
+            self.config.restart or self.config.extend_existing_final_ds
+        ) else "initial"
+        
         log_message = (
             "Loading datasets from checkpoint."
             if self.config.restart
-            else "Loading initial datasets."
+            else "Loading datasets."
         )
 
         logging.info(log_message)
@@ -1197,6 +1203,9 @@ class ALEnsembleManager:
 
         self.train_dataset_len = len(
             self.ensemble_ase_sets[list(self.ensemble.keys())[0]]["train"]
+        )
+        logging.info(
+            f'Length of training set: {self.train_dataset_len}'
         )
 
     def _broadcast_dataset_info(self):
