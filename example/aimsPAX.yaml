@@ -7,8 +7,9 @@ INITIAL_DATASET_GENERATION:
   intermediate_epochs_idg: 5
   ensemble_size: 4
   skip_step_initial: 10
-  initial_sampling: mace-mp0
-  initial_foundational_size: "medium"
+  foundational_model: mace-mp
+  foundational_model_settings:
+    model_size: small
   species_dir: "path/to/FHIaims/species_defaults/defaults_2020/light"
 
 ACTIVE_LEARNING:
