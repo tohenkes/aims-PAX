@@ -45,8 +45,13 @@ SCHEME = {
         "scheduler_initial": True,
         "converge_initial": False,
         "convergence_patience": 50,
-        "initial_sampling": "mace-mp0",
-        "initial_foundational_size": "small",
+        "initial_sampling": "foundational",
+        "foundational_model": "mace-mp",
+        "foundational_model_settings": {
+            "model_size": "small",
+            "r_max_lr": None,
+            "dispersion_lr_damping": None
+            },
         "skip_step_initial": 25,
         "desired_acc": 0.0,
         "desired_acc_scale_idg": 10.0,
@@ -58,6 +63,11 @@ SCHEME = {
         "max_convergence_epochs": 500,
         "aims_lib_path": None,
         "progress_dft_update": 10,
+    },
+    "optional_foundational": {
+        "model_size": "small",
+        "r_max_lr": None,
+        "dispersion_lr_damping": None
     },
     "optional_al": {
         "freeze_threshold_dataset": np.inf,
@@ -117,6 +127,15 @@ SCHEME = {
         "log_dir": "./logs",
         "create_restart": True,
         "mol_idxs": None,
+        "energy_key": "REF_energy",
+        "forces_key": "REF_forces",
+        "stress_key": "REF_stress",
+        "dipole_key": "REF_dipole",
+        "polarizability_key": "REF_polarizability",
+        "head_key": "head",
+        "charges_key": "REF_charges",
+        "total_charge_key": "total_charge",
+        "total_spin_key": "total_spin",
     },
     "conflicts": {
         "parallel": "CLUSTER",
@@ -139,7 +158,8 @@ SCHEME_DTYPES = {
         "pressure_au",
         "timestep",
         "ttime",
-        "pfactor" "externalstress",
+        "pfactor",
+        "externalstress",
     ],
     "ints": [
         "num_trajectories",
@@ -178,7 +198,7 @@ SCHEME_DTYPES = {
         "launch_str",
         "calc_dir",
         "initial_sampling",
-        "initial_foundational_size",
+        "foundational_model",
         "uncertainty_type",
         "type",
         "stat_ensemble",
@@ -188,10 +208,24 @@ SCHEME_DTYPES = {
         "dataset_dir",
         "log_dir",
         "barostat",
+        "model_size",
+        "energy_key",
+        "forces_key",
+        "stress_key",
+        "dipole_key",
+        "polarizability_key",
+        "head_key",
+        "charges_key",
+        "total_charge_key",
+        "total_spin_key"
     ],
     "optional_strings": [  # Fields that can be None or string
         "seeds_tags_dict",
         "aims_lib_path",
+    ],
+    "optional_floats": [
+        "r_max_lr",
+        "dispersion_lr_damping"
     ],
     "bools": [
         "analysis",
@@ -205,7 +239,8 @@ SCHEME_DTYPES = {
         "extend_existing_final_ds",
     ],
     "lists": ["mol_idxs"],
-    "dicts": ["parsl_options", "MISC"],
+    "optional_lists": [],
+    "dicts": ["parsl_options", "MISC", "foundational_model_settings"],
 }
 
 SCHEME_MACE = {
@@ -454,6 +489,25 @@ def check_aimsPAX_settings(settings: dict, procedure: str = "full") -> dict:
         for k in SCHEME["optional_idg"]:
             if k not in idg_settings:
                 idg_settings[k] = SCHEME["optional_idg"][k]
+
+        use_foundational = idg_settings.get(
+            'initial_sampling'
+            ) == 'foundational'
+
+        if use_foundational:
+            foundational_settings = idg_settings[
+                'foundational_model_settings'
+            ]
+            for k in SCHEME["optional_foundational"]:
+                if k not in foundational_settings:
+                    foundational_settings[k] = SCHEME["optional_foundational"][k]
+            foundational_settings = check_dtypes(
+                settings=foundational_settings,
+                scheme_key="optional_foundational",
+                scheme=SCHEME,
+                scheme_dtype=SCHEME_DTYPES,
+            )
+            idg_settings['foundational_model_settings'] = foundational_settings
 
         idg_settings = check_dtypes(
             settings=idg_settings,

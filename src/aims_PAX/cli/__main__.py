@@ -60,7 +60,7 @@ def main():
         aimsPAX_settings["INITIAL_DATASET_GENERATION"][
             "initial_sampling"
         ].lower()
-        == "mace-mp0"
+        == "foundational"
     ):
         if aimsPAX_settings.get("CLUSTER", False):
             initial_ds = InitialDatasetPARSL(
