@@ -16,7 +16,7 @@ from mace import tools
 from mace.tools import AtomicNumberTable, torch_geometric
 from mace.data.utils import (
     config_from_atoms_list,
-    # KeySpecification,
+    KeySpecification,
 )
 from dataclasses import dataclass
 from ase.io import read
@@ -51,27 +51,15 @@ def get_dataset_from_atoms(
     test_list: list = None,
     seed: int = 1234,
     keep_isolated_atoms: bool = False,
+    key_specification: KeySpecification = None,
     head_name: str = "Default",
-    energy_key: str = "REF_energy",
-    forces_key: str = "REF_forces",
-    stress_key: str = "REF_stress",
-    virials_key: str = "virials",
-    dipole_key: str = "dipoles",
-    charges_key: str = "charges",
-    head_key: str = "head",
 ) -> Tuple[SubsetCollection, Optional[Dict[int, float]]]:
     """Load training and test dataset from xyz file"""
 
     atomic_energies_dict, all_train_configs = load_from_atoms(
         atoms_list=train_list,
         config_type_weights=config_type_weights,
-        energy_key=energy_key,
-        forces_key=forces_key,
-        stress_key=stress_key,
-        virials_key=virials_key,
-        dipole_key=dipole_key,
-        charges_key=charges_key,
-        head_key=head_key,
+        key_specification=key_specification,
         extract_atomic_energies=True,
         keep_isolated_atoms=keep_isolated_atoms,
         head_name=head_name,
@@ -81,13 +69,7 @@ def get_dataset_from_atoms(
         _, valid_configs = load_from_atoms(
             atoms_list=valid_list,
             config_type_weights=config_type_weights,
-            energy_key=energy_key,
-            forces_key=forces_key,
-            stress_key=stress_key,
-            virials_key=virials_key,
-            dipole_key=dipole_key,
-            charges_key=charges_key,
-            head_key=head_key,
+            key_specification=key_specification,
             extract_atomic_energies=False,
             head_name=head_name,
         )
@@ -110,11 +92,7 @@ def get_dataset_from_atoms(
         _, all_test_configs = load_from_atoms(
             atoms_list=test_list,
             config_type_weights=config_type_weights,
-            energy_key=energy_key,
-            forces_key=forces_key,
-            dipole_key=dipole_key,
-            charges_key=charges_key,
-            head_key=head_key,
+            key_specification=key_specification,
             extract_atomic_energies=False,
             head_name=head_name,
         )
@@ -132,24 +110,14 @@ def get_dataset_from_atoms(
 def get_single_dataset_from_atoms(
     atoms_list: list,
     config_type_weights: Dict,
-    energy_key: str = "energy",
-    forces_key: str = "forces",
-    stress_key: str = "stress",
-    virials_key: str = "virials",
-    dipole_key: str = "dipoles",
-    charges_key: str = "charges",
+    key_specification: KeySpecification
 ) -> Tuple[SubsetCollection, Optional[Dict[int, float]]]:
     """Load training and test dataset from xyz file"""
 
     atomic_energies_dict, all_configs = load_from_atoms(
         atoms_list=atoms_list,
         config_type_weights=config_type_weights,
-        energy_key=energy_key,
-        forces_key=forces_key,
-        stress_key=stress_key,
-        virials_key=virials_key,
-        dipole_key=dipole_key,
-        charges_key=charges_key,
+        key_specification=key_specification,
         extract_atomic_energies=True,
     )
 
@@ -218,44 +186,42 @@ def test_config_types(
 
 def load_from_atoms(
     atoms_list: list,
-    config_type_weights: Dict,
-    energy_key: str = "REF_energy",
-    forces_key: str = "REF_forces",
-    stress_key: str = "REF_stress",
-    virials_key: str = "REF_virials",
-    dipole_key: str = "REF_dipole",
-    charges_key: str = "REF_charges",
-    head_key: str = "head",
+    key_specification: KeySpecification,
     head_name: str = "Default",
+    config_type_weights: Optional[Dict] = None,
     extract_atomic_energies: bool = False,
     keep_isolated_atoms: bool = False,
 ) -> Tuple[Dict[int, float], Configurations]:
-    if not isinstance(atoms_list, list):
-        atoms_list = [atoms_list]
+    
+    energy_key = key_specification.info_keys["energy"]
+    forces_key = key_specification.arrays_keys["forces"]
+    stress_key = key_specification.info_keys["stress"]
+    head_key = key_specification.info_keys["head"]
+    original_energy_key = energy_key
+    original_forces_key = forces_key
+    original_stress_key = stress_key
     if energy_key == "energy":
         logging.warning(
-            "Since ASE version 3.23.0b1, using energy_key 'energy' is"
-            "no longer safe when communicating between MACE and ASE. We"
-            "recommend using a different key, rewriting 'energy' to "
-            "'REF_energy'. You need to use --energy_key='REF_energy'"
-            "to specify the chosen key name."
+            "Since ASE version 3.23.0b1, using energy_key 'energy' is no "
+            "longer safe when communicating between MACE and ASE. We recommend "
+            "using a different key, rewriting 'energy' to 'REF_energy'. You "
+            "need to use --energy_key='REF_energy' to specify the chosen key "
+            "name."
         )
-        energy_key = "REF_energy"
+        key_specification.info_keys["energy"] = "REF_energy"
         for atoms in atoms_list:
             try:
+                # print("OK")
                 atoms.info["REF_energy"] = atoms.get_potential_energy()
+                # print("atoms.info['REF_energy']:", atoms.info["REF_energy"])
             except Exception as e:  # pylint: disable=W0703
                 logging.error(f"Failed to extract energy: {e}")
                 atoms.info["REF_energy"] = None
     if forces_key == "forces":
         logging.warning(
-            "Since ASE version 3.23.0b1, using forces_key 'forces' is"
-            "no longer safe when communicating between MACE and ASE. "
-            "We recommend using a different key, rewriting 'forces' to"
-            "'REF_forces'. You need to use --forces_key='REF_forces' to"
-            "specify the chosen key name."
+            "Since ASE version 3.23.0b1, using forces_key 'forces' is no longer safe when communicating between MACE and ASE. We recommend using a different key, rewriting 'forces' to 'REF_forces'. You need to use --forces_key='REF_forces' to specify the chosen key name."
         )
-        forces_key = "REF_forces"
+        key_specification.arrays_keys["forces"] = "REF_forces"
         for atoms in atoms_list:
             try:
                 atoms.arrays["REF_forces"] = atoms.get_forces()
@@ -264,18 +230,15 @@ def load_from_atoms(
                 atoms.arrays["REF_forces"] = None
     if stress_key == "stress":
         logging.warning(
-            "Since ASE version 3.23.0b1, using stress_key 'stress' is "
-            "no longer safe when communicating between MACE and ASE."
-            "We recommend using a different key, rewriting 'stress' to"
-            "'REF_stress'. You need to use --stress_key='REF_stress' to"
-            "specify the chosen key name."
+            "Since ASE version 3.23.0b1, using stress_key 'stress' is no longer safe when communicating between MACE and ASE. We recommend using a different key, rewriting 'stress' to 'REF_stress'. You need to use --stress_key='REF_stress' to specify the chosen key name."
         )
-        stress_key = "REF_stress"
+        key_specification.info_keys["stress"] = "REF_stress"
         for atoms in atoms_list:
             try:
                 atoms.info["REF_stress"] = atoms.get_stress()
             except Exception as e:  # pylint: disable=W0703
                 atoms.info["REF_stress"] = None
+
     if not isinstance(atoms_list, list):
         atoms_list = [atoms_list]
 
@@ -284,24 +247,20 @@ def load_from_atoms(
         atoms_without_iso_atoms = []
 
         for idx, atoms in enumerate(atoms_list):
+            atoms.info[head_key] = head_name
             isolated_atom_config = (
-                len(atoms) == 1
-                and atoms.info.get("config_type") == "IsolatedAtom"
+                len(atoms) == 1 and atoms.info.get("config_type") == "IsolatedAtom"
             )
             if isolated_atom_config:
+                atomic_number = int(atoms.get_atomic_numbers()[0])
                 if energy_key in atoms.info.keys():
-                    atomic_energies_dict[atoms.get_atomic_numbers()[0]] = (
-                        atoms.info[energy_key]
-                    )
+                    atomic_energies_dict[atomic_number] = float(atoms.info[energy_key])
                 else:
                     logging.warning(
                         f"Configuration '{idx}' is marked as 'IsolatedAtom' "
-                        "but does not contain an energy. Zero energy "
-                        "will be used."
+                        "but does not contain an energy. Zero energy will be used."
                     )
-                    atomic_energies_dict[atoms.get_atomic_numbers()[0]] = (
-                        np.zeros(1)
-                    )
+                    atomic_energies_dict[atomic_number] = 0.0
             else:
                 atoms_without_iso_atoms.append(atoms)
 
@@ -313,30 +272,15 @@ def load_from_atoms(
     for atoms in atoms_list:
         atoms.info[head_key] = head_name
 
-    # key_spec = KeySpecification(
-    #    info_keys={
-    #        "energy_key": energy_key,
-    #        "stress_key": stress_key,
-    #        "virials_key": virials_key,
-    #        "dipole_key": dipole_key,
-    #        "head_key": head_key,
-    #    },
-    #    arrays_keys={
-    #        "forces_key": forces_key,
-    #        "charges_key": charges_key,
-    #    },
-    # )
     configs = config_from_atoms_list(
         atoms_list,
         config_type_weights=config_type_weights,
-        energy_key=energy_key,
-        forces_key=forces_key,
-        stress_key=stress_key,
-        virials_key=virials_key,
-        dipole_key=dipole_key,
-        charges_key=charges_key,
-        head_key=head_key,
+        key_specification=key_specification,
+        head_name=head_name,
     )
+    key_specification.info_keys["energy"] = original_energy_key
+    key_specification.arrays_keys["forces"] = original_forces_key
+    key_specification.info_keys["stress"] = original_stress_key
     return atomic_energies_dict, configs
 
 
@@ -406,6 +350,7 @@ def create_mace_dataset(
     seed: int,
     z_table: AtomicNumberTable,
     r_max: float,
+    key_specification: KeySpecification
 ) -> list:
     """
     Create a MACE style dataset from a list of ASE atoms objects.
@@ -425,6 +370,7 @@ def create_mace_dataset(
         valid_list=None,
         seed=seed,
         config_type_weights=None,
+        key_specification=key_specification
     )
 
     data_set = [
@@ -441,6 +387,7 @@ def update_mace_set(
     z_table: tools.AtomicNumberTable,
     seed: int,
     r_max: float,
+    key_specification: KeySpecification
 ) -> dict:
     """
     Update the MACE dataset with new data.
@@ -458,11 +405,19 @@ def update_mace_set(
         dict: Updated MACE dataset.
     """
     new_train_set = create_mace_dataset(
-        data=new_train_data, z_table=z_table, seed=seed, r_max=r_max
+        data=new_train_data,
+        z_table=z_table,
+        seed=seed, 
+        r_max=r_max,
+        key_specification=key_specification
     )
 
     new_valid_set = create_mace_dataset(
-        data=new_valid_data, z_table=z_table, seed=seed, r_max=r_max
+        data=new_valid_data,
+        z_table=z_table,
+        seed=seed,
+        r_max=r_max,
+        key_specification=key_specification
     )
     mace_set["train"] += new_train_set
     mace_set["valid"] += new_valid_set
@@ -478,6 +433,8 @@ def update_datasets(
     z_table: tools.AtomicNumberTable,
     seed: int,
     r_max: float,
+    key_specification: KeySpecification
+
 ) -> tuple:
     """
     Update the ASE and MACE datasets with new data.
@@ -499,7 +456,13 @@ def update_datasets(
     ase_set["valid"] += new_valid_data
 
     mace_set = update_mace_set(
-        new_train_data, new_valid_data, mace_set, z_table, seed, r_max
+        new_train_data, 
+        new_valid_data,
+        mace_set,
+        z_table, 
+        seed, 
+        r_max,
+        key_specification=key_specification
     )
 
     return ase_set, mace_set
@@ -510,6 +473,7 @@ def ase_to_mace_ensemble_sets(
     z_table,
     seed: dict,
     r_max: float,
+    key_specification: KeySpecification
 ) -> dict:
     """
     Convert ASE style ensemble datasets to MACE style ensemble datasets.
@@ -532,12 +496,14 @@ def ase_to_mace_ensemble_sets(
             z_table=z_table,
             seed=seed,
             r_max=r_max,
+            key_specification=key_specification
         )
         ensemble_mace_sets[tag]["valid"] = create_mace_dataset(
             data=ensemble_ase_sets[tag]["valid"],
             z_table=z_table,
             seed=seed,
             r_max=r_max,
+            key_specification=key_specification
         )
     return ensemble_mace_sets
 

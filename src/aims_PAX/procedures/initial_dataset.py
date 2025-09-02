@@ -4,6 +4,8 @@ import shutil
 from .preparation import PrepareInitialDatasetProcedure
 from mace import tools
 from mace.calculators import mace_mp
+from typing import Optional
+from so3krates_torch.calculator.so3 import SO3LRCalculator
 from aims_PAX.tools.utilities.data_handling import (
     create_dataloader,
     update_datasets,
@@ -93,6 +95,7 @@ class InitialDatasetProcedure(PrepareInitialDatasetProcedure):
                     z_table=self.z_table,
                     seed=self.seed,
                     r_max=self.r_max,
+                    key_specification=self.key_specification
                 )
 
                 batch_size = (
@@ -410,19 +413,45 @@ class InitialDatasetFoundational(InitialDatasetProcedure):
     using DFT. Runs serially.
     """
 
-    def _setup_foundational(self):
+    def _setup_foundational(
+        self,
+        model_choice: str,
+        foundational_model_settings: dict
+    ):
         """
         Creates the foundational model for sampling.
+
+        
 
         Returns:
             ase.Calculator: ASE calculator object.
         """
-        return mace_mp(
-            model=self.initial_foundational_size,
-            dispersion=False,
-            default_dtype=self.dtype,
-            device=self.device,
-        )
+
+        if model_choice == 'mace-mp':
+            mace_mp_size = foundational_model_settings['model_size']
+            return mace_mp(
+                model=mace_mp_size,
+                dispersion=False,
+                default_dtype=self.dtype,
+                device=self.device
+            )
+        elif model_choice == 'so3lr':
+            r_max_lr = foundational_model_settings['r_max_lr']
+            dispersion_lr_damping = foundational_model_settings[
+                'dispersion_lr_damping'
+            ]
+            return SO3LRCalculator(
+                r_max_lr=r_max_lr,
+                dispersion_energy_cutoff_lr_damping=dispersion_lr_damping,
+                compute_stress=self.compute_stress,
+                device=self.device,
+                default_dtype=self.dtype,
+                key_specification=self.key_specification
+            )
+        else:
+            raise ValueError(
+                f"Unknown foundational model choice: {model_choice}"
+            )
 
     def _recalc_dft(self, current_point: ase.Atoms) -> ase.Atoms:
         """
@@ -515,7 +544,7 @@ class InitialDatasetFoundational(InitialDatasetProcedure):
         self.aims_calc = self._setup_aims_calculator(self.atoms[0])
         if self.rank == 0:
             logging.info(
-                f"Initial dataset generation with foundational model of size: {self.initial_foundational_size}."
+                f"Initial dataset generation with foundational model: {self.foundational_model}."
             )
             foundational_calc = self._setup_foundational()
             for idx in self.trajectories.keys():
@@ -1005,9 +1034,12 @@ class InitialDatasetPARSL(InitialDatasetFoundational):
         if self.rank == 0:
             logging.info(
                 "Initial dataset generation with foundational "
-                f"model of size: {self.initial_foundational_size}."
+                f"model: {self.foundational_model}."
             )
-            foundational_calc = self._setup_foundational()
+            foundational_calc = self._setup_foundational(
+                model_choice=self.foundational_model,
+                foundational_model_settings=self.foundational_model_settings,
+            )
             for idx in self.trajectories.keys():
                 self.trajectories[idx].calc = foundational_calc
 

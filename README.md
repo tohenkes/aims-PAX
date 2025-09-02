@@ -117,8 +117,12 @@ Example settings can be found in the `examples` folder.
 | desired_acc | `float` | `0.0` | Force MAE that the ensemble should reach on the validation set. Needs to be combined with `desired_acc_scale_idg`.|
 | desired_acc_scale_idg | `float` | `10.0` | Scales `desired_acc` during initial dataset generation. Resulting product is accuracy that the model has to reach on the validation set before stopping the procedure at this stage. |
 | ensemble_size | `int` | `4` | Number of models in the ensemble for uncertainty estimation. |
+| foundational_model | `str` | `mace-mp` | Which foundational model to use for structure generation. Possible options: `mace-mp` or `so3lr`. |
 | initial_foundational_size | `str` | `"small"` | Size of the foundational model used when `initial_sampling` is set to `mace-mp0`. |
-| initial_sampling | `str` | `"mace-mp0"` | Method for selecting initial structures for training. Possible options are: `aimd` and `mace-mp0`. The latter is strongly recommended.|
+| foundational_model_settings | `dict` | `{model_size: small}` | Settings for the chosen foundational model for structure generation. |
+| model_size | `str` | `small` | Size of `mace-mp` foundational model. |
+|  dispersion_lr_damping | `str` | `None` | Damping parameter for dispersion interaction in `SO3LR`. Needed if `r_max_lr` is not `None`!  Part of `foundational_model_settings`.|
+| r_max_lr | `float` | `None` | Cutoff of long-range modules of `SO3LR`. Part of `foundational_model_settings`. |
 | intermediate_epochs_idg | `int` | `5` | Number of intermediate epochs between dataset growth steps in initial training. |
 | max_initial_epochs | `int` or `float` | `np.inf` | Maximum number of epochs for the initial training stage. |
 | max_initial_set_size | `int` or `float` | `np.inf` | Maximum size of the initial training dataset. |
@@ -403,7 +407,7 @@ If you are using *aims-PAX* cite the main publication:
 ```
 
 
-**MACE**:
+**MACE:**
 ```bibtex
 @inproceedings{Batatia2022mace,
   title={{MACE}: Higher Order Equivariant Message Passing Neural Networks for Fast and Accurate Force Fields},
@@ -425,6 +429,31 @@ If you are using *aims-PAX* cite the main publication:
   archiveprefix = {arXiv}
  }
 ```
+
+**So3krates/SO3LR:**
+
+If you are using [SO3LR](github.com/general-molecular-simulations/so3lr) please cite:
+```bibtex
+@article{kabylda2024molecular,
+  title={Molecular Simulations with a Pretrained Neural Network and Universal Pairwise Force Fields},
+  author={Kabylda, A. and Frank, J. T. and Dou, S. S. and Khabibrakhmanov, A. and Sandonas, L. M.
+          and Unke, O. T. and Chmiela, S. and M{\"u}ller, K.R. and Tkatchenko, A.},
+  journal={ChemRxiv},
+  year={2024},
+  doi={10.26434/chemrxiv-2024-bdfr0-v2}
+}
+
+@article{frank2024euclidean,
+  title={A Euclidean transformer for fast and stable machine learned force fields},
+  author={Frank, Thorben and Unke, Oliver and M{\"u}ller, Klaus-Robert and Chmiela, Stefan},
+  journal={Nature Communications},
+  volume={15},
+  number={1},
+  pages={6539},
+  year={2024}
+}
+```
+
 
 ## Contact
 

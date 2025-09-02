@@ -21,11 +21,14 @@ import pandas as pd
 import yaml
 from copy import deepcopy
 from yaml import safe_load
+from mace.data.utils import (
+    KeySpecification
+)
 
-# !!!
-# Many functions are taken from the MACE code:
+
+# Many functions are taken from or inspired by the MACE code:
 # https://github.com/ACEsuit/mace
-# !!!
+
 
 Vector = np.ndarray  # [3,]
 Positions = np.ndarray  # [..., 3]
@@ -38,6 +41,39 @@ Pbc = tuple  # (3,)
 
 DEFAULT_CONFIG_TYPE = "Default"
 DEFAULT_CONFIG_TYPE_WEIGHTS = {DEFAULT_CONFIG_TYPE: 1.0}
+
+
+def create_keyspec(
+    energy_key: str = "REF_energy",
+    forces_key: str = "REF_forces",
+    stress_key: str = "REF_stress",
+    dipole_key: str = "REF_dipole",
+    polarizability_key: str = "REF_polarizability",
+    head_key: str = "head",
+    charges_key: str = "REF_charges",
+    total_charge_key: str = "total_charge",
+    total_spin_key: str = "total_spin"
+) -> KeySpecification:
+    
+    arrays_keys = {
+        "forces": forces_key,
+        "charges": charges_key
+    }
+    
+    info_keys = {
+        "energy": energy_key,
+        "stress": stress_key,
+        "dipole": dipole_key,
+        "polarizability": polarizability_key,
+        "head": head_key,
+        "total_charge": total_charge_key,
+        "total_spin": total_spin_key
+    }
+    
+    return KeySpecification(
+        info_keys=info_keys,
+        arrays_keys=arrays_keys
+    )
 
 
 def read_input_files(

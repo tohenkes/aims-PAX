@@ -106,6 +106,7 @@ class ALDataManager:
             z_table=self.ensemble_manager.z_table,
             seed=None,
             r_max=self.config.r_max,
+            key_specification=self.config.key_specification,
         )
 
         # Determines if a point should go to validation or training set
@@ -756,12 +757,14 @@ class ALTrainingManager:
                 z_table=self.ensemble_manager.z_table,
                 seed=self.config.seeds_tags_dict[tag],
                 r_max=self.config.r_max,
+                key_specification=self.config.key_specification
             )
             valid_set = create_mace_dataset(
                 data=self.ensemble_manager.ensemble_ase_sets[tag]["valid"],
                 z_table=self.ensemble_manager.z_table,
                 seed=self.config.seeds_tags_dict[tag],
                 r_max=self.config.r_max,
+                key_specification=self.config.key_specification
             )
             temp_mace_sets[tag] = {"train": train_set, "valid": valid_set}
         return temp_mace_sets

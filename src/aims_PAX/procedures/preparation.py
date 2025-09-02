@@ -32,6 +32,7 @@ from aims_PAX.tools.utilities.utilities import (
     save_checkpoint,
     read_geometry,
     save_checkpoint,
+    create_keyspec,
     log_yaml_block,
     AIMSControlParser,
     ModifyMD,
@@ -222,6 +223,7 @@ class PrepareInitialDatasetProcedure:
                     z_table=self.z_table,
                     r_max=self.r_max,
                     seed=self.seed,
+                    key_specification=self.key_specification
                 )
 
             else:
@@ -314,20 +316,25 @@ class PrepareInitialDatasetProcedure:
         self.analysis = self.idg_settings["analysis"]
         self.margin = self.idg_settings["margin"]
         self.mol_idxs = self.misc["mol_idxs"]
+        self.key_specification = create_keyspec(
+            energy_key=self.misc['energy_key'],
+            forces_key=self.misc['forces_key'],
+            stress_key=self.misc['stress_key'],
+            dipole_key=self.misc['dipole_key'],
+            polarizability_key=self.misc['polarizability_key'],
+            head_key=self.misc['head_key'],
+            charges_key=self.misc['charges_key'],
+            total_charge_key=self.misc['total_charge_key'],
+            total_spin_key=self.misc['total_spin_key'],
+        )
         self.idg_progress_dft_update = self.idg_settings["progress_dft_update"]
         if not self.idg_settings["scheduler_initial"]:
             self.mace_settings["lr_scheduler"] = None
 
-        self.initial_foundational_size = self.idg_settings.get(
-            "initial_foundational_size", None
-        )
-        if self.initial_foundational_size is not None:
-            assert self.idg_settings["initial_foundational_size"] in (
-                "small",
-                "medium",
-                "large",
-            ), "Initial foundational size not recognized."
-
+        self.initial_sampling = self.idg_settings["initial_sampling"]
+        self.foundational_model = self.idg_settings["foundational_model"]
+        self.foundational_model_settings = self.idg_settings["foundational_model_settings"]
+        
         self.restart = os.path.exists(
             "restart/initial_ds/initial_ds_restart.npy"
         )
@@ -853,6 +860,9 @@ class ALConfigurationManager:
         self.valid_ratio = self.al_settings["valid_ratio"]
         self.max_train_set_size = self.al_settings["max_train_set_size"]
         self.c_x = self.al_settings["c_x"]
+        self.extend_existing_final_ds = self.al_settings[
+            'extend_existing_final_ds'
+        ]
 
         # Paths
         self.dataset_dir = Path(self.misc["dataset_dir"])
@@ -876,6 +886,18 @@ class ALConfigurationManager:
             "freeze_threshold_dataset"
         ]
         self.freeze_threshold = False
+
+        self.key_specification = create_keyspec(
+            energy_key=self.misc['energy_key'],
+            forces_key=self.misc['forces_key'],
+            stress_key=self.misc['stress_key'],
+            dipole_key=self.misc['dipole_key'],
+            polarizability_key=self.misc['polarizability_key'],
+            head_key=self.misc['head_key'],
+            charges_key=self.misc['charges_key'],
+            total_charge_key=self.misc['total_charge_key'],
+            total_spin_key=self.misc['total_spin_key'],
+        )
 
         # Molecular indices
         self._setup_molecular_indices()
@@ -1172,11 +1194,14 @@ class ALEnsembleManager:
 
     def _setup_datasets(self):
         """Setup initial datasets (rank 0 only)."""
-        dataset_subdir = "final" if self.config.restart else "initial"
+        dataset_subdir = "final" if (
+            self.config.restart or self.config.extend_existing_final_ds
+        ) else "initial"
+        
         log_message = (
             "Loading datasets from checkpoint."
             if self.config.restart
-            else "Loading initial datasets."
+            else "Loading datasets."
         )
 
         logging.info(log_message)
@@ -1193,10 +1218,14 @@ class ALEnsembleManager:
             z_table=self.z_table,
             r_max=self.config.r_max,
             seed=self.config.seed,
+            key_specification=self.config.key_specification
         )
 
         self.train_dataset_len = len(
             self.ensemble_ase_sets[list(self.ensemble.keys())[0]]["train"]
+        )
+        logging.info(
+            f'Length of training set: {self.train_dataset_len}'
         )
 
     def _broadcast_dataset_info(self):
