@@ -4,7 +4,7 @@ from aims_PAX.procedures.active_learning import (
     ALProcedurePARSL,
 )
 import argparse
-from aims_PAX.tools.utilities.utilities import read_input_files
+from aims_PAX.tools.utilities.input_utils import read_input_files
 import os
 import time
 import threading

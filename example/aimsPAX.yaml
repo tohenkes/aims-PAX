@@ -9,7 +9,7 @@ INITIAL_DATASET_GENERATION:
   skip_step_initial: 10
   foundational_model: mace-mp
   foundational_model_settings:
-    model_size: small
+    mace_model: small
   species_dir: "path/to/FHIaims/species_defaults/defaults_2020/light"
 
 ACTIVE_LEARNING:

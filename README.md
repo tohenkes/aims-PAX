@@ -119,8 +119,8 @@ Example settings can be found in the `examples` folder.
 | ensemble_size | `int` | `4` | Number of models in the ensemble for uncertainty estimation. |
 | foundational_model | `str` | `mace-mp` | Which foundational model to use for structure generation. Possible options: `mace-mp` or `so3lr`. |
 | initial_foundational_size | `str` | `"small"` | Size of the foundational model used when `initial_sampling` is set to `mace-mp0`. |
-| foundational_model_settings | `dict` | `{model_size: small}` | Settings for the chosen foundational model for structure generation. |
-| model_size | `str` | `small` | Size of `mace-mp` foundational model. |
+| foundational_model_settings | `dict` | `{mace_model: small}` | Settings for the chosen foundational model for structure generation. |
+| mace_model | `str` | `small` | Type of `MACE` foundational model. See [here](https://github.com/ACEsuit/mace/blob/main/mace/calculators/foundations_models.py) for their names. |
 |  dispersion_lr_damping | `str` | `None` | Damping parameter for dispersion interaction in `SO3LR`. Needed if `r_max_lr` is not `None`!  Part of `foundational_model_settings`.|
 | r_max_lr | `float` | `None` | Cutoff of long-range modules of `SO3LR`. Part of `foundational_model_settings`. |
 | intermediate_epochs_idg | `int` | `5` | Number of intermediate epochs between dataset growth steps in initial training. |
@@ -214,7 +214,22 @@ Settings for PARSL.
 | clean_dirs | `bool` | `True` | Whether to remove calculation directories after DFT computations. |
 
 #### MD:
-For now we have only one MD setting for all trajectories and the selection for settings is limited to Langevin dynamics, Berendsen and Nosé-Hoover-Parinello-Rahman NPT. Currently these settings are used for *ab initio* and MLFF MD.
+This part defines the settings for the molecular dynamics simulations during initial dataset generation and/or active learning. If only one set of settings is given, they are used for all systems/geometries. In case you want to use different settings for different systems or geometries you have specifiy which trajectory/system uses which system using their indices. Practically this means using a nested dictionary in the settings file:
+
+```
+MD:
+  0:
+    stat_ensemble: nvt
+    thermostat: langevin
+    temperature: 500
+  1:    
+    stat_ensemble: nvt
+    thermostat: langevin
+    temperature: 300
+```
+Here `0` and `1` refer to the indices used for giving the paths to the geometries and/or control files (see `MISC` settings below).
+
+Currently these settings are used for *ab initio* and MLFF MD.
 
 | Parameter | Type | Default | Description |
 |-----------|------|---------|-------------|
@@ -234,6 +249,20 @@ For now we have only one MD setting for all trajectories and the selection for s
 
 
 #### MISC:
+
+The source of the geometries can be either a single path, a folder (where all `ASE` readable files will be loaded) or a dictionary of paths like:
+```
+  path_to_geometry:
+    0: "path/geo1.in"
+    1: "path/geo2.in"
+```
+Similarly, the source of the control files can be either a single path or a dictionary of paths like:
+```
+  path_to_control:
+    0: "path/control1.in"
+    1: "path/control2.in"
+```
+**Note:** Ideally you don't want to train your model on different levels of theory or DFT settings. Using different control files is mostly intended for using *aims-PAX* on periodic and non-periodic systems simulatenoeusly. Then you can specify that a k grid can be used for the periodic structure but not for the non-periodic one!
 
 | Parameter       | Type          | Default     | Description                                          |
 |-----------------|---------------|-------------|------------------------------------------------------|
@@ -458,18 +487,19 @@ The *aims-PAX* code is published and distributed under the [MIT License](MIT.md)
 
 
 # ToDo
+- [ ] support for multiple control settings
+- [ ] multiple MD settings
+- [ ] support for new ASE barostat
+- [ ] multiple trajectories in IDG
 - [ ] add possible options for all settings if categorical
 - [ ] create minimal log
-- [ ] add so3lr (torch) as foundational model for IDG
-- [ ] update to new ase version (keyspec!!! transfrom script!)
-- [ ] update to new mace version
-- [ ] update to new torch version
+- [x] add so3lr (torch) as foundational model for IDG
+- [x] update to new ase version (keyspec!!! transfrom script!)
+- [x] update to new mace version
+- [x] update to new torch version
 - [ ] update training procedure
-- [ ] take epoch function from so3krates_torch directly
 - [ ] ModelEval, loss, atomic data, dataloader form so3krates_torch
 - [ ] Implement SO3LR (needed: model setup, training setup, one epoch function, update model auxiliaries, parsing of dipoles and hirshfeld ratios from fhi aims output)
-- [ ] multiple MD settings
-- [ ] multiple trajectories in IDG
 - [ ] make loading existing ensembles to use in AL easier
   -  or path to dataset !!!
   - think about seed-tag dict, how to cirumvent it? or create based on directory of models (use model file names)
@@ -481,7 +511,7 @@ The *aims-PAX* code is published and distributed under the [MIT License](MIT.md)
 - [ ] create container
 - [ ] make loading existing ensembles to use in AL easier
 - [ ] AIMD with PARSL support
-- [ ] look at "current temperatures" more closely, does it even make sense?
+- [x] look at "current temperatures" more closely, does it even make sense?
 - [ ] change epoch saved in AL for ckpt
 - [ ] clear logger -- prints warning from mace: Standard deviation of the scaling is zero, Changing to no scaling
 - [ ] energy, force weight swap in loss fn during convergence

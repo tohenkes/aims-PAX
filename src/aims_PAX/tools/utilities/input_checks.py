@@ -1,5 +1,6 @@
 import logging
 import numpy as np
+from .utilities import normalize_md_settings
 
 SCHEME = {
     "required_global": ["MD", "CLUSTER"],
@@ -48,7 +49,7 @@ SCHEME = {
         "initial_sampling": "foundational",
         "foundational_model": "mace-mp",
         "foundational_model_settings": {
-            "model_size": "small",
+            "mace_model": "small",
             "r_max_lr": None,
             "dispersion_lr_damping": None
             },
@@ -65,7 +66,7 @@ SCHEME = {
         "progress_dft_update": 10,
     },
     "optional_foundational": {
-        "model_size": "small",
+        "mace_model": "small",
         "r_max_lr": None,
         "dispersion_lr_damping": None
     },
@@ -112,9 +113,16 @@ SCHEME = {
         "temperature": 300,
     },
     "optional_npt": {
-        "barostat": "Berendsen",
+        "barostat": "mtk",
         "pressure_au": 3.4e-7,  # 1 bar in atomic units
         "temperature": 300,
+        "temperature_K": 300,
+        "tdamp": 0.5*100,
+        "pdamp": 0.5*1000,
+        "tchain": 3,
+        "pchain": 3,
+        "tloop": 1,
+        "ploop": 1,
         "timestep": 0.5,
         "externalstress": 6.24e-7,  # 1 bar in eV/Angstrom**3
         "ttime": 30.0,
@@ -160,6 +168,8 @@ SCHEME_DTYPES = {
         "ttime",
         "pfactor",
         "externalstress",
+        "tdamp",
+        "pdamp"
     ],
     "ints": [
         "num_trajectories",
@@ -188,6 +198,10 @@ SCHEME_DTYPES = {
         "n_points_per_sampling_step_idg",
         "analysis_skip",
         "progress_dft_update",
+        "tchain",
+        "pchain",
+        "tloop",
+        "ploop"
     ],
     "strings": [
         "species_dir",
@@ -203,12 +217,10 @@ SCHEME_DTYPES = {
         "type",
         "stat_ensemble",
         "thermostat",
-        "path_to_control",
-        "path_to_geometry",
         "dataset_dir",
         "log_dir",
         "barostat",
-        "model_size",
+        "mace_model",
         "energy_key",
         "forces_key",
         "stress_key",
@@ -241,6 +253,10 @@ SCHEME_DTYPES = {
     "lists": ["mol_idxs"],
     "optional_lists": [],
     "dicts": ["parsl_options", "MISC", "foundational_model_settings"],
+    "optional_dicts_strings": [  # Fields that can be dict or string
+        "path_to_control",
+        "path_to_geometry",
+    ]
 }
 
 SCHEME_MACE = {
@@ -624,49 +640,61 @@ def check_aimsPAX_settings(settings: dict, procedure: str = "full") -> dict:
     assert (
         settings.get("MD") is not None
     ), "The `MD` settings are not provided! "
-    md_settings = settings.get("MD")
-    # check that all required MD keywords are present
-    for k in SCHEME["required_md"]:
-        if k not in md_settings:
+    md_settings_raw = settings.get("MD")
+    
+    md_settings, is_multi_md = normalize_md_settings(
+        md_settings=md_settings_raw,
+        num_trajectories=1  # does not matter how many copies for input check
+    )
+    
+    for idx, md_setting in md_settings.items():
+        # check that all required MD keywords are present
+        for k in SCHEME["required_md"]:
+            if k not in md_setting:
+                raise ValueError(
+                    f"The keyword `{k}` is required in the `MD` settings!"
+                )
+
+        if md_setting["stat_ensemble"].lower() not in ["nvt", "npt"]:
             raise ValueError(
-                f"The keyword `{k}` is required in the `MD` settings!"
+                f"The `stat_ensemble` must be either `NVT/nvt` or `NPT/npt`, "
+                f"but got `{md_setting['stat_ensemble']}`!"
             )
+        if md_setting["stat_ensemble"].lower() == "npt":
+            # check if optional npt keys, values are missing and put defaults
+            for k in SCHEME["optional_npt"]:
+                if k not in md_setting:
+                    md_setting[k] = SCHEME["optional_npt"][k]
 
-    if md_settings["stat_ensemble"] not in ["NVT", "NPT"]:
-        raise ValueError(
-            f"The `stat_ensemble` must be either `NVT` or `NPT`, "
-            f"but got `{md_settings['stat_ensemble']}`!"
+        elif md_setting["stat_ensemble"].lower() == "nvt":
+            # check if optional nvt keys, values are missing and put defaults
+            for k in SCHEME["optional_nvt"]:
+                if k not in md_setting:
+                    logging
+                    md_setting[k] = SCHEME["optional_nvt"][k]
+
+        else:
+            raise ValueError(
+                f"The `stat_ensemble` must be either `NVT/nvt` or `NPT/npt`, "
+                f"but got `{md_setting['stat_ensemble']}`!"
+            )
+        # check if the optional keywords have values of the correct type
+        md_scheme_key = (
+            "optional_nvt"
+            if md_setting["stat_ensemble"].lower() == "nvt"
+            else "optional_npt"
         )
-    if md_settings["stat_ensemble"] == "NPT":
-        # check if optional npt keys, values are missing and put defaults
-        for k in SCHEME["optional_npt"]:
-            if k not in md_settings:
-                md_settings[k] = SCHEME["optional_npt"][k]
-
-    elif md_settings["stat_ensemble"] == "NVT":
-        # check if optional nvt keys, values are missing and put defaults
-        for k in SCHEME["optional_nvt"]:
-            if k not in md_settings:
-                md_settings[k] = SCHEME["optional_nvt"][k]
-
-    else:
-        raise ValueError(
-            f"The `stat_ensemble` must be either `NVT` or `NPT`, "
-            f"but got `{md_settings['stat_ensemble']}`!"
+        md_setting = check_dtypes(
+            settings=md_setting,
+            scheme_key=md_scheme_key,
+            scheme=SCHEME,
+            scheme_dtype=SCHEME_DTYPES,
         )
-    # check if the optional keywords have values of the correct type
-    md_scheme_key = (
-        "optional_nvt"
-        if md_settings["stat_ensemble"] == "NVT"
-        else "optional_npt"
-    )
-    md_settings = check_dtypes(
-        settings=md_settings,
-        scheme_key=md_scheme_key,
-        scheme=SCHEME,
-        scheme_dtype=SCHEME_DTYPES,
-    )
-    settings["MD"] = md_settings
+        if is_multi_md:
+            settings["MD"][idx] = md_setting
+            
+    if not is_multi_md:
+        settings["MD"] = md_setting
 
     misc_settings = settings.get("MISC", {})
     # check if optional misc keys, values are missing and put defaults

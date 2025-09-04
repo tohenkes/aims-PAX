@@ -33,7 +33,7 @@ A detailed account of all settings is given in the main readme of *aims PAX*, bu
 
 First, we set `desired_acc` to `0.1` eV/A, which is the target force MAE we want to achieve on the validation set. By setting `desired_acc_scale_idg` to `3`, this target MAE is scaled to `0.3` eV/A. Once the model reaches `0.3` eV/A on the validation set, the IDG stops.
 
-During the procedure, we use the `medium` version of `mace-mp0`, as specified under `foundational_model`, and `foundational_model_settings/model_size` to generate `10` structures per ensemble member. This is what is meant in `n_points_per_sampling_step_idg`. These are then labelled using DFT, and the models are trained for `5` (`intermediate_epochs_idg`) epochs. During training, the validation MAE is monitored in order to check when the IDG is supposed to stop.
+During the procedure, we use the `medium` version of `mace-mp0`, as specified under `foundational_model`, and `foundational_model_settings/mace_model` to generate `10` structures per ensemble member. This is what is meant in `n_points_per_sampling_step_idg`. These are then labelled using DFT, and the models are trained for `5` (`intermediate_epochs_idg`) epochs. During training, the validation MAE is monitored in order to check when the IDG is supposed to stop.
 
 ### MD Settings
 

@@ -8,7 +8,7 @@ from aims_PAX.procedures.active_learning import (
     ALProcedureParallel,
     ALProcedurePARSL,
 )
-from aims_PAX.tools.utilities.utilities import read_input_files
+from aims_PAX.tools.utilities.input_utils import read_input_files
 import argparse
 
 try:

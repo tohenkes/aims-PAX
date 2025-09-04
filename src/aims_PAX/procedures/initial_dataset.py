@@ -303,8 +303,20 @@ class InitialDatasetProcedure(PrepareInitialDatasetProcedure):
 
         # initializing md and FHI aims
         for idx, atoms in self.trajectories.items():
-            dyn = self._setup_md(atoms, md_settings=self.md_settings)
+            dyn = self.setup_md(
+                atoms,
+                md_settings=self.md_settings[idx]
+            )
             self.md_drivers[idx] = dyn
+
+        if self.rank == 0:
+            logging.info(
+                f'Using following settings for MDs:'
+            )
+            log_yaml_block(
+                "MD_SETTINGS",
+                self.md_settings
+            )
 
         self._setup_calcs()
 
@@ -428,9 +440,9 @@ class InitialDatasetFoundational(InitialDatasetProcedure):
         """
 
         if model_choice == 'mace-mp':
-            mace_mp_size = foundational_model_settings['model_size']
+            mace_model = foundational_model_settings['mace_model']
             return mace_mp(
-                model=mace_mp_size,
+                model=mace_model,
                 dispersion=False,
                 default_dtype=self.dtype,
                 device=self.device
@@ -493,7 +505,7 @@ class InitialDatasetFoundational(InitialDatasetProcedure):
         """
 
         self.comm_handler.barrier()
-        self.sampled_points = []
+        self.sampled_points = {idx: [] for idx in self.trajectories.keys()}
         if self.rank == 0:
             for idx in self.trajectories.keys():
                 dyn = self.md_drivers[idx]
@@ -502,9 +514,10 @@ class InitialDatasetFoundational(InitialDatasetProcedure):
                     self.ensemble_size * self.n_points_per_sampling_step_idg
                 ):
                     current_point = self._run_MD(atoms, dyn)
-                    self.sampled_points.append(current_point)
+                    self.sampled_points[idx].append(current_point)
+            total_points_sampled = sum(len(points) for points in self.sampled_points.values())
             logging.info(
-                f"Sampled {len(self.sampled_points)} points using foundational model."
+                f"Sampled {total_points_sampled} points using foundational model."
             )
         self.comm_handler.barrier()
         self.sampled_points = self.comm_handler.bcast(
@@ -524,10 +537,11 @@ class InitialDatasetFoundational(InitialDatasetProcedure):
         if self.rank == 0:
             logging.info("Recalculating energies and forces with DFT.")
         recalculated_points = []
-        for atoms in self.sampled_points:
-            temp = self._recalc_dft(atoms)
-            if temp is not None:
-                recalculated_points.append(temp)
+        for idx in self.trajectories.keys():
+            for atoms in self.sampled_points[idx]:
+                temp = self._recalc_dft(atoms)
+                if temp is not None:
+                    recalculated_points.append(temp)
         return recalculated_points
 
     def _setup_calcs(self):
@@ -955,52 +969,65 @@ class InitialDatasetPARSL(InitialDatasetFoundational):
         recalculated_points = []
         if self.rank == 0:
             logging.info("Recalculating energies and forces with DFT.")
-            job_results = {}
-            for i, atoms in enumerate(self.sampled_points):
-                self.calc_idx += 1
-                # launches a parsl app and returns a future
-                # that can be used to get the result later
-                temp_result = recalc_dft_parsl(
-                    positions=atoms.get_positions(),
-                    species=atoms.get_chemical_symbols(),
-                    cell=atoms.get_cell(),
-                    pbc=atoms.pbc,
-                    aims_settings=self.aims_settings,
-                    directory=self.calc_dir / f"initial_calc_{self.calc_idx}",
-                    properties=self.properties,
-                    ase_aims_command=self.launch_str,
-                )
-                job_results[i] = temp_result
+            job_results = {idx: {} for idx in self.sampled_points.keys()}
+            calc_launched = 0
+            # loop over different systems
+            for idx in self.sampled_points.keys():
+                # loop over geometries of different systems
+                for i, atoms in enumerate(self.sampled_points[idx]):
+                    self.calc_idx += 1
+                    # launches a parsl app and returns a future
+                    # that can be used to get the result later
+                    directory = self.calc_dir / f"initial_calc_{self.calc_idx}"
+                    # if there is only one entry in aims_settings the same
+                    # settings are used for all systems
+                    system_idx = idx if len(self.aims_settings) > 0 else 0
+                    temp_result = recalc_dft_parsl(
+                        positions=atoms.get_positions(),
+                        species=atoms.get_chemical_symbols(),
+                        cell=atoms.get_cell(),
+                        pbc=atoms.pbc,
+                        aims_settings=self.aims_settings[system_idx],
+                        directory=directory,
+                        properties=self.properties,
+                        ase_aims_command=self.launch_str,
+                    )
+                    job_results[system_idx][i] = temp_result
+                    calc_launched += 1
 
-            while len(job_results) > 0:
-                for i in list(job_results.keys()):
-                    result = job_results[i]
-                    if result.done():
-                        temp = result.result()
-                        if temp is None:
-                            logging.warning(
-                                f"SCF not converged for point {i}. Skipping."
-                            )
-                            del job_results[i]
-                            continue
-                        current_point = self.sampled_points[i]
-                        current_point.info["REF_energy"] = temp["energy"]
-                        current_point.arrays["REF_forces"] = temp["forces"]
-                        if self.compute_stress:
-                            current_point.info["REF_stress"] = temp["stress"]
-                        recalculated_points.append(current_point)
-                        if (
-                            len(recalculated_points)
-                            % self.idg_progress_dft_update
-                        ) == 0 or (
-                            len(recalculated_points)
-                            == len(self.sampled_points)
-                        ):
-                            logging.info(
-                                f"Recalculated {len(recalculated_points)} points."
-                            )
-                        del job_results[i]
-                time.sleep(0.5)
+            while calc_launched > 0:
+                for idx in job_results.keys():
+                    for i in list(job_results[idx].keys()):
+                        result = job_results[idx][i]
+                        if result.done():
+                            temp = result.result()
+                            if temp is None:
+                                logging.warning(
+                                    f"SCF not converged for point {i}. Skipping."
+                                )
+                                del job_results[idx][i]
+                                calc_launched -= 1
+                                continue
+                            current_point = self.sampled_points[idx][i]
+                            current_point.info["REF_energy"] = temp["energy"]
+                            current_point.arrays["REF_forces"] = temp["forces"]
+                            if self.compute_stress:
+                                current_point.info["REF_stress"] = temp["stress"]
+                            recalculated_points.append(current_point)
+
+                            if (
+                                len(recalculated_points)
+                                % self.idg_progress_dft_update
+                            ) == 0 or (
+                                len(recalculated_points)
+                                == len(self.sampled_points)
+                            ):
+                                logging.info(
+                                    f"Recalculated {len(recalculated_points)} points."
+                                )
+                            del job_results[idx][i]
+                            calc_launched -= 1
+                    time.sleep(0.5)
 
             if self.clean_dirs:
                 try:
