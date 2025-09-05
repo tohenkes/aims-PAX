@@ -8,8 +8,8 @@ from typing import Optional, Any, Dict, Union
 from pathlib import Path
 from mace import tools, modules
 from mace.tools import AtomicNumberTable
-from aims_PAX.tools.setup_MACE import setup_mace
-from aims_PAX.tools.setup_MACE_training import setup_mace_training
+from aims_PAX.tools.model_tools.setup_MACE import setup_mace
+from aims_PAX.tools.model_tools.setup_MACE_training import setup_mace_training
 import ase.data
 from ase.io import read
 from ase import units

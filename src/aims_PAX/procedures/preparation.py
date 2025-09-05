@@ -25,7 +25,6 @@ from aims_PAX.tools.utilities.utilities import (
     get_atomic_energies_from_pt,
     dtype_mapping,
     setup_ensemble_dicts,
-    setup_mace_training,
     create_seeds_tags_dict,
     setup_logger,
     update_model_auxiliaries,
@@ -38,10 +37,11 @@ from aims_PAX.tools.utilities.utilities import (
     ModifyMD,
 )
 from aims_PAX.tools.utilities.input_utils import read_geometry
-from aims_PAX.tools.train_epoch_mace import (
+from aims_PAX.tools.model_tools.train_epoch_mace import (
     train_epoch,
     validate_epoch_ensemble,
 )
+from aims_PAX.tools.model_tools.setup_MACE_training import setup_mace_training
 from aims_PAX.tools.utilities.mpi_utils import CommHandler
 import ase
 import logging
