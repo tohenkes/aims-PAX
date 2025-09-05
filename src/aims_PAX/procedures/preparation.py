@@ -1501,8 +1501,6 @@ class ALMD:
 
         if barostat == "berendsen":
             return self._create_berendsen_npt(atoms, md_settings, idx)
-        elif barostat == "npt":
-            return self._create_standard_npt(atoms, md_settings, idx)
         elif barostat == "mtk":
             return self._create_mkt_npt(atoms, md_settings, idx)
         else:
@@ -1532,25 +1530,6 @@ class ALMD:
                 npt_settings[key] = converter(md_settings[param])
 
         return NPTBerendsen(**npt_settings)
-
-    def _create_standard_npt(
-        self, atoms: ase.Atoms, md_settings: dict, idx: int
-    ) -> NPT:
-        """Create standard NPT dynamics engine."""
-        npt_settings = {
-            "atoms": atoms,
-            "timestep": md_settings["timestep"] * units.fs,
-            "temperature_K": md_settings["temperature"],
-            "externalstress": md_settings["externalstress"] * units.bar,
-            "ttime": md_settings["ttime"] * units.fs,
-            "pfactor": md_settings["pfactor"] * units.fs,
-        }
-
-        # Add optional mask parameter
-        if md_settings.get("mask"):
-            npt_settings["mask"] = md_settings["mask"]
-
-        return NPT(**npt_settings)
 
     def _create_mkt_npt(
         self,

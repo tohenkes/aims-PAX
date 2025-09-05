@@ -105,28 +105,28 @@ SCHEME = {
     "required_md": [
         "stat_ensemble",
     ],
-    "optional_nvt": {
+    "optional_langevin": {
         "thermostat": "Langevin",
         "timestep": 0.5,
         "friction": 0.001,
         "MD_seed": 42,
         "temperature": 300,
     },
-    "optional_npt": {
-        "barostat": "mtk",
-        "pressure_au": 3.4e-7,  # 1 bar in atomic units
+    "optional_berendsen": {
+        "pressure_au": 6.24e-7,  # 1 bar in eV/Angstrom**3
         "temperature": 300,
-        "temperature_K": 300,
+        "timestep": 0.5,
+    },
+    "optional_mtk": {
+        "pressure_au": 6.24e-7,  # 1 bar in eV/Angstrom**3
+        "temperature": 300,
+        "timestep": 0.5,
         "tdamp": 0.5*100,
         "pdamp": 0.5*1000,
         "tchain": 3,
         "pchain": 3,
         "tloop": 1,
         "ploop": 1,
-        "timestep": 0.5,
-        "externalstress": 6.24e-7,  # 1 bar in eV/Angstrom**3
-        "ttime": 30.0,
-        "pfactor": 100.0,
     },
     "optional_misc": {
         "path_to_control": "./control.in",
@@ -661,17 +661,33 @@ def check_aimsPAX_settings(settings: dict, procedure: str = "full") -> dict:
                 f"but got `{md_setting['stat_ensemble']}`!"
             )
         if md_setting["stat_ensemble"].lower() == "npt":
-            # check if optional npt keys, values are missing and put defaults
-            for k in SCHEME["optional_npt"]:
-                if k not in md_setting:
-                    md_setting[k] = SCHEME["optional_npt"][k]
+            if md_setting["barostat"].lower() not in ["berendsen", "mtk"]:
+                raise ValueError(
+                    f"The `barostat` must be either `berendsen` or `mtk`, "
+                    f"but got `{md_setting['barostat']}`!"
+                )
+            if md_setting["barostat"].lower() == "berendsen":
+                # check if optional berendsen keys, values are missing and put defaults
+                for k in SCHEME["optional_berendsen"]:
+                    if k not in md_setting:
+                        md_setting[k] = SCHEME["optional_berendsen"][k]
+            elif md_setting["barostat"].lower() == "mtk":
+                # check if optional mtk keys, values are missing and put defaults
+                for k in SCHEME["optional_mtk"]:
+                    if k not in md_setting:
+                        md_setting[k] = SCHEME["optional_mtk"][k]
 
         elif md_setting["stat_ensemble"].lower() == "nvt":
-            # check if optional nvt keys, values are missing and put defaults
-            for k in SCHEME["optional_nvt"]:
-                if k not in md_setting:
-                    logging
-                    md_setting[k] = SCHEME["optional_nvt"][k]
+            if md_setting["thermostat"].lower() not in ["langevin"]:
+                raise ValueError(
+                    f"The `thermostat` must be `Langevin`, "
+                    f"but got `{md_setting['thermostat']}`!"
+                )
+            if md_setting["thermostat"].lower() == "langevin":
+                # check if optional langevin keys, values are missing and put defaults
+                for k in SCHEME["optional_langevin"]:
+                    if k not in md_setting:
+                        md_setting[k] = SCHEME["optional_langevin"][k]
 
         else:
             raise ValueError(
