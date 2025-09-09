@@ -439,6 +439,11 @@ class PrepareInitialDatasetProcedure:
         Returns:
             ase.md.MolecularDynamics: ASE MD engine.
         """
+        
+        if not self.restart:
+            MaxwellBoltzmannDistribution(
+                atoms, temperature_K=md_settings["temperature"]
+            )
 
         if md_settings["stat_ensemble"].lower() == "nvt":
             if md_settings["thermostat"].lower() == "langevin":
@@ -485,11 +490,6 @@ class PrepareInitialDatasetProcedure:
                     npt_settings["mask"] = md_settings["mask"]
 
                 dyn = NPT(**npt_settings)
-
-        if not self.restart:
-            MaxwellBoltzmannDistribution(
-                atoms, temperature_K=md_settings["temperature"]
-            )
 
         return dyn
 
