@@ -1459,10 +1459,8 @@ class ALMD:
     ):
         """Setup ASE molecular dynamics object for given atoms."""
         ensemble = md_settings["stat_ensemble"].lower()
-        dyn = self._create_dynamics_engine(atoms, md_settings, ensemble, idx)
-
         self._initialize_velocities(atoms, md_settings)
-
+        dyn = self._create_dynamics_engine(atoms, md_settings, ensemble, idx)
         return dyn
 
     def _create_dynamics_engine(
@@ -1536,7 +1534,7 @@ class ALMD:
         atoms: ase.Atoms,
         md_settings: dict,
         idx: int,
-    ) -> IsotropicMTKNPT:
+    ) -> MTKNPT:
         """Create MTK NPT dynamics engine."""
         npt_settings = {
             "atoms": atoms,
@@ -1550,7 +1548,7 @@ class ALMD:
             "tloop": md_settings["tloop"],
             "ploop": md_settings["ploop"],
         }
-        return IsotropicMTKNPT(**npt_settings)
+        return MTKNPT(**npt_settings)
     
     def _initialize_velocities(self, atoms: ase.Atoms, md_settings: dict):
         """
