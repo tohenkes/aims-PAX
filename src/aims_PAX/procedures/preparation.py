@@ -49,7 +49,7 @@ from ase.md.velocitydistribution import MaxwellBoltzmannDistribution
 from ase.md.langevin import Langevin
 from ase.md.nptberendsen import NPTBerendsen
 from ase.md.npt import NPT
-from ase.md.nose_hoover_chain import IsotropicMTKNPT
+from ase.md.nose_hoover_chain import MTKNPT
 from ase import units
 from contextlib import nullcontext
 
@@ -466,6 +466,11 @@ class PrepareInitialDatasetProcedure:
             ase.md.MolecularDynamics: ASE MD engine.
         """
 
+        if not self.restart:
+            MaxwellBoltzmannDistribution(
+                atoms, temperature_K=md_settings["temperature"]
+            )
+
         if md_settings["stat_ensemble"].lower() == "nvt":
             if md_settings["thermostat"].lower() == "langevin":
                 dyn = Langevin(
@@ -516,7 +521,7 @@ class PrepareInitialDatasetProcedure:
                     "atoms": atoms,
                     "timestep": md_settings["timestep"] * units.fs,
                     "temperature_K": md_settings["temperature"],
-                    "pressure_au": md_settings["pressure_au"],
+                    "pressure_au": md_settings["pressure_au"] * units.Pascal,
                     "tdamp": md_settings["tdamp"] * units.fs,
                     "pdamp": md_settings["pdamp"] * units.fs,
                     "tchain": md_settings["tchain"],
@@ -525,12 +530,7 @@ class PrepareInitialDatasetProcedure:
                     "ploop": md_settings["ploop"],
                 }
                 
-                dyn = IsotropicMTKNPT(**npt_settings)
-            
-        if not self.restart:
-            MaxwellBoltzmannDistribution(
-                atoms, temperature_K=md_settings["temperature"]
-            )
+                dyn = MTKNPT(**npt_settings)
 
         return dyn
 

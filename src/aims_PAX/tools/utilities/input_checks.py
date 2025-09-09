@@ -118,7 +118,7 @@ SCHEME = {
         "timestep": 0.5,
     },
     "optional_mtk": {
-        "pressure_au": 6.24e-7,  # 1 bar in eV/Angstrom**3
+        "pressure_au": 101325,  # 1 atm in pascal
         "temperature": 300,
         "timestep": 0.5,
         "tdamp": 0.5*100,
