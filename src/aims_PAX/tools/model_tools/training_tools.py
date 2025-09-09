@@ -1,5 +1,5 @@
 import torch
-from typing import Optional
+from typing import Optional, Tuple
 from torch_ema import ExponentialMovingAverage
 from mace import modules, tools
 from mace.tools import TensorDict
@@ -178,9 +178,9 @@ def setup_checkpoint(
     convergence: bool,
     model,
     training_setup: dict,
-) -> Tuple[CheckpointHandler, int]:
+) -> Tuple[tools.CheckpointHandler, int]:
     if not convergence:
-        checkpoint_handler = CheckpointHandler(
+        checkpoint_handler = tools.CheckpointHandler(
             directory=checkpoints_dir,
             tag=tag,
             keep=misc_settings["keep_checkpoints"],
@@ -199,7 +199,7 @@ def setup_checkpoint(
         else:
             epoch = 0
     else:
-        checkpoint_handler = CheckpointHandler(
+        checkpoint_handler = tools.CheckpointHandler(
             directory=checkpoints_dir + "/convergence",
             tag=tag + "_convergence",
             keep=misc_settings["keep_checkpoints"],

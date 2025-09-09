@@ -9,7 +9,7 @@ from pathlib import Path
 from mace import tools, modules
 from mace.tools import AtomicNumberTable
 from aims_PAX.tools.model_tools.setup_MACE import setup_mace
-from aims_PAX.tools.model_tools.setup_MACE_training import setup_mace_training
+from aims_PAX.tools.model_tools.training_tools import setup_model_training
 import ase.data
 from ase.io import read
 from ase import units
@@ -233,9 +233,10 @@ def ensemble_training_setups(
     """
     training_setups = {}
     for tag, model in ensemble.items():
-        training_setups[tag] = setup_mace_training(
+        training_setups[tag] = setup_model_training(
             settings=mace_settings,
             model=model,
+            model_type="mace",
             tag=tag,
             restart=restart,
             checkpoints_dir=checkpoints_dir,
