@@ -486,7 +486,7 @@ class PrepareInitialDatasetProcedure:
                     "atoms": atoms,
                     "timestep": md_settings["timestep"] * units.fs,
                     "temperature": md_settings["temperature"],
-                    "pressure_au": md_settings["pressure_au"] * units.Pascal,
+                    "pressure_au": md_settings["pressure"] * units.Pascal,
                 }
 
                 if md_settings.get("taup", False):
@@ -506,7 +506,7 @@ class PrepareInitialDatasetProcedure:
                     "atoms": atoms,
                     "timestep": md_settings["timestep"] * units.fs,
                     "temperature_K": md_settings["temperature"],
-                    "externalstress": md_settings["externalstress"]
+                    "externalstress": md_settings["pressure"] * units.Pascal
                     * units.bar,
                     "ttime": md_settings["ttime"] * units.fs,
                     "pfactor": md_settings["pfactor"] * units.fs,
