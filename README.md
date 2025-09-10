@@ -165,7 +165,7 @@ After the initial dataset generation is finished *aims PAX* does not converge th
 | max\_MD\_steps              | `int`            | `np.inf`                 | Maximum number of steps taken using the MLFF during active learning per trajectory.             |
 | max\_train\_set\_size       | `int`            | `np.inf`                 | Maximum size of training set before procedure is stopped.                                       |
 | seeds\_tags\_dict           | `dict` or `None` | `None`            | Optional mapping of seed indices to trajectory tags for reproducible runs.                      |
-| skip\_step\_mlff            | `int`            | `25`              | Step interval for evaluating the ML force field during MD in active learning.                   |
+| skip\_step\_mlff            | `int`            | `25`              | Step interval for evaluating the uncertainty criterion during MD in active learning.                   |
 | uncertainty\_type           | `str`            | `"max_atomic_sd"` | Method for estimating prediction uncertainty. Default is max force standard deviation (See Eq. 1 in the paper).                                                   |
 | uncert\_not\_crossed\_limit | `int`            | `50000`             | Max consecutive steps without crossing uncertainty threshold after which the a point is treated as if it crossed the threshold. This is done in case the models are overly confident for a long time.          |
 | valid\_ratio                | `float`          | `0.1`             | Fraction of data reserved for validation during active learning.                                                       |
@@ -365,9 +365,8 @@ We use exactly the same names as employed in the [MACE code](https://github.com/
 
 ## The workflow 
 <img src="readme_figs/aims_PAX_overview.png" alt="drawing" width="650"/>
-TODO: add link
 
-Please consult the [publication]() for a description of the *aims-PAX* workflow.
+Please consult the [publication](https://arxiv.org/abs/2508.12888) for a description of the *aims-PAX* workflow.
 
 <!---
 
@@ -413,7 +412,18 @@ It is recommended to use the isolated atomic energies of the elements in a given
 If you are using *aims-PAX* cite the main publication: 
 
 ***aims-PAX*:**
-
+```bibtex
+@misc{https://doi.org/10.48550/arxiv.2508.12888,
+  doi = {10.48550/ARXIV.2508.12888},
+  url = {https://arxiv.org/abs/2508.12888},
+  author = {Henkes,  Tobias and Sharma,  Shubham and Tkatchenko,  Alexandre and Rossi,  Mariana and Poltavskyi,  Igor},
+  keywords = {Chemical Physics (physics.chem-ph),  FOS: Physical sciences,  FOS: Physical sciences},
+  title = {aims-PAX: Parallel Active eXploration for the automated construction of Machine Learning Force Fields},
+  publisher = {arXiv},
+  year = {2025},
+  copyright = {arXiv.org perpetual,  non-exclusive license}
+}
+```
 
 [**FHI-aims**](https://fhi-aims.org/)**:**
 
@@ -482,47 +492,10 @@ If you are using [SO3LR](github.com/general-molecular-simulations/so3lr) please 
 
 If you have questions you can reach us at: tobias.henkes@uni.lu or igor.poltavskyi@uni.lu
 
-For bugs or feature requests, please use [GitHub Issues](https://github.com/tohenkes/*aims-PAX*/issues).
+For bugs or feature requests, please use [GitHub Issues](https://github.com/tohenkes/aims-PAX/issues).
 
 ## License
 
 The *aims-PAX* code is published and distributed under the [MIT License](MIT.md).
-
-
-
-# ToDo
-- [ ] support for multiple control settings
-- [ ] multiple MD settings
-- [ ] support for new ASE barostat
-- [ ] multiple trajectories in IDG
-- [ ] add possible options for all settings if categorical
-- [ ] create minimal log
-- [x] add so3lr (torch) as foundational model for IDG
-- [x] update to new ase version (keyspec!!! transfrom script!)
-- [x] update to new mace version
-- [x] update to new torch version
-- [ ] update training procedure
-- [ ] ModelEval, loss, atomic data, dataloader form so3krates_torch
-- [ ] Implement SO3LR (needed: model setup, training setup, one epoch function, update model auxiliaries, parsing of dipoles and hirshfeld ratios from fhi aims output)
-- [ ] make loading existing ensembles to use in AL easier
-  -  or path to dataset !!!
-  - think about seed-tag dict, how to cirumvent it? or create based on directory of models (use model file names)
-  - make sure all elements can be handled by the model
-- [ ] fix duplicate logger in IDG
-- [ ] AIMD with PARSL support
-- [ ] unit tests
-- [ ] git push workflow
-- [ ] create container
-- [ ] make loading existing ensembles to use in AL easier
-- [ ] AIMD with PARSL support
-- [x] look at "current temperatures" more closely, does it even make sense?
-- [ ] change epoch saved in AL for ckpt
-- [ ] clear logger -- prints warning from mace: Standard deviation of the scaling is zero, Changing to no scaling
-- [ ] energy, force weight swap in loss fn during convergence
-- [ ] multi GPU parallelism for AL
-- [ ] compile models at the end
-- [ ] fine-tuning of foundational models
-- [ ] use H5MD file format
-- [ ] spin polarization for E0 calculations
 
 

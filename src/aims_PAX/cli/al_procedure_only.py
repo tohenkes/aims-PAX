@@ -59,30 +59,6 @@ def main():
         )
 
     if not al.check_al_done():
-        accumulator_file = "./al_procedure_time.txt"
-
-        # Load previously accumulated time
-        if os.path.exists(accumulator_file):
-            with open(accumulator_file, "r") as f:
-                accumulated_time = float(f.read().strip())
-        else:
-            accumulated_time = 0.0
-
-        start_time = perf_counter()
-        # Periodically sync to file (every 1 minute)
-        def sync_time_periodically(interval=60):
-            def sync():
-                while True:
-                    time.sleep(interval)
-                    current = perf_counter() - start_time
-                    try:
-                        with open(accumulator_file, "w") as f:
-                            f.write(str(accumulated_time + current))
-                    except Exception as e:
-                        print("Failed to sync time:", e)
-            t = threading.Thread(target=sync, daemon=True)
-            t.start()
-        sync_time_periodically()
         al.run()
 
     if aimsPAX_settings["ACTIVE_LEARNING"].get("converge_al", False):

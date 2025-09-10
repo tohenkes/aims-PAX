@@ -113,7 +113,7 @@ SCHEME = {
         "temperature": 300,
     },
     "optional_berendsen": {
-        "pressure": 6.24e-7,  # 1 bar in eV/Angstrom**3
+        "pressure": 101325,  # 1 atm in pascal
         "temperature": 300,
         "timestep": 0.5,
     },
