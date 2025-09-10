@@ -4,13 +4,12 @@ import sys
 import os
 import torch
 import numpy as np
-from typing import Optional, Any, Dict, Union, List
+from typing import Optional, Any, Dict, Union
 from pathlib import Path
 from mace import tools, modules
 from mace.tools import AtomicNumberTable
 from aims_PAX.tools.setup_MACE import setup_mace
 from aims_PAX.tools.setup_MACE_training import setup_mace_training
-from .input_checks import check_aimsPAX_settings, check_MACE_settings
 import ase.data
 from ase.io import read
 from ase import units
@@ -20,7 +19,6 @@ from threading import Thread
 import pandas as pd
 import yaml
 from copy import deepcopy
-from yaml import safe_load
 from mace.data.utils import (
     KeySpecification
 )
@@ -41,6 +39,33 @@ Pbc = tuple  # (3,)
 
 DEFAULT_CONFIG_TYPE = "Default"
 DEFAULT_CONFIG_TYPE_WEIGHTS = {DEFAULT_CONFIG_TYPE: 1.0}
+
+
+def is_multi_trajectory_md(
+    md_settings: dict
+) -> bool:
+    """Check if MD settings use multi-trajectory format."""
+    if not md_settings:
+        return False
+    
+    first_key = next(iter(md_settings.keys()))
+    
+    try:
+        int(first_key)
+        return True
+    except (ValueError, TypeError):
+        return False
+    
+
+def normalize_md_settings(
+    md_settings: dict, 
+    num_trajectories: int
+) -> tuple[dict, bool]:
+    """Normalize MD settings to multi-trajectory format."""
+    if is_multi_trajectory_md(md_settings.copy()):
+        return md_settings, True
+    else:
+        return {i: md_settings.copy() for i in range(num_trajectories)}, False
 
 
 def create_keyspec(
@@ -74,101 +99,6 @@ def create_keyspec(
         info_keys=info_keys,
         arrays_keys=arrays_keys
     )
-
-
-def read_input_files(
-    path_to_mace_settings: str = "./mace.yaml",
-    path_to_aimsPAX_settings: str = "./aimsPAX.yaml",
-    procedure: str = "full",
-) -> tuple:
-    """
-    Reads the input files for MACE and aimsPAX settings.
-    Checks the settings and returns the checked settings
-    and paths to control and geometry files.
-
-    Args:
-        path_to_mace_settings (str, optional): Path to the MACE settings file.
-                                        Defaults to "./mace.yaml".
-        path_to_aimsPAX_settings (str, optional): Path to the AIMS PAX
-                                settings file. Defaults to "./aimsPAX.yaml".
-        procedure (str, optional): The procedure for which the settings are
-            checked. Can be "initial-ds", "al" or "full". Defaults to "full".
-
-    Returns:
-        tuple: A tuple containing the checked MACE settings, checked AIMS PAX
-            settings, path to control file, and path to geometry file.
-
-    Returns:
-        tuple: A tuple containing the checked MACE settings, checked AIMS PAX
-        settings, path to control file, and path to geometry file.
-    """
-    with open(path_to_mace_settings, "r") as file:
-        mace_settings = safe_load(file)
-    with open(path_to_aimsPAX_settings, "r") as file:
-        aimsPAX_settings = safe_load(file)
-
-    aimsPAX_settings = check_aimsPAX_settings(
-        aimsPAX_settings, procedure=procedure
-    )
-
-    mace_settings = check_MACE_settings(mace_settings)
-
-    path_to_control = aimsPAX_settings["MISC"].get(
-        "path_to_control", "./control.in"
-    )
-    path_to_geometry = aimsPAX_settings["MISC"].get(
-        "path_to_geometry", "./geometry.in"
-    )
-
-    return (
-        mace_settings,
-        aimsPAX_settings,
-        path_to_control,
-        path_to_geometry,
-    )
-
-
-def read_geometry(
-    path: str,
-    log: bool = False
-) -> Union[ase.Atoms, List]:
-    """
-    Checks if the path is a single ase readable file or a directory.
-    If it is a directory, it reads all files in the directory and
-    puts the ase.atoms in a list. If the directory contains files
-    that are not ase readable, it raises an error.
-    If the path is a single ase readable file, it reads the file
-    and returns the ase.atoms object.
-
-    Args:
-        path (str): Path to file or directory.
-
-    Returns:
-        Union[ase.Atoms, List]: ase.atoms object or list of ase.atoms objects.
-    """
-
-    if os.path.isdir(path):
-        atoms_list = []
-        for i, filename in enumerate(sorted(os.listdir(path))):
-            if log:
-                logging.info(
-                    f"Geometry {i}: {filename.split('.')[0]} is at index {i}."
-                )
-            complete_path = os.path.join(path, filename)
-            if os.path.isfile(complete_path):
-                try:
-                    atoms = read(complete_path)
-                    atoms_list.append(atoms)
-                except Exception as e:
-                    logging.error(
-                        f"File {filename} is not a valid ASE readable file: {e}"
-                    )
-        if not atoms_list:
-            raise ValueError("No valid ASE readable files found.")
-        return atoms_list
-    else:
-        atoms = [read(path)]
-        return atoms
 
 
 def compute_average_E0s(
@@ -619,7 +549,7 @@ def save_models(
 
 
 def Z_from_geometry(
-    atoms: Union[ase.Atoms, List],
+    atoms: Union[ase.Atoms, dict[int, ase.Atoms]],
 ) -> np.ndarray:
     """
     Extracts the atomic numbers from an ASE Atoms object
@@ -636,9 +566,9 @@ def Z_from_geometry(
         return np.array(
             [ase.data.atomic_numbers[atom.symbol] for atom in atoms]
         )
-    elif isinstance(atoms, list):
+    elif isinstance(atoms, dict):
         all_z = []
-        for atom in atoms:
+        for atom in atoms.values():
             current_z = atom.get_atomic_numbers()
             all_z.extend(current_z)
         return np.array(all_z)
@@ -689,7 +619,7 @@ def atoms_full_copy(atoms: ase.Atoms) -> ase.Atoms:
         magmoms=atoms.get_initial_magnetic_moments(),
         charges=atoms.get_initial_charges(),
         constraint=atoms.constraints,
-        calculator=atoms.get_calculator(),
+        calculator=atoms.calc,
         info=atoms.info,
     )
     return atoms_copy

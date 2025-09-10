@@ -119,8 +119,8 @@ Example settings can be found in the `examples` folder.
 | ensemble_size | `int` | `4` | Number of models in the ensemble for uncertainty estimation. |
 | foundational_model | `str` | `mace-mp` | Which foundational model to use for structure generation. Possible options: `mace-mp` or `so3lr`. |
 | initial_foundational_size | `str` | `"small"` | Size of the foundational model used when `initial_sampling` is set to `mace-mp0`. |
-| foundational_model_settings | `dict` | `{model_size: small}` | Settings for the chosen foundational model for structure generation. |
-| model_size | `str` | `small` | Size of `mace-mp` foundational model. |
+| foundational_model_settings | `dict` | `{mace_model: small}` | Settings for the chosen foundational model for structure generation. |
+| mace_model | `str` | `small` | Type of `MACE` foundational model. See [here](https://github.com/ACEsuit/mace/blob/main/mace/calculators/foundations_models.py) for their names. |
 |  dispersion_lr_damping | `str` | `None` | Damping parameter for dispersion interaction in `SO3LR`. Needed if `r_max_lr` is not `None`!  Part of `foundational_model_settings`.|
 | r_max_lr | `float` | `None` | Cutoff of long-range modules of `SO3LR`. Part of `foundational_model_settings`. |
 | intermediate_epochs_idg | `int` | `5` | Number of intermediate epochs between dataset growth steps in initial training. |
@@ -214,26 +214,59 @@ Settings for PARSL.
 | clean_dirs | `bool` | `True` | Whether to remove calculation directories after DFT computations. |
 
 #### MD:
-For now we have only one MD setting for all trajectories and the selection for settings is limited to Langevin dynamics, Berendsen and Nosé-Hoover-Parinello-Rahman NPT. Currently these settings are used for *ab initio* and MLFF MD.
+This part defines the settings for the molecular dynamics simulations during initial dataset generation and/or active learning. If only one set of settings is given, they are used for all systems/geometries. In case you want to use different settings for different systems or geometries you have specifiy which trajectory/system uses which system using their indices. Practically this means using a nested dictionary in the settings file:
+
+```
+MD:
+  0:
+    stat_ensemble: nvt
+    thermostat: langevin
+    temperature: 500
+  1:    
+    stat_ensemble: nvt
+    thermostat: langevin
+    temperature: 300
+```
+Here `0` and `1` refer to the indices used for giving the paths to the geometries and/or control files (see `MISC` settings below).
+
+Currently these settings are used for *ab initio* and MLFF MD.
 
 | Parameter | Type | Default | Description |
 |-----------|------|---------|-------------|
+
 | \*stat_ensemble | `str` | — | Statistical ensemble for molecular dynamics (e.g., `NVT`, `NPT`). |
-| barostat | `str` | `Berendsen`| Barostat used when `NPT` is chosen. Nosé-Hoover-Parinello-Rahman NPT is simply `"npt"`  |
-| external_stress | `float` | `6.24e-7`| Pressure used for Nosé-Hoover-Parinello-Rahman dynamics (eV/Å<sup>3</sup>) |
+| barostat | `str` | `MTK`| Barostat used when `NPT` is chosen. Stands for Full [Martyna-Tobias-Klein barostat](https://doi.org/10.1063/1.467468).|
 | friction | `float` | `0.001` | Friction coefficient for Langevin dynamics (in fs<sup>-1</sup>). |
 | MD_seed | `int` | `42` | Random number generator seed for Langevin dynamics. |
-| pfactor | `float` | `100`| [Constant in barostat differential equation](https://ase-lib.org/ase/md.html#constant-npt-simulations-the-isothermal-isobaric-ensemble).  |
-| pressure_au | `float` | `3.4e-7`| Pressure used for Berendesen dynamics (atomic units).  |
-| \*stat_ensemble | `str` | — | Statistical ensemble for molecular dynamics (e.g., `NVT`, `NPT`). |
-| temperature | `float` | `300`|   |
+| pchain | `int` | `3` | Number of thermostats in the barostat chain for MTK dynamics. |
+| pdamp | `float` | `500` | Pressure damping for MTK dynamics (`1000*timestep`). |
+| ploop | `int` | `1` | Number of loops for barostat integration in MTK dynamics. |
+| pressure | `float` | `101325.`| Pressure used for `NPT` in bar |
+| tchain | `int` | `3` | Number of thermostats in the thermostat chain for MTK dynamics. |
+| tdamp | `float` | `50` | Temperature damping for MTK dynamics (`100*timestep`). |
+| temperature | `float` | `300`| Target temperature  |
 | thermostat | `str` | `Langevin` | Thermostat used when `NVT` is chosen. |
-| timestep | `float` | — | Time step for molecular dynamics (in femtoseconds). |
-| ttime | `float` | `30`| Characteristic timescale of the thermostat in Nosé-Hoover-Parinello-Rahman dynamics.  |
+| timestep | `float` | 0.5 | Time step for molecular dynamics (in femtoseconds). |
+| tloop | `int` | `1` | Number of loops for thermostat integration in MTK dynamics. |
+
 
 
 
 #### MISC:
+
+The source of the geometries can be either a single path, a folder (where all `ASE` readable files will be loaded) or a dictionary of paths like:
+```
+  path_to_geometry:
+    0: "path/geo1.in"
+    1: "path/geo2.in"
+```
+Similarly, the source of the control files can be either a single path or a dictionary of paths like:
+```
+  path_to_control:
+    0: "path/control1.in"
+    1: "path/control2.in"
+```
+**Note:** Ideally you don't want to train your model on different levels of theory or DFT settings. Using different control files is mostly intended for using *aims-PAX* on periodic and non-periodic systems simulatenoeusly. Then you can specify that a k grid can be used for the periodic structure but not for the non-periodic one!
 
 | Parameter       | Type          | Default     | Description                                          |
 |-----------------|---------------|-------------|------------------------------------------------------|
@@ -464,3 +497,5 @@ For bugs or feature requests, please use [GitHub Issues](https://github.com/tohe
 ## License
 
 The *aims-PAX* code is published and distributed under the [MIT License](MIT.md).
+
+

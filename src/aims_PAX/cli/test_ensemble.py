@@ -1,5 +1,8 @@
 from aims_PAX.tools.utilities.eval_utils import test_ensemble
 from aims_PAX.tools.utilities.utilities import ensemble_from_folder
+from mace.data.utils import (
+    KeySpecification
+)
 import torch
 import argparse
 import numpy as np
@@ -96,6 +99,22 @@ def main():
         if arg == "virials":
             output_args["virials"] = True
 
+    info_keys = {
+        "energy": args.energy_key,
+        "stress": args.stress_key,
+        "virials": args.virials_key,
+        "head": args.head_key,
+        "charges": args.charges_key,
+        "dipoles": args.dipole_key,
+    }
+    arrays_keys = {
+        "forces": args.forces_key,
+    }
+
+    key_specification = KeySpecification(
+        info_keys=info_keys,
+        arrays_keys=arrays_keys,
+    )
     for arg in possible_args:
         if arg not in output_args:
             output_args[arg] = False
@@ -107,13 +126,7 @@ def main():
         output_args=output_args,
         device=args.device,
         return_predictions=args.return_predictions,
-        energy_key=args.energy_key,
-        forces_key=args.forces_key,
-        stress_key=args.stress_key,
-        virials_key=args.virials_key,
-        dipole_key=args.dipole_key,
-        charges_key=args.charges_key,
-        head_key=args.head_key,
+        key_specification=key_specification,
         log=True,  # Enable logging for detailed output
     )
     results = {

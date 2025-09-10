@@ -30,13 +30,14 @@ from aims_PAX.tools.utilities.utilities import (
     setup_logger,
     update_model_auxiliaries,
     save_checkpoint,
-    read_geometry,
     save_checkpoint,
     create_keyspec,
     log_yaml_block,
+    normalize_md_settings,
     AIMSControlParser,
     ModifyMD,
 )
+from aims_PAX.tools.utilities.input_utils import read_geometry
 from aims_PAX.tools.train_epoch_mace import (
     train_epoch,
     validate_epoch_ensemble,
@@ -48,6 +49,7 @@ from ase.md.velocitydistribution import MaxwellBoltzmannDistribution
 from ase.md.langevin import Langevin
 from ase.md.nptberendsen import NPTBerendsen
 from ase.md.npt import NPT
+from ase.md.nose_hoover_chain import MTKNPT
 from ase import units
 from contextlib import nullcontext
 
@@ -69,7 +71,7 @@ class PrepareInitialDatasetProcedure:
         self,
         mace_settings: dict,
         aimsPAX_settings: dict,
-        path_to_control: str = "./control.in",
+        path_to_control: str = "./control.in", #TODO: Rename
         path_to_geometry: str = "./geometry.in",
         use_mpi: bool = True,
     ) -> None:
@@ -147,20 +149,25 @@ class PrepareInitialDatasetProcedure:
             self.atoms = list(self.trajectories.values())
             self.step = self.init_ds_restart_dict["step"]
         else:
-            self.atoms = read_geometry(path_to_geometry, log=True)
+            self.trajectories = read_geometry(path_to_geometry, log=True)
+            self.atoms = list(self.trajectories.values())
             self.step = 0
             # TODO: multiple trajectories per atoms
             # TODO: make this compatible with the other methods in case the
             # geometries are not different systems
-            self.trajectories = {
-                idx: atoms for idx, atoms in enumerate(self.atoms)
-            }
+
+        self.num_trajectories = len(self.trajectories)
+        self.md_settings, _ = normalize_md_settings(
+            md_settings=self.md_settings_raw,
+            num_trajectories=self.num_trajectories
+        )
+        
         if self.rank == 0:
             logging.info(
                 "Running Initial Dataset Procedure with "
-                f"{len(self.atoms)} geometries."
+                f"{len(self.trajectories)} geometries."
             )
-        self.z = Z_from_geometry(self.atoms)
+        self.z = Z_from_geometry(self.trajectories)
         self.z_table = create_ztable(self.z)
 
         self.md_drivers = {idx: None for idx in self.trajectories.keys()}
@@ -294,7 +301,7 @@ class PrepareInitialDatasetProcedure:
 
         self.idg_settings = aimsPAX_settings["INITIAL_DATASET_GENERATION"]
         self.misc = aimsPAX_settings["MISC"]
-        self.md_settings = aimsPAX_settings["MD"]
+        self.md_settings_raw = aimsPAX_settings["MD"]
         self.cluster_settings = aimsPAX_settings.get("CLUSTER", None)
 
         self.ensemble_size = self.idg_settings["ensemble_size"]
@@ -410,7 +417,11 @@ class PrepareInitialDatasetProcedure:
         )
         return calc
 
-    def _handle_aims_settings(self, path_to_control: str):
+    def _handle_aims_settings(
+            self,
+            control_source: Union[str, dict[int, str]],
+            log: bool = False
+            ):
         """
         Parses the AIMS control file to get the settings for the AIMS
         calculator.
@@ -419,15 +430,30 @@ class PrepareInitialDatasetProcedure:
             path_to_control (str): Path to the AIMS control file.
             species_dir (str): Path to the species directory of AIMS.
         """
-
-        self.aims_settings = self.control_parser(path_to_control)
-        self.aims_settings["compute_forces"] = True
-        self.aims_settings["species_dir"] = self.species_dir
-        self.aims_settings["postprocess_anyway"] = (
-            True  # this is necesssary to check for convergence in ASI
-        )
-
-    def _setup_md(self, atoms: ase.Atoms, md_settings: dict):
+        if isinstance(control_source, str):
+            aims_settings = self.control_parser(control_source)
+            aims_settings["compute_forces"] = True
+            aims_settings["species_dir"] = self.species_dir
+            aims_settings["postprocess_anyway"] = (
+                True  # this is necesssary to check for convergence in ASI
+            )
+            self.aims_settings = {0: aims_settings}
+        elif isinstance(control_source, dict):
+            self.aims_settings = {}
+            for key, value in control_source.items():
+                aims_settings = self.control_parser(value)
+                aims_settings["compute_forces"] = True
+                aims_settings["species_dir"] = self.species_dir
+                aims_settings["postprocess_anyway"] = (
+                    True  # this is necesssary to check for convergence in ASI
+                )
+                if log:
+                    logging.info(
+                        f"Control file for geometry {key}: {value}."
+                    )
+                self.aims_settings[key] = aims_settings
+        
+    def setup_md(self, atoms: ase.Atoms, md_settings: dict):
         """
         Sets up the ASE molecular dynamics object for the atoms object.
         TODO: Add more flexibility and support for other settings
@@ -439,7 +465,7 @@ class PrepareInitialDatasetProcedure:
         Returns:
             ase.md.MolecularDynamics: ASE MD engine.
         """
-        
+
         if not self.restart:
             MaxwellBoltzmannDistribution(
                 atoms, temperature_K=md_settings["temperature"]
@@ -460,7 +486,7 @@ class PrepareInitialDatasetProcedure:
                     "atoms": atoms,
                     "timestep": md_settings["timestep"] * units.fs,
                     "temperature": md_settings["temperature"],
-                    "pressure_au": md_settings["pressure_au"],
+                    "pressure_au": md_settings["pressure_au"] * units.Pascal,
                 }
 
                 if md_settings.get("taup", False):
@@ -490,6 +516,21 @@ class PrepareInitialDatasetProcedure:
                     npt_settings["mask"] = md_settings["mask"]
 
                 dyn = NPT(**npt_settings)
+            if md_settings["barostat"].lower() == "mtk":
+                npt_settings = {
+                    "atoms": atoms,
+                    "timestep": md_settings["timestep"] * units.fs,
+                    "temperature_K": md_settings["temperature"],
+                    "pressure_au": md_settings["pressure"] * units.Pascal,
+                    "tdamp": md_settings["tdamp"] * units.fs,
+                    "pdamp": md_settings["pdamp"] * units.fs,
+                    "tchain": md_settings["tchain"],
+                    "pchain": md_settings["pchain"],
+                    "tloop": md_settings["tloop"],
+                    "ploop": md_settings["ploop"],
+                }
+                
+                dyn = MTKNPT(**npt_settings)
 
         return dyn
 
@@ -788,7 +829,7 @@ class PrepareInitialDatasetProcedure:
                     break
 
 
-class ALConfigurationManager:
+class ALConfiguration:
     """Handles all configuration setup for active learning."""
 
     def __init__(
@@ -803,7 +844,7 @@ class ALConfigurationManager:
         self.path_to_geometry = path_to_geometry
         self.aimsPAX_settings = aimsPAX_settings
         self.al_settings = aimsPAX_settings["ACTIVE_LEARNING"]
-        self.md_settings = aimsPAX_settings["MD"]
+        self.md_settings_raw = aimsPAX_settings["MD"]
         self.cluster_settings = aimsPAX_settings.get("CLUSTER", None)
         self.misc = aimsPAX_settings.get("MISC", {})
 
@@ -936,7 +977,7 @@ class ALConfigurationManager:
 class ALStateManager:
     """Manages the state of trajectories, ensembles, and analysis data."""
 
-    def __init__(self, config: ALConfigurationManager, comm_handler):
+    def __init__(self, config: ALConfiguration, comm_handler):
         self.config = config
         self.comm_handler = comm_handler
         self.rank = comm_handler.get_rank()
@@ -1117,10 +1158,10 @@ class ALStateManager:
                 self.analysis_checks[trajectory][field] = []
 
 
-class ALEnsembleManager:
+class ALEnsemble:
     """Manages ensemble setup and dataset handling for active learning."""
 
-    def __init__(self, config: ALConfigurationManager, comm_handler):
+    def __init__(self, config: ALConfiguration, comm_handler):
         self.config = config
         self.comm_handler = comm_handler
         self.rank = comm_handler.get_rank()
@@ -1237,13 +1278,13 @@ class ALEnsembleManager:
         self.comm_handler.barrier()
 
 
-class ALCalculatorMLFFManager:
+class ALCalculatorMLFF:
     """Manages calculators for active learning procedure."""
 
     def __init__(
         self,
-        config: ALConfigurationManager,
-        ensemble_manager: ALEnsembleManager,
+        config: ALConfiguration,
+        ensemble_manager: ALEnsemble,
         comm_handler,
     ):
         self.config = config
@@ -1361,12 +1402,12 @@ class ALCalculatorMLFFManager:
         )
 
 
-class ALMDManager:
+class ALMD:
     """Manages molecular dynamics setup and execution for active learning."""
 
     def __init__(
         self,
-        config: ALConfigurationManager,
+        config: ALConfiguration,
         state_manager: ALStateManager,
         comm_handler,
     ):
@@ -1376,14 +1417,24 @@ class ALMDManager:
         self.rank = comm_handler.get_rank()
         self.train_dataset_len = 0
 
-        # MD drivers will be stored here
+        self.md_settings, _ = normalize_md_settings(
+            md_settings=self.config.md_settings_raw,
+            num_trajectories=self.config.num_trajectories,
+        )
+        if self.rank == 0:
+            logging.info(
+                f'Using following settings for MDs:'
+            )
+            log_yaml_block(
+                "MD_SETTINGS",
+                self.md_settings
+            )
+            
         self.md_drivers = {}
-        self.current_temperatures = {}
 
         # Setup MD modification if configured
         self._setup_md_modify()
 
-        # Setup uncertainty handling
         self._setup_uncertainty()
 
     def setup_md_drivers(self, trajectories: dict, mace_calculator):
@@ -1391,42 +1442,26 @@ class ALMDManager:
         if self.rank != 0:
             return
 
-        # Assign calculator to all trajectories
         for trajectory in trajectories.values():
             trajectory.calc = mace_calculator
 
-        # Setup MD drivers for each trajectory
         self.md_drivers = {
             trajectory_idx: self._setup_md_dynamics(
                 atoms=trajectories[trajectory_idx],
-                md_settings=self.config.md_settings,
+                md_settings=self.md_settings[trajectory_idx],
                 idx=trajectory_idx,
             )
-            for trajectory_idx in range(self.config.num_trajectories)
+            for trajectory_idx in self.state_manager.trajectories.keys()
         }
 
     def _setup_md_dynamics(
         self, atoms: ase.Atoms, md_settings: dict, idx: int
     ):
         """Setup ASE molecular dynamics object for given atoms."""
-        self._initialize_temperature(md_settings, idx)
-
         ensemble = md_settings["stat_ensemble"].lower()
-        dyn = self._create_dynamics_engine(atoms, md_settings, ensemble, idx)
-
         self._initialize_velocities(atoms, md_settings)
-
+        dyn = self._create_dynamics_engine(atoms, md_settings, ensemble, idx)
         return dyn
-
-    def _initialize_temperature(self, md_settings: dict, idx: int):
-        """Initialize temperature tracking for trajectory."""
-        if md_settings["stat_ensemble"].lower() not in ["nvt", "npt"]:
-            return
-
-        if self.config.restart:
-            return
-
-        self.current_temperatures[idx] = md_settings["temperature"]
 
     def _create_dynamics_engine(
         self, atoms: ase.Atoms, md_settings: dict, ensemble: str, idx: int
@@ -1450,7 +1485,7 @@ class ALMDManager:
                 atoms,
                 timestep=md_settings["timestep"] * units.fs,
                 friction=md_settings["friction"] / units.fs,
-                temperature_K=self.current_temperatures[idx],
+                temperature_K=md_settings["temperature"],
                 rng=np.random.RandomState(md_settings["MD_seed"]),
             )
         else:
@@ -1464,8 +1499,8 @@ class ALMDManager:
 
         if barostat == "berendsen":
             return self._create_berendsen_npt(atoms, md_settings, idx)
-        elif barostat == "npt":
-            return self._create_standard_npt(atoms, md_settings, idx)
+        elif barostat == "mtk":
+            return self._create_mkt_npt(atoms, md_settings, idx)
         else:
             raise ValueError(f"Unsupported barostat: {barostat}")
 
@@ -1476,8 +1511,8 @@ class ALMDManager:
         npt_settings = {
             "atoms": atoms,
             "timestep": md_settings["timestep"] * units.fs,
-            "temperature": self.current_temperatures[idx],
-            "pressure_au": md_settings["pressure_au"],
+            "temperature": md_settings["temperature"],
+            "pressure_au": md_settings["pressure"] * units.Pascal,
         }
 
         # Add optional parameters
@@ -1494,25 +1529,27 @@ class ALMDManager:
 
         return NPTBerendsen(**npt_settings)
 
-    def _create_standard_npt(
-        self, atoms: ase.Atoms, md_settings: dict, idx: int
-    ) -> NPT:
-        """Create standard NPT dynamics engine."""
+    def _create_mkt_npt(
+        self,
+        atoms: ase.Atoms,
+        md_settings: dict,
+        idx: int,
+    ) -> MTKNPT:
+        """Create MTK NPT dynamics engine."""
         npt_settings = {
             "atoms": atoms,
             "timestep": md_settings["timestep"] * units.fs,
-            "temperature_K": self.current_temperatures[idx],
-            "externalstress": md_settings["externalstress"] * units.bar,
-            "ttime": md_settings["ttime"] * units.fs,
-            "pfactor": md_settings["pfactor"] * units.fs,
+            "temperature_K": md_settings["temperature"],
+            "pressure_au": md_settings["pressure"] * units.Pascal,
+            "tdamp": md_settings["tdamp"] * units.fs,
+            "pdamp": md_settings["pdamp"] * units.fs,
+            "tchain": md_settings["tchain"],
+            "pchain": md_settings["pchain"],
+            "tloop": md_settings["tloop"],
+            "ploop": md_settings["ploop"],
         }
-
-        # Add optional mask parameter
-        if md_settings.get("mask"):
-            npt_settings["mask"] = md_settings["mask"]
-
-        return NPT(**npt_settings)
-
+        return MTKNPT(**npt_settings)
+    
     def _initialize_velocities(self, atoms: ase.Atoms, md_settings: dict):
         """
         Initialize Maxwell-Boltzmann velocity distribution
@@ -1525,7 +1562,7 @@ class ALMDManager:
 
     def _setup_md_modify(self):
         """Setup MD modification if configured."""
-        self.md_mod_settings = self.config.md_settings.get("MODIFY", None)
+        self.md_mod_settings = self.md_settings.get("MODIFY", None)
         if self.md_mod_settings is not None:
             self.md_mod_metric = self.md_mod_settings.get("metric", None)
             assert (
@@ -1567,15 +1604,15 @@ class ALMDManager:
         )
 
 
-class ALRestartManager:
+class ALRestart:
     """Handles active learning restart functionality."""
 
     def __init__(
         self,
-        config: ALConfigurationManager,
+        config: ALConfiguration,
         state_manager: ALStateManager,
         comm_handler,
-        md_manager: ALMDManager,
+        md_manager: ALMD,
     ):
         self.config = config
         self.state_manager = state_manager
@@ -1618,8 +1655,6 @@ class ALRestartManager:
 
     def _add_conditional_restart_keys(self):
         """Add conditional restart keys based on configuration."""
-        if self.config.md_settings["stat_ensemble"].lower() in ["nvt", "npt"]:
-            self.al_restart_dict.update({"current_temperatures": None})
 
         if self.config.analysis:
             self.al_restart_dict.update(
@@ -1665,10 +1700,6 @@ class ALRestartManager:
             "uncertainties",
             "uncert_not_crossed",
         ]
-
-        # Add conditional attributes
-        if self._is_nvt_or_npt_ensemble():
-            base_attributes.append("current_temperatures")
 
         if self.config.analysis:
             analysis_attributes = [
@@ -1726,10 +1757,6 @@ class ALRestartManager:
             "uncert_not_crossed",
         ]
 
-        # Add conditional attributes
-        if self._is_nvt_or_npt_ensemble():
-            broadcast_attributes.append("current_temperatures")
-
         if self.config.analysis:
             analysis_broadcast = [
                 "t_intervals",
@@ -1751,7 +1778,7 @@ class ALRestartManager:
 
     def _is_nvt_or_npt_ensemble(self) -> bool:
         """Check if ensemble type is NVT or NPT."""
-        return self.config.md_settings["stat_ensemble"].lower() in [
+        return self.md_manager.md_settings["stat_ensemble"].lower() in [
             "nvt",
             "npt",
         ]
@@ -1761,7 +1788,6 @@ class ALRestartManager:
     ):
         """Update restart dictionary with current state."""
         self._update_base_restart_attributes()
-        self._update_temperature_attributes(md_drivers, trajectories_keys)
         self._update_analysis_attributes()
 
         if save_restart is not None:
@@ -1812,26 +1838,6 @@ class ALRestartManager:
             ensemble_type, lambda driver: driver.temp
         )
 
-    def _update_temperature_attributes(self, md_drivers, trajectories_keys):
-        """
-        Update temperature-related restart
-        attributes for NVT/NPT ensembles.
-        """
-        if not self._is_nvt_or_npt_ensemble():
-            return
-
-        ensemble_type = self.config.md_settings["stat_ensemble"].lower()
-        temp_getter = self._get_temperature_function(ensemble_type)
-
-        current_temperatures = {
-            trajectory: temp_getter(md_drivers[trajectory]) / units.kB
-            for trajectory in trajectories_keys
-        }
-
-        self.al_restart_dict.update(
-            {"current_temperatures": current_temperatures}
-        )
-
     def _update_analysis_attributes(self):
         """Update analysis-related restart attributes."""
         if not self.config.analysis:
@@ -1872,7 +1878,7 @@ class PrepareALProcedure:
         self._setup_communication(comm_handler, use_mpi)
 
         # Initialize configuration
-        self.config = ALConfigurationManager(
+        self.config = ALConfiguration(
             mace_settings,
             aimsPAX_settings,
             path_to_control=path_to_control,
@@ -1896,16 +1902,16 @@ class PrepareALProcedure:
             log_yaml_block("MACE", mace_settings)
         # Initialize all managers
         self.state_manager = ALStateManager(self.config, self.comm_handler)
-        self.ensemble_manager = ALEnsembleManager(
+        self.ensemble_manager = ALEnsemble(
             self.config, self.comm_handler
         )
-        self.mlff_manager = ALCalculatorMLFFManager(
+        self.mlff_manager = ALCalculatorMLFF(
             self.config, self.ensemble_manager, self.comm_handler
         )
-        self.md_manager = ALMDManager(
+        self.md_manager = ALMD(
             self.config, self.state_manager, self.comm_handler
         )
-        self.restart_manager = ALRestartManager(
+        self.restart_manager = ALRestart(
             self.config, self.state_manager, self.comm_handler, self.md_manager
         )
 
@@ -1926,6 +1932,13 @@ class PrepareALProcedure:
             self.state_manager.initialize_fresh_state(
                 self.config.path_to_geometry
             )
+        # assign mlff to checkpoints
+        if self.rank == 0:
+            for ckpt in self.state_manager.MD_checkpoints.values():
+                ckpt.calc = self.mlff_manager.mace_calc
+                # compute forces for checkpoint
+                ckpt.calc.calculate(ckpt)
+
             # Make sure state manager has access to seeds_tags_dict
             self.state_manager.seeds_tags_dict = self.config.seeds_tags_dict
         self.first_wait_after_restart = {

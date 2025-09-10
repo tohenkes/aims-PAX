@@ -2,7 +2,7 @@ import os
 import logging
 import ase
 from ase.io import read
-from typing import Callable
+from typing import Callable, Union
 import time
 from pathlib import Path
 import numpy as np
@@ -11,12 +11,12 @@ import queue
 import shutil
 from mace import tools
 from .preparation import (
-    ALCalculatorMLFFManager,
-    ALEnsembleManager,
+    ALCalculatorMLFF,
+    ALEnsemble,
     ALStateManager,
-    ALRestartManager,
-    ALConfigurationManager,
-    ALMDManager,
+    ALRestart,
+    ALConfiguration,
+    ALMD,
 )
 from aims_PAX.tools.utilities.data_handling import (
     create_dataloader,
@@ -74,8 +74,8 @@ class ALDataManager:
 
     def __init__(
         self,
-        config: ALConfigurationManager,
-        ensemble_manager: ALEnsembleManager,
+        config: ALConfiguration,
+        ensemble_manager: ALEnsemble,
         state_manager: ALStateManager,
         comm_handler: CommHandler,
         rank: int,
@@ -261,11 +261,11 @@ class TrainingOrchestrator:
 
     def __init__(
         self,
-        config: ALConfigurationManager,
-        ensemble_manager: ALEnsembleManager,
+        config: ALConfiguration,
+        ensemble_manager: ALEnsemble,
         state_manager: ALStateManager,
-        restart_manager: ALRestartManager,
-        md_manager: ALMDManager,
+        restart_manager: ALRestart,
+        md_manager: ALMD,
     ):
         self.config = config
         self.ensemble_manager = ensemble_manager
@@ -599,12 +599,12 @@ class ALTrainingManager:
 
     def __init__(
         self,
-        config: ALConfigurationManager,
-        ensemble_manager: ALEnsembleManager,
-        mlff_manager: ALCalculatorMLFFManager,
+        config: ALConfiguration,
+        ensemble_manager: ALEnsemble,
+        mlff_manager: ALCalculatorMLFF,
         state_manager: ALStateManager,
-        md_manager: ALMDManager,
-        restart_manager: ALRestartManager,
+        md_manager: ALMD,
+        restart_manager: ALRestart,
         rank: int,
     ):
         self.config = config
@@ -872,8 +872,8 @@ class ALDFTManager:
     def __init__(
         self,
         path_to_control: str,
-        config: ALConfigurationManager,
-        ensemble_manager: ALEnsembleManager,
+        config: ALConfiguration,
+        ensemble_manager: ALEnsemble,
         state_manager: ALStateManager,
         comm_handler: CommHandler,
     ):
@@ -994,12 +994,43 @@ class ALDFTManager:
                 logging.info("SCF not converged.")
             return None
 
-    def _handle_aims_settings(self, path_to_control: str):
-        """Load and parse AIMS control file."""
-        self.aims_settings = self.control_parser(path_to_control)
-        self.aims_settings["compute_forces"] = True
-        self.aims_settings["species_dir"] = self.config.species_dir
-        self.aims_settings["postprocess_anyway"] = True
+    def _handle_aims_settings(
+            self,
+            control_source: Union[str, dict[int, str]],
+            log: bool = False
+            ):
+        """
+        Parses the AIMS control file to get the settings for the AIMS
+        calculator.
+
+        Args:
+            path_to_control (str): Path to the AIMS control file.
+            species_dir (str): Path to the species directory of AIMS.
+        """
+        if isinstance(control_source, str):
+            aims_settings = self.control_parser(control_source)
+            aims_settings["compute_forces"] = True
+            aims_settings["species_dir"] = self.config.species_dir
+            aims_settings["postprocess_anyway"] = (
+                True  # this is necesssary to check for convergence in ASI
+            )
+            self.aims_settings = {
+                idx: aims_settings for idx in self.state_manager.trajectories.keys()
+                }
+        elif isinstance(control_source, dict):
+            self.aims_settings = {}
+            for key, value in control_source.items():
+                aims_settings = self.control_parser(value)
+                aims_settings["compute_forces"] = True
+                aims_settings["species_dir"] = self.config.species_dir
+                aims_settings["postprocess_anyway"] = (
+                    True  # this is necesssary to check for convergence in ASI
+                )
+                if log:
+                    logging.info(
+                        f"Control file for geometry {key}: {value}."
+                    )
+                self.aims_settings[key] = aims_settings
 
 
 class ALDFTManagerSerial(ALDFTManager):
@@ -1011,8 +1042,8 @@ class ALDFTManagerSerial(ALDFTManager):
     def __init__(
         self,
         path_to_control: str,
-        config: ALConfigurationManager,
-        ensemble_manager: ALEnsembleManager,
+        config: ALConfiguration,
+        ensemble_manager: ALEnsemble,
         state_manager: ALStateManager,
         comm_handler: CommHandler,
         path_to_geometry: str = "geometry.in",
@@ -1057,8 +1088,8 @@ class ALDFTManagerParallel(ALDFTManager):
     def __init__(
         self,
         path_to_control: str,
-        config: ALConfigurationManager,
-        ensemble_manager: ALEnsembleManager,
+        config: ALConfiguration,
+        ensemble_manager: ALEnsemble,
         state_manager: ALStateManager,
         comm_handler: CommHandler,
         color: int,
@@ -1151,8 +1182,8 @@ class ALDFTManagerPARSL(ALDFTManager):
     def __init__(
         self,
         path_to_control: str,
-        config: ALConfigurationManager,
-        ensemble_manager: ALEnsembleManager,
+        config: ALConfiguration,
+        ensemble_manager: ALEnsemble,
         state_manager: ALStateManager,
         comm_handler: CommHandler,
     ):
@@ -1224,7 +1255,7 @@ class ALDFTManagerPARSL(ALDFTManager):
                     species=data.get_chemical_symbols(),
                     cell=data.get_cell(),
                     pbc=data.pbc,
-                    aims_settings=self.aims_settings,
+                    aims_settings=self.aims_settings[idx],
                     directory=self.calc_dir / f"worker_{idx}_no_{curr_job_no}",
                     properties=self.config.properties,
                     ase_aims_command=self.launch_str,
@@ -1298,9 +1329,9 @@ class ALRunningManager:
 
     def __init__(
         self,
-        config: ALConfigurationManager,
+        config: ALConfiguration,
         state_manager: ALStateManager,
-        ensemble_manager: ALEnsembleManager,
+        ensemble_manager: ALEnsemble,
         comm_handler: CommHandler,
         dft_manager: ALDFTManager,
         rank: int,
@@ -1374,9 +1405,9 @@ class ALRunningManager:
     def execute_md_step(
         self,
         idx: int,
-        md_manager: ALMDManager,
+        md_manager: ALMD,
         md_drivers: dict,
-        restart_manager: ALRestartManager,
+        restart_manager: ALRestart,
         trajectories: dict,
     ):
         """
@@ -1384,9 +1415,9 @@ class ALRunningManager:
 
         Args:
             idx (int): Index of the trajectory worker.
-            md_manager (ALMDManager): Manager for MD operations.
+            md_manager (ALMD): Manager for MD operations.
             md_drivers (dict): Dictionary of MD drivers.
-            restart_manager (ALRestartManager): Manager for restart
+            restart_manager (ALRestart): Manager for restart
                                             checkpoints.
             trajectories (dict): Dictionary of trajectories.
         """
@@ -1669,11 +1700,11 @@ class ALAnalysisManager:
 
     def __init__(
         self,
-        config: ALConfigurationManager,
-        ensemble_manager: ALEnsembleManager,
+        config: ALConfiguration,
+        ensemble_manager: ALEnsemble,
         dft_manager: ALDFTManager,
         state_manager: ALStateManager,
-        md_manager: ALMDManager,
+        md_manager: ALMD,
         comm_handler: CommHandler,
         rank: int = 0,
     ):
@@ -1940,11 +1971,11 @@ class ALAnalysisManagerParallel(ALAnalysisManager):
 
     def __init__(
         self,
-        config: ALConfigurationManager,
-        ensemble_manager: ALEnsembleManager,
+        config: ALConfiguration,
+        ensemble_manager: ALEnsemble,
         dft_manager: ALDFTManagerParallel,
         state_manager: ALStateManager,
-        md_manager: ALMDManager,
+        md_manager: ALMD,
         comm_handler: CommHandler,
         rank: int,
         color: int,
@@ -2217,11 +2248,11 @@ class ALAnalysisManagerPARSL(ALAnalysisManager):
 
     def __init__(
         self,
-        config: ALConfigurationManager,
-        ensemble_manager: ALEnsembleManager,
+        config: ALConfiguration,
+        ensemble_manager: ALEnsemble,
         dft_manager: ALDFTManagerPARSL,
         state_manager: ALStateManager,
-        md_manager: ALMDManager,
+        md_manager: ALMD,
         comm_handler: CommHandler,
     ):
         super().__init__(
@@ -2294,7 +2325,7 @@ class ALAnalysisManagerPARSL(ALAnalysisManager):
                         species=data.get_chemical_symbols(),
                         cell=data.get_cell(),
                         pbc=data.pbc,
-                        aims_settings=self.dft_manager.aims_settings,
+                        aims_settings=self.dft_manager.aims_settings[idx],
                         directory=self.dft_manager.calc_dir
                         / f"worker_analysis{idx}_no_{current_idx}",
                         properties=self.config.properties,
