@@ -113,12 +113,12 @@ SCHEME = {
         "temperature": 300,
     },
     "optional_berendsen": {
-        "pressure_au": 6.24e-7,  # 1 bar in eV/Angstrom**3
+        "pressure": 6.24e-7,  # 1 bar in eV/Angstrom**3
         "temperature": 300,
         "timestep": 0.5,
     },
     "optional_mtk": {
-        "pressure_au": 6.24e-7,  # 1 bar in eV/Angstrom**3
+        "pressure": 101325,  # 1 atm in pascal
         "temperature": 300,
         "timestep": 0.5,
         "tdamp": 0.5*100,
@@ -695,11 +695,31 @@ def check_aimsPAX_settings(settings: dict, procedure: str = "full") -> dict:
                 f"but got `{md_setting['stat_ensemble']}`!"
             )
         # check if the optional keywords have values of the correct type
-        md_scheme_key = (
-            "optional_nvt"
-            if md_setting["stat_ensemble"].lower() == "nvt"
-            else "optional_npt"
-        )
+        
+        if md_setting["stat_ensemble"].lower() == "nvt":
+            if md_setting["thermostat"].lower() == "langevin":
+                md_scheme_key = "optional_langevin"
+            else:
+                raise ValueError(
+                    f"The `thermostat` must be `Langevin`, "
+                    f"but got `{md_setting['thermostat']}`!"
+                )
+        elif md_setting["stat_ensemble"].lower() == "npt":
+            if md_setting["barostat"].lower() == "berendsen":
+                md_scheme_key = "optional_berendsen"
+            elif md_setting["barostat"].lower() == "mtk":
+                md_scheme_key = "optional_mtk"
+            else:
+                raise ValueError(
+                    f"The `barostat` must be either `berendsen` or `mtk`, "
+                    f"but got `{md_setting['barostat']}`!"
+                )
+        else:
+            raise ValueError(
+                f"The `stat_ensemble` must be either `NVT/nvt` or `NPT/npt`, "
+                f"but got `{md_setting['stat_ensemble']}`!"
+            )
+
         md_setting = check_dtypes(
             settings=md_setting,
             scheme_key=md_scheme_key,

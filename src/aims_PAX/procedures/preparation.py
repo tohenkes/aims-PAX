@@ -49,7 +49,7 @@ from ase.md.velocitydistribution import MaxwellBoltzmannDistribution
 from ase.md.langevin import Langevin
 from ase.md.nptberendsen import NPTBerendsen
 from ase.md.npt import NPT
-from ase.md.nose_hoover_chain import IsotropicMTKNPT
+from ase.md.nose_hoover_chain import MTKNPT
 from ase import units
 from contextlib import nullcontext
 
@@ -486,7 +486,7 @@ class PrepareInitialDatasetProcedure:
                     "atoms": atoms,
                     "timestep": md_settings["timestep"] * units.fs,
                     "temperature": md_settings["temperature"],
-                    "pressure_au": md_settings["pressure_au"],
+                    "pressure_au": md_settings["pressure_au"] * units.Pascal,
                 }
 
                 if md_settings.get("taup", False):
@@ -521,7 +521,7 @@ class PrepareInitialDatasetProcedure:
                     "atoms": atoms,
                     "timestep": md_settings["timestep"] * units.fs,
                     "temperature_K": md_settings["temperature"],
-                    "pressure_au": md_settings["pressure_au"],
+                    "pressure_au": md_settings["pressure"] * units.Pascal,
                     "tdamp": md_settings["tdamp"] * units.fs,
                     "pdamp": md_settings["pdamp"] * units.fs,
                     "tchain": md_settings["tchain"],
@@ -530,7 +530,7 @@ class PrepareInitialDatasetProcedure:
                     "ploop": md_settings["ploop"],
                 }
                 
-                dyn = IsotropicMTKNPT(**npt_settings)
+                dyn = MTKNPT(**npt_settings)
 
         return dyn
 
@@ -1459,10 +1459,8 @@ class ALMD:
     ):
         """Setup ASE molecular dynamics object for given atoms."""
         ensemble = md_settings["stat_ensemble"].lower()
-        dyn = self._create_dynamics_engine(atoms, md_settings, ensemble, idx)
-
         self._initialize_velocities(atoms, md_settings)
-
+        dyn = self._create_dynamics_engine(atoms, md_settings, ensemble, idx)
         return dyn
 
     def _create_dynamics_engine(
@@ -1514,7 +1512,7 @@ class ALMD:
             "atoms": atoms,
             "timestep": md_settings["timestep"] * units.fs,
             "temperature": md_settings["temperature"],
-            "pressure_au": md_settings["pressure_au"],
+            "pressure_au": md_settings["pressure"] * units.Pascal,
         }
 
         # Add optional parameters
@@ -1536,13 +1534,13 @@ class ALMD:
         atoms: ase.Atoms,
         md_settings: dict,
         idx: int,
-    ) -> IsotropicMTKNPT:
+    ) -> MTKNPT:
         """Create MTK NPT dynamics engine."""
         npt_settings = {
             "atoms": atoms,
             "timestep": md_settings["timestep"] * units.fs,
             "temperature_K": md_settings["temperature"],
-            "pressure_au": md_settings["pressure_au"],
+            "pressure_au": md_settings["pressure"] * units.Pascal,
             "tdamp": md_settings["tdamp"] * units.fs,
             "pdamp": md_settings["pdamp"] * units.fs,
             "tchain": md_settings["tchain"],
@@ -1550,7 +1548,7 @@ class ALMD:
             "tloop": md_settings["tloop"],
             "ploop": md_settings["ploop"],
         }
-        return IsotropicMTKNPT(**npt_settings)
+        return MTKNPT(**npt_settings)
     
     def _initialize_velocities(self, atoms: ase.Atoms, md_settings: dict):
         """
@@ -1934,6 +1932,13 @@ class PrepareALProcedure:
             self.state_manager.initialize_fresh_state(
                 self.config.path_to_geometry
             )
+        # assign mlff to checkpoints
+        if self.rank == 0:
+            for ckpt in self.state_manager.MD_checkpoints.values():
+                ckpt.calc = self.mlff_manager.mace_calc
+                # compute forces for checkpoint
+                ckpt.calc.calculate(ckpt)
+
             # Make sure state manager has access to seeds_tags_dict
             self.state_manager.seeds_tags_dict = self.config.seeds_tags_dict
         self.first_wait_after_restart = {
