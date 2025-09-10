@@ -233,18 +233,22 @@ Currently these settings are used for *ab initio* and MLFF MD.
 
 | Parameter | Type | Default | Description |
 |-----------|------|---------|-------------|
+
 | \*stat_ensemble | `str` | — | Statistical ensemble for molecular dynamics (e.g., `NVT`, `NPT`). |
-| barostat | `str` | `Berendsen`| Barostat used when `NPT` is chosen. Nosé-Hoover-Parinello-Rahman NPT is simply `"npt"`  |
-| external_stress | `float` | `6.24e-7`| Pressure used for Nosé-Hoover-Parinello-Rahman dynamics (eV/Å<sup>3</sup>) |
+| barostat | `str` | `MTK`| Barostat used when `NPT` is chosen. Stands for Full [Martyna-Tobias-Klein barostat](https://doi.org/10.1063/1.467468).|
 | friction | `float` | `0.001` | Friction coefficient for Langevin dynamics (in fs<sup>-1</sup>). |
 | MD_seed | `int` | `42` | Random number generator seed for Langevin dynamics. |
-| pfactor | `float` | `100`| [Constant in barostat differential equation](https://ase-lib.org/ase/md.html#constant-npt-simulations-the-isothermal-isobaric-ensemble).  |
-| pressure_au | `float` | `3.4e-7`| Pressure used for Berendesen dynamics (atomic units).  |
-| \*stat_ensemble | `str` | — | Statistical ensemble for molecular dynamics (e.g., `NVT`, `NPT`). |
-| temperature | `float` | `300`|   |
+| pchain | `int` | `3` | Number of thermostats in the barostat chain for MTK dynamics. |
+| pdamp | `float` | `500` | Pressure damping for MTK dynamics (`1000*timestep`). |
+| ploop | `int` | `1` | Number of loops for barostat integration in MTK dynamics. |
+| pressure | `float` | `101325.`| Pressure used for `NPT` in bar |
+| tchain | `int` | `3` | Number of thermostats in the thermostat chain for MTK dynamics. |
+| tdamp | `float` | `50` | Temperature damping for MTK dynamics (`100*timestep`). |
+| temperature | `float` | `300`| Target temperature  |
 | thermostat | `str` | `Langevin` | Thermostat used when `NVT` is chosen. |
-| timestep | `float` | — | Time step for molecular dynamics (in femtoseconds). |
-| ttime | `float` | `30`| Characteristic timescale of the thermostat in Nosé-Hoover-Parinello-Rahman dynamics.  |
+| timestep | `float` | 0.5 | Time step for molecular dynamics (in femtoseconds). |
+| tloop | `int` | `1` | Number of loops for thermostat integration in MTK dynamics. |
+
 
 
 
