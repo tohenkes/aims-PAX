@@ -6,6 +6,7 @@ from mace import data as mace_data
 from mace.tools import torch_geometric, torch_tools, utils
 from mace.data.utils import (
     load_from_xyz,
+    KeySpecification
 )
 from mace.tools.utils import (
     MetricsLogger,
@@ -502,12 +503,7 @@ def test_ensemble(
     logger: MetricsLogger = None,
     log_errors: str = "PerAtomMAE",
     return_predictions: bool = False,
-    energy_key: str = "REF_energy",
-    forces_key: str = "REF_forces",
-    stress_key: str = "REF_stress",
-    virials_key: str = "virials",
-    dipole_key: str = "dipoles",
-    charges_key: str = "charges",
+    key_specification: KeySpecification = None,
     head_key: str = "head",
     log: bool = False,
 ) -> Tuple[dict, dict]:
@@ -533,18 +529,8 @@ def test_ensemble(
                                             Defaults to "PerAtomMAE".
         return_predictions (bool, optional): Whether to return the predictions
                                     made during the test. Defaults to False.
-        energy_key (str, optional): How energy is defined in the ase.Atoms.
-                                        Defaults to "REF_energy".
-        forces_key (str, optional): How forces are defined in the ase.Atoms.
-                                        Defaults to "REF_forces".
-        stress_key (str, optional): How stress is defined in the ase.Atoms.
-                                        Defaults to "REF_stress".
-        virials_key (str, optional): How virials are defined in the ase.Atoms.
-                                        Defaults to "virials".
-        dipole_key (str, optional): How dipoles are defined in the ase.Atoms.
-                                        Defaults to "dipoles".
-        charges_key (str, optional): How charges are defined in the ase.Atoms.
-                                        Defaults to "charges".
+        key_specification (KeySpecification, optional): Specification of keys
+                                        in the dataset. Defaults to None.
         head_key (str, optional): Which output head to test.
                                         Defaults to "head".
 
@@ -559,13 +545,7 @@ def test_ensemble(
         configs = [
             mace_data.config_from_atoms(
                 atoms,
-                energy_key=energy_key,
-                forces_key=forces_key,
-                stress_key=stress_key,
-                dipole_key=dipole_key,
-                virials_key=virials_key,
-                charges_key=charges_key,
-                head_key=head_key,
+                key_specification=key_specification,
             )
             for atoms in atoms_list
         ]
@@ -573,13 +553,7 @@ def test_ensemble(
         _, configs = load_from_xyz(
             file_path=path_to_data,
             config_type_weights=None,
-            energy_key=energy_key,
-            forces_key=forces_key,
-            stress_key=stress_key,
-            virials_key=virials_key,
-            dipole_key=dipole_key,
-            charges_key=charges_key,
-            head_key=head_key,
+            key_specification=key_specification,
         )
 
     else:

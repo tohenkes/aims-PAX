@@ -486,7 +486,7 @@ class PrepareInitialDatasetProcedure:
                     "atoms": atoms,
                     "timestep": md_settings["timestep"] * units.fs,
                     "temperature": md_settings["temperature"],
-                    "pressure_au": md_settings["pressure_au"],
+                    "pressure_au": md_settings["pressure_au"] * units.Pascal,
                 }
 
                 if md_settings.get("taup", False):
@@ -521,7 +521,7 @@ class PrepareInitialDatasetProcedure:
                     "atoms": atoms,
                     "timestep": md_settings["timestep"] * units.fs,
                     "temperature_K": md_settings["temperature"],
-                    "pressure_au": md_settings["pressure_au"] * units.Pascal,
+                    "pressure_au": md_settings["pressure"] * units.Pascal,
                     "tdamp": md_settings["tdamp"] * units.fs,
                     "pdamp": md_settings["pdamp"] * units.fs,
                     "tchain": md_settings["tchain"],
@@ -1512,7 +1512,7 @@ class ALMD:
             "atoms": atoms,
             "timestep": md_settings["timestep"] * units.fs,
             "temperature": md_settings["temperature"],
-            "pressure_au": md_settings["pressure_au"],
+            "pressure_au": md_settings["pressure"] * units.Pascal,
         }
 
         # Add optional parameters
@@ -1540,7 +1540,7 @@ class ALMD:
             "atoms": atoms,
             "timestep": md_settings["timestep"] * units.fs,
             "temperature_K": md_settings["temperature"],
-            "pressure_au": md_settings["pressure_au"],
+            "pressure_au": md_settings["pressure"] * units.Pascal,
             "tdamp": md_settings["tdamp"] * units.fs,
             "pdamp": md_settings["pdamp"] * units.fs,
             "tchain": md_settings["tchain"],
@@ -1932,6 +1932,13 @@ class PrepareALProcedure:
             self.state_manager.initialize_fresh_state(
                 self.config.path_to_geometry
             )
+        # assign mlff to checkpoints
+        if self.rank == 0:
+            for ckpt in self.state_manager.MD_checkpoints.values():
+                ckpt.calc = self.mlff_manager.mace_calc
+                # compute forces for checkpoint
+                ckpt.calc.calculate(ckpt)
+
             # Make sure state manager has access to seeds_tags_dict
             self.state_manager.seeds_tags_dict = self.config.seeds_tags_dict
         self.first_wait_after_restart = {
