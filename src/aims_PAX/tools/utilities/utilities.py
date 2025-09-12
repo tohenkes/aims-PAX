@@ -288,7 +288,7 @@ def create_ztable(
 def setup_ensemble_dicts(
     seeds_tags_dict: dict,
     z_table: tools.AtomicNumberTable,
-    mace_settings: dict,
+    model_settings: dict,
     ensemble_atomic_energies_dict: dict,
 ) -> tuple:
     """
@@ -308,11 +308,11 @@ def setup_ensemble_dicts(
 
     ensemble = {}
     for tag, seed in seeds_tags_dict.items():
-        mace_settings["GENERAL"]["seed"] = seed
-        tag = mace_settings["GENERAL"]["name_exp"] + "-" + str(seed)
+        model_settings["GENERAL"]["seed"] = seed
+        tag = model_settings["GENERAL"]["name_exp"] + "-" + str(seed)
         seeds_tags_dict[tag] = seed
         ensemble[tag] = setup_mace(
-            settings=mace_settings,
+            settings=model_settings,
             z_table=z_table,
             atomic_energies_dict=ensemble_atomic_energies_dict[tag],
         )
