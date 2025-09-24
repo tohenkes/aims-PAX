@@ -233,7 +233,6 @@ Currently these settings are used for *ab initio* and MLFF MD.
 
 | Parameter | Type | Default | Description |
 |-----------|------|---------|-------------|
-
 | \*stat_ensemble | `str` | — | Statistical ensemble for molecular dynamics (e.g., `NVT`, `NPT`). |
 | barostat | `str` | `MTK`| Barostat used when `NPT` is chosen. Stands for Full [Martyna-Tobias-Klein barostat](https://doi.org/10.1063/1.467468).|
 | friction | `float` | `0.001` | Friction coefficient for Langevin dynamics (in fs<sup>-1</sup>). |
