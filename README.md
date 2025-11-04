@@ -128,7 +128,7 @@ Example settings can be found in the `examples` folder.
 | max_initial_set_size | `int` or `float` | `np.inf` | Maximum size of the initial training dataset. |
 | progress_dft_update | `int` | `10` | Intervals at which progress of DFT calculations is logged.|
 | scheduler_initial | `bool` | `True` | Whether to use a learning rate scheduler during initial training. |
-| skip_step_initial | `int` | `25` | Step interval for evaluating the ML force field during initial training. |
+| skip_step_initial | `int` | `25` | Intervals at which a structure is taken from the MD simulation either for the dataset in case of AIMD or for DFT in case of using an MLFF. |
 | valid_ratio | `float` | `0.1` | Fraction of data reserved for validation. |
 | valid_skip | `int` | `1` | Number of training steps between validation runs in initial training. |
 
