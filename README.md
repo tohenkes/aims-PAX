@@ -301,7 +301,7 @@ We use exactly the same names as employed in the [MACE code](https://github.com/
 
 | Parameter       | Type          | Default     | Description                                          |
 |-----------------|---------------|-------------|------------------------------------------------------|
-| atomic_energies | `list` or `None` | `None `    | Atomic energy references for each element. If `None`, atomic energies are determined using the training set using linear least squares. |
+| atomic_energies | `dict` or `None` | `None `    | Atomic energy references for each element. Dictionary is structured as follows: {atomic_number: energy}. If `None`, atomic energies are determined using the training set using linear least squares. |
 | compute_avg_num_neighbors | `bool` | `True`      | Whether to compute average number of neighbors. |
 | correlation     | `int`         | `3`           | Correlation order for many-body interactions. |
 | gate            | `str`         | `"silu"`      | Activation function. |

@@ -256,7 +256,8 @@ SCHEME_DTYPES = {
     "optional_dicts_strings": [  # Fields that can be dict or string
         "path_to_control",
         "path_to_geometry",
-    ]
+    ],
+    "optional_dicts": [],
 }
 
 SCHEME_MACE = {
@@ -388,8 +389,10 @@ SCHEME_MACE_DTYPES = {
         "radial_MLP",
     ],
     "dicts": ["config_type_weights"],
-    "optional_lists": ["atomic_energies"],
+    "optional_lists": [],
     "optional_strings": [],
+    "optional_dicts": ["atomic_energies"],
+    "optional_dicts_strings": []
 }
 
 
@@ -438,6 +441,12 @@ def check_dtypes(
             assert settings[k] is None or isinstance(
                 settings[k], list
             ), f"The value of `{k}` must be a list or None!"
+        elif k in scheme_dtype["optional_dicts_strings"]:
+            assert settings[k] is None or isinstance(
+                settings[k], dict
+            ) or isinstance(
+                settings[k], str
+            ), f"The value of `{k}` must be a dict, string or None!"
     return settings
 
 
