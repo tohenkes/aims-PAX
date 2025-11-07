@@ -67,6 +67,7 @@ class ALProcedure(PrepareALProcedure):
             config=self.config,
             state_manager=self.state_manager,
             ensemble_manager=self.ensemble_manager,
+            mlff_manager=self.mlff_manager,
             comm_handler=self.comm_handler,
             rank=self.rank,
             dft_manager=self.dft_manager,
@@ -182,10 +183,7 @@ class ALProcedure(PrepareALProcedure):
         )
         self.comm_handler.barrier()
         if self.rank == 0:
-            for trajectory in self.trajectories.values():
-                trajectory.calc.models = [
-                    self.ensemble[tag] for tag in self.ensemble.keys()
-                ]
+            self._assign_models_to_trajectories()
 
         self.comm_handler.barrier()
         self.state_manager.total_epoch = self.comm_handler.bcast(
@@ -207,6 +205,21 @@ class ALProcedure(PrepareALProcedure):
             self.state_manager.trajectory_total_epochs[idx] = 0
             if self.rank == 0:
                 logging.info(f"Trajectory worker {idx} finished training.")
+
+    def _assign_models_to_trajectories(self):
+        
+        if self.config.use_foundational:
+            # updating only the ensemble calculator which is used for 
+            # uncertainty estimation
+            self.mlff_manager.mace_calc_ensemble.models = [
+                self.ensemble[tag] for tag in self.ensemble.keys()
+            ]
+        else:
+            # updating the models that are used to propagate the MD
+            for trajectory in self.trajectories.values():
+                trajectory.calc.models = [
+                    self.ensemble[tag] for tag in self.ensemble.keys()
+                ]
 
     def _running_task(self, idx: int):
         """
@@ -384,6 +397,7 @@ class ALProcedureSerial(ALProcedure):
             config=self.config,
             state_manager=self.state_manager,
             ensemble_manager=self.ensemble_manager,
+            mlff_manager=self.mlff_manager,
             comm_handler=self.comm_handler,
             rank=self.rank,
             dft_manager=self.dft_manager,
@@ -480,6 +494,7 @@ class ALProcedureParallel(ALProcedure):
             config=self.config,
             state_manager=self.state_manager,
             ensemble_manager=self.ensemble_manager,
+            mlff_manager=self.mlff_manager,
             comm_handler=self.comm_handler,
             rank=self.rank,
             dft_manager=self.dft_manager,
@@ -1061,6 +1076,7 @@ class ALProcedurePARSL(ALProcedure):
             config=self.config,
             state_manager=self.state_manager,
             ensemble_manager=self.ensemble_manager,
+            mlff_manager=self.mlff_manager,
             comm_handler=self.comm_handler,
             rank=self.rank,
             dft_manager=self.dft_manager,
@@ -1095,6 +1111,12 @@ class ALProcedurePARSL(ALProcedure):
                 self.trajectories[idx] = atoms_full_copy(
                     self.state_manager.MD_checkpoints[idx]
                 )
+                self.trajectories[idx].calc = (
+                    self.mlff_manager.mace_calc
+                )
+                self.md_manager.md_drivers[idx].atoms = (
+                    self.trajectories[idx]
+                )
                 self.state_manager.trajectory_status[idx] = "running"
 
             else:
@@ -1107,9 +1129,6 @@ class ALProcedurePARSL(ALProcedure):
 
                 self.state_manager.MD_checkpoints[idx] = atoms_full_copy(
                     received_point
-                )
-                self.state_manager.MD_checkpoints[idx].calc = (
-                    self.trajectories[idx].calc
                 )
 
                 self.data_manager.handle_received_point(

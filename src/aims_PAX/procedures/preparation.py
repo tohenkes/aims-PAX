@@ -52,6 +52,7 @@ from ase.md.npt import NPT
 from ase.md.nose_hoover_chain import MTKNPT
 from ase import units
 from contextlib import nullcontext
+from mace.calculators import mace_mp
 
 try:
     import asi4py
@@ -947,6 +948,10 @@ class ALConfiguration:
         self.restart = os.path.exists("restart/al/al_restart.npy")
         self.create_restart = self.misc["create_restart"]
 
+        # foundational model usage during AL
+        self.use_foundational = self.al_settings["use_foundational"]
+        self.foundational_model_settings = self.al_settings["foundational_model_settings"]
+
     def _setup_molecular_indices(self):
         """
         Setup molecular indices configuration.
@@ -1385,22 +1390,51 @@ class ALCalculatorMLFF:
 
     def _setup_mace_calculator(self):
         """Setup MACE calculator with ensemble models."""
-        model_paths = list_files_in_directory(self.config.model_dir)
-        self.models = [
-            torch.load(
-                f=model_path,
-                map_location=self.config.device,
-                weights_only=False,
+
+        if self.config.use_foundational:
+            logging.info("Using foundational model for MD.")
+            foundational_model_settings = self.config.foundational_model_settings
+            mace_model = foundational_model_settings['mace_model']
+            # for propagation
+            self.mace_calc = mace_mp(
+                model=mace_model,
+                dispersion=False,
+                default_dtype=self.config.dtype,
+                device=self.config.device
             )
-            for model_path in model_paths
-        ]
+            # for uncertainty estimation
+            model_paths = list_files_in_directory(self.config.model_dir)
+            self.models = [
+                torch.load(
+                    f=model_path,
+                    map_location=self.config.device,
+                    weights_only=False,
+                )
+                for model_path in model_paths
+            ]
+            self.mace_calc_ensemble = MACECalculator(
+                models=self.models,
+                device=self.config.device,
+                default_dtype=self.config.dtype,
+            )
+            
+        else:
+            logging.info("Using custom model for MD.")
+            model_paths = list_files_in_directory(self.config.model_dir)
+            self.models = [
+                torch.load(
+                    f=model_path,
+                    map_location=self.config.device,
+                    weights_only=False,
+                )
+                for model_path in model_paths
+            ]
 
-        self.mace_calc = MACECalculator(
-            models=self.models,
-            device=self.config.device,
-            default_dtype=self.config.dtype,
-        )
-
+            self.mace_calc = MACECalculator(
+                models=self.models,
+                device=self.config.device,
+                default_dtype=self.config.dtype,
+            )
 
 class ALMD:
     """Manages molecular dynamics setup and execution for active learning."""
@@ -1458,21 +1492,21 @@ class ALMD:
         self, atoms: ase.Atoms, md_settings: dict, idx: int
     ):
         """Setup ASE molecular dynamics object for given atoms."""
-        ensemble = md_settings["stat_ensemble"].lower()
+        stat_ensemble = md_settings["stat_ensemble"].lower()
         self._initialize_velocities(atoms, md_settings)
-        dyn = self._create_dynamics_engine(atoms, md_settings, ensemble, idx)
+        dyn = self._create_dynamics_engine(atoms, md_settings, stat_ensemble, idx)
         return dyn
 
     def _create_dynamics_engine(
-        self, atoms: ase.Atoms, md_settings: dict, ensemble: str, idx: int
+        self, atoms: ase.Atoms, md_settings: dict, stat_ensemble: str, idx: int
     ):
         """Create appropriate dynamics engine based on ensemble type."""
-        if ensemble == "nvt":
+        if stat_ensemble == "nvt":
             return self._create_nvt_dynamics(atoms, md_settings, idx)
-        elif ensemble == "npt":
+        elif stat_ensemble == "npt":
             return self._create_npt_dynamics(atoms, md_settings, idx)
         else:
-            raise ValueError(f"Unsupported ensemble type: {ensemble}")
+            raise ValueError(f"Unsupported ensemble type: {stat_ensemble}")
 
     def _create_nvt_dynamics(
         self, atoms: ase.Atoms, md_settings: dict, idx: int

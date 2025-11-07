@@ -9,6 +9,7 @@ import numpy as np
 import threading
 import queue
 import shutil
+import random
 from mace import tools
 from .preparation import (
     ALCalculatorMLFF,
@@ -120,6 +121,7 @@ class ALDataManager:
         if needs_validation_data:
             self._add_to_validation_set(idx, received_point, mace_point)
         else:
+
             max_size_reached = self._add_to_training_set(
                 idx, received_point, mace_point
             )
@@ -128,6 +130,53 @@ class ALDataManager:
 
         self.state_manager.total_points_added += 1
         return False
+
+    def _check_batch_size(self, set_batch_size, tag):
+        batch_size = (
+            1
+            if len(self.ensemble_manager.ensemble_mace_sets[tag]["train"])
+            < set_batch_size
+            else set_batch_size
+        )
+        return batch_size
+
+    def _create_training_batch(
+            self, 
+            mace_point, 
+            mace_sets: dict
+            ):
+        """
+        Creates a single batch of specified size. It includes the newly sampled
+        point and a random selection of points from the current training set.
+        """
+
+        for tag in self.ensemble_manager.ensemble_ase_sets.keys():
+            train_batch_size = self._check_batch_size(
+                self.config.set_batch_size, tag
+            )
+            valid_batch_size = self._check_batch_size(
+                self.config.set_valid_batch_size, tag
+            )
+            random_sample_train = random.sample(
+                self.ensemble_manager.ensemble_mace_sets[tag]["train"],
+                train_batch_size - 1,
+            )
+            random_sample_valid = random.sample(
+                self.ensemble_manager.ensemble_mace_sets[tag]["valid"],
+                valid_batch_size,
+            )
+            train_set = random_sample_train + mace_point
+            valid_set = random_sample_valid
+            (
+                mace_sets[tag]["train_loader"],
+                mace_sets[tag]["valid_loader"],
+            ) = create_dataloader(
+                train_set,
+                valid_set,
+                train_batch_size,
+                valid_batch_size,
+            )
+        return mace_sets
 
     def _add_to_validation_set(
         self, idx: int, received_point: np.ndarray, mace_point
@@ -914,9 +963,13 @@ class ALDFTManager:
                     f"SCF not converged at worker {idx}. Discarding point and "
                     "restarting MD from last checkpoint."
                 )
+                temp_calc = self.state_manager.trajectories[idx].calc
                 self.state_manager.trajectories[idx] = atoms_full_copy(
                     self.state_manager.MD_checkpoints[idx]
                 )
+                self.state_manager.trajectories[idx].calc = temp_calc
+                del temp_calc
+                
             self.state_manager.trajectory_status[idx] = "running"
 
         else:
@@ -940,9 +993,6 @@ class ALDFTManager:
 
                 self.state_manager.MD_checkpoints[idx] = atoms_full_copy(
                     received_point
-                )
-                self.state_manager.MD_checkpoints[idx].calc = (
-                    self.state_manager.trajectories[idx].calc
                 )
             self.state_manager.trajectory_status[idx] = "waiting"
             self.state_manager.num_workers_training += 1
@@ -1332,6 +1382,7 @@ class ALRunningManager:
         config: ALConfiguration,
         state_manager: ALStateManager,
         ensemble_manager: ALEnsemble,
+        mlff_manager: ALCalculatorMLFF,
         comm_handler: CommHandler,
         dft_manager: ALDFTManager,
         rank: int,
@@ -1339,6 +1390,7 @@ class ALRunningManager:
         self.config = config
         self.state_manager = state_manager
         self.ensemble_manager = ensemble_manager
+        self.mlff_manager = mlff_manager
         self.comm_handler = comm_handler
         self.rank = rank
         self.dft_manager = dft_manager
@@ -1490,7 +1542,16 @@ class ALRunningManager:
             )
 
             point = trajectories[idx].copy()
-            prediction = trajectories[idx].calc.results["forces_comm"]
+            if self.config.use_foundational:
+                self.mlff_manager.mace_calc_ensemble.calculate(
+                    atoms=point,
+                )
+                prediction = self.mlff_manager.mace_calc_ensemble.results[
+                    "forces_comm"
+                ]
+            else:    
+                prediction = trajectories[idx].calc.results["forces_comm"]
+
             uncertainty = get_uncertainty_func(prediction)
 
             self.state_manager.uncertainties.append(uncertainty)

@@ -114,7 +114,7 @@ Example settings can be found in the `examples` folder.
 | \*species\_dir                | `str`            | —                 | Path to the directory containing the FHI AIMS species defaults.                                 |
 | \*n_points_per_sampling_step_idg           | `int`            | —                 |  Number of points that is sampled at each step for each model in the ensemble and each geometry.                   |
 | analysis | `bool` | `False` | Saves metrics such as losses during initial dataset generation.|
-| desired_acc | `float` | `0.0` | Force MAE that the ensemble should reach on the validation set. Needs to be combined with `desired_acc_scale_idg`.|
+| desired_acc | `float` | `0.0` | Force MAE (eV/Å) that the ensemble should reach on the validation set. Needs to be combined with `desired_acc_scale_idg`.|
 | desired_acc_scale_idg | `float` | `10.0` | Scales `desired_acc` during initial dataset generation. Resulting product is accuracy that the model has to reach on the validation set before stopping the procedure at this stage. |
 | ensemble_size | `int` | `4` | Number of models in the ensemble for uncertainty estimation. |
 | foundational_model | `str` | `mace-mp` | Which foundational model to use for structure generation. Possible options: `mace-mp` or `so3lr`. |
@@ -497,5 +497,10 @@ For bugs or feature requests, please use [GitHub Issues](https://github.com/tohe
 ## License
 
 The *aims-PAX* code is published and distributed under the [MIT License](MIT.md).
+
+## TODO
+
+- [ ] add force restart
+- [ ] add units in setting variable names
 
 

@@ -607,20 +607,15 @@ def atoms_full_copy(atoms: ase.Atoms) -> ase.Atoms:
     Returns:
         ase.Atoms: Copied ASE Atoms object with all properties.
     """
-
+    
     atoms_copy = ase.Atoms(
-        symbols=atoms.get_chemical_symbols(),
-        positions=atoms.get_positions(),
-        cell=atoms.get_cell(),
-        pbc=atoms.get_pbc(),
-        tags=atoms.get_tags(),
-        momenta=atoms.get_momenta(),
-        masses=atoms.get_masses(),
-        magmoms=atoms.get_initial_magnetic_moments(),
-        charges=atoms.get_initial_charges(),
-        constraint=atoms.constraints,
-        calculator=atoms.calc,
-        info=atoms.info,
+        symbols=deepcopy(atoms.get_chemical_symbols()),
+        positions=np.copy(atoms.get_positions()),
+        cell=np.copy(atoms.get_cell()),
+        pbc=np.copy(atoms.get_pbc()),
+        momenta=np.copy(atoms.get_momenta()),
+        info=deepcopy(atoms.info),
+        masses=np.copy(atoms.get_masses()),
     )
     return atoms_copy
 

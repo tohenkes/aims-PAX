@@ -97,6 +97,12 @@ SCHEME = {
         "parallel": False,
         "analysis_skip": 50,
         "extend_existing_final_ds": False,
+        "use_foundational": False,
+        "foundational_model_settings": {
+            "mace_model": "small",
+            "r_max_lr": None,
+            "dispersion_lr_damping": None
+        },
     },
     "optional_cluster": {
         "type": "slurm",
@@ -249,6 +255,7 @@ SCHEME_DTYPES = {
         "create_restart",
         "clean_dirs",
         "extend_existing_final_ds",
+        "use_foundational",
     ],
     "lists": ["mol_idxs"],
     "optional_lists": [],
