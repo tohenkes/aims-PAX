@@ -204,7 +204,7 @@ Settings for PARSL.
 | &nbsp;&nbsp;&nbsp;&nbsp;&nbsp;\*init_blocks | `int` | — | Initial number of blocks to launch. |
 | &nbsp;&nbsp;&nbsp;&nbsp;&nbsp;\*min_blocks | `int` | — | Minimum number of blocks allowed. |
 | &nbsp;&nbsp;&nbsp;&nbsp;&nbsp;\*max_blocks | `int` | — | Maximum number of blocks allowed. |
-| &nbsp;&nbsp;&nbsp;&nbsp;&nbsp;\*label | `str` | —| Unique label for this Parsl configuration. |
+| &nbsp;&nbsp;&nbsp;&nbsp;&nbsp;\*label | `str` | —| Unique label for this Parsl configuration. If you run multiple instances of aims-PAX on the same machine make sure that the labels are unique for each instance!|
 | &nbsp;&nbsp;&nbsp;&nbsp;&nbsp;run_dir | `str` | `None` | Directory to store runtime files. |
 | &nbsp;&nbsp;&nbsp;&nbsp;&nbsp;function_dir | `str`| `None` | Directory for Parsl function storage. |
 | \*slurm_str | `str` (multiline) | — | SLURM job script header specifying job resources and options. |
