@@ -981,7 +981,7 @@ class InitialDatasetPARSL(InitialDatasetFoundational):
                     directory = self.calc_dir / f"initial_calc_{self.calc_idx}"
                     # if there is only one entry in aims_settings the same
                     # settings are used for all systems
-                    system_idx = idx if len(self.aims_settings) > 0 else 0
+                    system_idx = idx if len(self.aims_settings) > 1 else 0
                     temp_result = recalc_dft_parsl(
                         positions=atoms.get_positions(),
                         species=atoms.get_chemical_symbols(),
