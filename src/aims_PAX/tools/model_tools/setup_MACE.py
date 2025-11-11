@@ -46,7 +46,8 @@ def setup_mace(
     misc_settings = settings["MISC"]
 
     tools.set_default_dtype(general_settings["default_dtype"])
-
+    tools.set_seeds(general_settings["seed"])
+    
     atomic_energies: np.ndarray = np.array(
         [atomic_energies_dict[z] for z in z_table.zs]
     )

@@ -36,11 +36,11 @@ from aims_PAX.tools.utilities.mpi_utils import (
     send_points_non_blocking,
     CommHandler,
 )
-from aims_PAX.tools.setup_MACE_training import (
+from aims_PAX.tools.model_tools.setup_MACE_training import (
     setup_mace_training,
     reset_optimizer,
 )
-from aims_PAX.tools.train_epoch_mace import (
+from aims_PAX.tools.model_tools.train_epoch_mace import (
     train_epoch,
     validate_epoch_ensemble,
 )

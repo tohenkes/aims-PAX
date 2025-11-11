@@ -8,8 +8,8 @@ from typing import Optional, Any, Dict, Union
 from pathlib import Path
 from mace import tools, modules
 from mace.tools import AtomicNumberTable
-from aims_PAX.tools.setup_MACE import setup_mace
-from aims_PAX.tools.setup_MACE_training import setup_mace_training
+from aims_PAX.tools.model_tools.setup_MACE import setup_mace
+from aims_PAX.tools.model_tools.training_tools import setup_model_training
 import ase.data
 from ase.io import read
 from ase import units
@@ -233,9 +233,10 @@ def ensemble_training_setups(
     """
     training_setups = {}
     for tag, model in ensemble.items():
-        training_setups[tag] = setup_mace_training(
+        training_setups[tag] = setup_model_training(
             settings=mace_settings,
             model=model,
+            model_type="mace",
             tag=tag,
             restart=restart,
             checkpoints_dir=checkpoints_dir,
@@ -287,7 +288,7 @@ def create_ztable(
 def setup_ensemble_dicts(
     seeds_tags_dict: dict,
     z_table: tools.AtomicNumberTable,
-    mace_settings: dict,
+    model_settings: dict,
     ensemble_atomic_energies_dict: dict,
 ) -> tuple:
     """
@@ -307,11 +308,11 @@ def setup_ensemble_dicts(
 
     ensemble = {}
     for tag, seed in seeds_tags_dict.items():
-        mace_settings["GENERAL"]["seed"] = seed
-        tag = mace_settings["GENERAL"]["name_exp"] + "-" + str(seed)
+        model_settings["GENERAL"]["seed"] = seed
+        tag = model_settings["GENERAL"]["name_exp"] + "-" + str(seed)
         seeds_tags_dict[tag] = seed
         ensemble[tag] = setup_mace(
-            settings=mace_settings,
+            settings=model_settings,
             z_table=z_table,
             atomic_energies_dict=ensemble_atomic_energies_dict[tag],
         )

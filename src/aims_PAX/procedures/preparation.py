@@ -25,7 +25,6 @@ from aims_PAX.tools.utilities.utilities import (
     get_atomic_energies_from_pt,
     dtype_mapping,
     setup_ensemble_dicts,
-    setup_mace_training,
     create_seeds_tags_dict,
     setup_logger,
     update_model_auxiliaries,
@@ -38,10 +37,11 @@ from aims_PAX.tools.utilities.utilities import (
     ModifyMD,
 )
 from aims_PAX.tools.utilities.input_utils import read_geometry
-from aims_PAX.tools.train_epoch_mace import (
+from aims_PAX.tools.model_tools.train_epoch_mace import (
     train_epoch,
     validate_epoch_ensemble,
 )
+from aims_PAX.tools.model_tools.setup_MACE_training import setup_mace_training
 from aims_PAX.tools.utilities.mpi_utils import CommHandler
 import ase
 import logging
@@ -70,7 +70,7 @@ class PrepareInitialDatasetProcedure:
 
     def __init__(
         self,
-        mace_settings: dict,
+        model_settings: dict,
         aimsPAX_settings: dict,
         path_to_control: str = "./control.in", #TODO: Rename
         path_to_geometry: str = "./geometry.in",
@@ -100,7 +100,7 @@ class PrepareInitialDatasetProcedure:
         self.log_dir = Path(aimsPAX_settings["MISC"]["log_dir"])
         logger_level = (
             logging.DEBUG
-            if mace_settings["MISC"]["log_level"].lower() == "debug"
+            if model_settings["MISC"]["log_level"].lower() == "debug"
             else logging.INFO
         )
 
@@ -121,10 +121,10 @@ class PrepareInitialDatasetProcedure:
             )
 
         self.control_parser = AIMSControlParser()
-        self._handle_mace_settings(mace_settings)
+        self._handle_model_settings(model_settings)
         if self.rank == 0:
             logging.info("Using following settings for MACE:")
-            log_yaml_block("MACE", mace_settings)
+            log_yaml_block("MACE", model_settings)
 
         self._handle_settings(aimsPAX_settings)
         self._handle_aims_settings(path_to_control)
@@ -180,7 +180,7 @@ class PrepareInitialDatasetProcedure:
         )
         self.seeds_tags_dict = create_seeds_tags_dict(
             seeds=self.ensemble_seeds,
-            mace_settings=self.mace_settings,
+            mace_settings=self.model_settings,
             misc_settings=self.misc,
         )
 
@@ -194,13 +194,13 @@ class PrepareInitialDatasetProcedure:
         if self.rank == 0:
             self.ensemble = setup_ensemble_dicts(
                 seeds_tags_dict=self.seeds_tags_dict,
-                mace_settings=self.mace_settings,
+                mace_settings=self.model_settings,
                 z_table=self.z_table,
                 ensemble_atomic_energies_dict=self.ensemble_atomic_energies_dict,
             )
             self.training_setups = ensemble_training_setups(
                 ensemble=self.ensemble,
-                mace_settings=self.mace_settings,
+                mace_settings=self.model_settings,
                 restart=self.restart,
                 checkpoints_dir=self.checkpoints_dir,
                 mol_idxs=self.mol_idxs,
@@ -258,28 +258,30 @@ class PrepareInitialDatasetProcedure:
                     "ensemble_losses": [],
                 }
 
-    def _handle_mace_settings(self, mace_settings: dict) -> None:
+    def _handle_model_settings(self, model_settings: dict) -> None:
         """
-        Saves the MACE settings to class attributes.
-        TODO: Create function to check if all necessary settings are present
+        Saves the model settings to class attributes.
         and fall back to defaults if not.
 
         Args:
-            mace_settings (dict): Dictionary containing the MACE settings.
+            model_settings (dict): Dictionary containing the MACE settings.
         """
 
-        self.mace_settings = mace_settings
-        general = mace_settings["GENERAL"]
-        architecture = mace_settings["ARCHITECTURE"]
-        training = mace_settings["TRAINING"]
-        misc = mace_settings["MISC"]
+        self.model_settings = model_settings
+        general = model_settings["GENERAL"]
+        architecture = model_settings["ARCHITECTURE"]
+        training = model_settings["TRAINING"]
+        misc = model_settings["MISC"]
 
+        # check which model:
+        self.model_type = general['model_type'].lower()
+        
         self.seed = general["seed"]
         self.r_max = architecture["r_max"]
         self.set_batch_size = training["batch_size"]
         self.set_valid_batch_size = training["valid_batch_size"]
         self.checkpoints_dir = general["checkpoints_dir"] + "/initial"
-        self.scaling = architecture["scaling"]
+        
         self.dtype = general["default_dtype"]
         torch.set_default_dtype(dtype_mapping[self.dtype])
         self.device = misc["device"]
@@ -288,6 +290,11 @@ class PrepareInitialDatasetProcedure:
         self.properties = ["energy", "forces"]
         if self.compute_stress:
             self.properties.append("stress")
+            
+        if self.model_type == "mace":
+            self.scaling = architecture["scaling"]
+        else:
+            self.scaling = None
 
     def _handle_settings(self, aimsPAX_settings: dict) -> None:
         """
@@ -337,7 +344,7 @@ class PrepareInitialDatasetProcedure:
         )
         self.idg_progress_dft_update = self.idg_settings["progress_dft_update"]
         if not self.idg_settings["scheduler_initial"]:
-            self.mace_settings["lr_scheduler"] = None
+            self.model_settings["lr_scheduler"] = None
 
         self.initial_sampling = self.idg_settings["initial_sampling"]
         self.foundational_model = self.idg_settings["foundational_model"]
@@ -702,7 +709,7 @@ class PrepareInitialDatasetProcedure:
             self.training_setups_convergence = {}
             for tag in self.ensemble.keys():
                 self.training_setups_convergence[tag] = setup_mace_training(
-                    settings=self.mace_settings,
+                    settings=self.model_settings,
                     model=self.ensemble[tag],
                     tag=tag,
                     restart=self.restart,
@@ -725,7 +732,7 @@ class PrepareInitialDatasetProcedure:
             for j in range(self.max_convergence_epochs):
                 for tag, model in self.ensemble.items():
                     logger = tools.MetricsLogger(
-                        directory=self.mace_settings["GENERAL"]["loss_dir"],
+                        directory=self.model_settings["GENERAL"]["loss_dir"],
                         tag=tag + "_train",
                     )
                     train_epoch(
@@ -766,7 +773,7 @@ class PrepareInitialDatasetProcedure:
                             training_setups=self.training_setups_convergence,
                             ensemble_set=self.ensemble_mace_sets,
                             logger=logger,
-                            log_errors=self.mace_settings["MISC"][
+                            log_errors=self.model_settings["MISC"][
                                 "error_table"
                             ],
                             epoch=epoch,
@@ -792,7 +799,7 @@ class PrepareInitialDatasetProcedure:
                                 torch.save(
                                     model,
                                     Path(
-                                        self.mace_settings["GENERAL"][
+                                        self.model_settings["GENERAL"][
                                             "model_dir"
                                         ]
                                     )
