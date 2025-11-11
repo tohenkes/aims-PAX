@@ -125,16 +125,24 @@ class ALDataManager:
             max_size_reached = self._add_to_training_set(
                 idx, received_point, mace_point
             )
+            if self.config.replay_strategy == "random_batch":
+                mace_sets = self._create_training_batch(
+                    mace_point, self.ensemble_manager.ensemble_mace_sets
+                )
+                self.ensemble_manager.ensemble_mace_sets = mace_sets
+            
             if max_size_reached:
                 return True
+            
 
         self.state_manager.total_points_added += 1
         return False
 
-    def _check_batch_size(self, set_batch_size, tag):
+    def _check_batch_size(self, set_batch_size, tag, validation=False):
+        key = "valid" if validation else "train"
         batch_size = (
-            1
-            if len(self.ensemble_manager.ensemble_mace_sets[tag]["train"])
+            len(self.ensemble_manager.ensemble_mace_sets[tag][key])
+            if len(self.ensemble_manager.ensemble_mace_sets[tag][key])
             < set_batch_size
             else set_batch_size
         )
@@ -155,7 +163,7 @@ class ALDataManager:
                 self.config.set_batch_size, tag
             )
             valid_batch_size = self._check_batch_size(
-                self.config.set_valid_batch_size, tag
+                self.config.set_valid_batch_size, tag, validation=True
             )
             random_sample_train = random.sample(
                 self.ensemble_manager.ensemble_mace_sets[tag]["train"],
@@ -168,8 +176,8 @@ class ALDataManager:
             train_set = random_sample_train + mace_point
             valid_set = random_sample_valid
             (
-                mace_sets[tag]["train_loader"],
-                mace_sets[tag]["valid_loader"],
+                mace_sets[tag]["train_batch"],
+                mace_sets[tag]["valid_batch"],
             ) = create_dataloader(
                 train_set,
                 valid_set,
@@ -321,6 +329,14 @@ class TrainingOrchestrator:
         self.state_manager = state_manager
         self.restart_manager = restart_manager
         self.md_manager = md_manager
+        self.train_loader_key = (
+            "train_batch" if self.config.replay_strategy == "random_batch"
+            else "train_loader"
+        )
+        self.valid_loader_key = (
+            "valid_batch" if self.config.replay_strategy == "random_batch"
+            else "valid_loader"
+        )
 
     def train_single_epoch(
         self, session: TrainingSession, tag: str, model, logger=None
@@ -359,12 +375,15 @@ class TrainingOrchestrator:
         lr_scheduler = None
         if session.is_convergence:
             lr_scheduler = training_setup["lr_scheduler"]
+            # convergence is always done on the whole dataset
+            self.train_loader_key = "train_loader"
+            self.valid_loader_key = "valid_loader"
         elif hasattr(self, "use_scheduler") and self.use_scheduler:
             lr_scheduler = training_setup["lr_scheduler"]
 
         train_epoch(
             model=model,
-            train_loader=session.ensemble_mace_sets[tag]["train_loader"],
+            train_loader=session.ensemble_mace_sets[tag][self.train_loader_key],
             loss_fn=training_setup["loss_fn"],
             optimizer=training_setup["optimizer"],
             lr_scheduler=lr_scheduler,
@@ -420,6 +439,7 @@ class TrainingOrchestrator:
             logger=logger,
             log_errors=self.config.mace_settings["MISC"]["error_table"],
             epoch=self._get_validation_epoch(session, trajectory_idx),
+            data_loader_key=self.valid_loader_key
         )
 
         # Update session state

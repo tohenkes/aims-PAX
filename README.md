@@ -169,7 +169,8 @@ After the initial dataset generation is finished *aims PAX* does not converge th
 | uncertainty\_type           | `str`            | `"max_atomic_sd"` | Method for estimating prediction uncertainty. Default is max force standard deviation (See Eq. 1 in the paper).                                                   |
 | uncert\_not\_crossed\_limit | `int`            | `50000`             | Max consecutive steps without crossing uncertainty threshold after which the a point is treated as if it crossed the threshold. This is done in case the models are overly confident for a long time.          |
 | valid\_ratio                | `float`          | `0.1`             | Fraction of data reserved for validation during active learning.                                                       |
-| valid\_skip                 | `int`            | `1`               | Rate at which validation of model during training is performed.                                               |
+| valid\_skip                 | `int`            | `1`               | Rate at which validation of model during training is performed.
+| replay\_strategy                 | `str`            | `full_dataset`               | Method for replaying data during training. Default (`full_dataset`) means, full dataset is used. With `random_batch` only a single batch with the new point from AL and randomly sampled old points are used.  |
 
 ##### Convergence 
 

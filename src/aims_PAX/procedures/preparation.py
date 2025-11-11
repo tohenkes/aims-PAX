@@ -905,7 +905,10 @@ class ALConfiguration:
         self.extend_existing_final_ds = self.al_settings[
             'extend_existing_final_ds'
         ]
-
+        
+        # Training procedures (TODO: Move training methods from model file here)
+        self.replay_strategy = self.al_settings["replay_strategy"]
+        
         # Paths
         self.dataset_dir = Path(self.misc["dataset_dir"])
         self.log_dir = self.misc["log_dir"]

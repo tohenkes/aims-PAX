@@ -103,6 +103,7 @@ SCHEME = {
             "r_max_lr": None,
             "dispersion_lr_damping": None
         },
+        "replay_strategy": "full_dataset",
     },
     "optional_cluster": {
         "type": "slurm",
@@ -235,7 +236,8 @@ SCHEME_DTYPES = {
         "head_key",
         "charges_key",
         "total_charge_key",
-        "total_spin_key"
+        "total_spin_key",
+        "replay_strategy",
     ],
     "optional_strings": [  # Fields that can be None or string
         "seeds_tags_dict",
