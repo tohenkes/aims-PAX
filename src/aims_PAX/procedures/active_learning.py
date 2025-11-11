@@ -41,7 +41,7 @@ class ALProcedure(PrepareALProcedure):
 
     def __init__(
         self,
-        mace_settings: dict,
+        model_settings: dict,
         aimsPAX_settings: dict,
         path_to_control: str = "./control.in",
         path_to_geometry: str = "./geometry.in",
@@ -50,7 +50,7 @@ class ALProcedure(PrepareALProcedure):
     ):
 
         super().__init__(
-            mace_settings=mace_settings,
+            model_settings=model_settings,
             aimsPAX_settings=aimsPAX_settings,
             path_to_control=path_to_control,
             path_to_geometry=path_to_geometry,
@@ -302,7 +302,7 @@ class ALProcedure(PrepareALProcedure):
             save_models(
                 ensemble=self.ensemble,
                 training_setups=self.ensemble_manager.training_setups,
-                model_dir=self.config.mace_settings["GENERAL"]["model_dir"],
+                model_dir=self.config.model_settings["GENERAL"]["model_dir"],
                 current_epoch=self.state_manager.total_epoch,
             )
 
@@ -343,14 +343,14 @@ class ALProcedureSerial(ALProcedure):
 
     def __init__(
         self,
-        mace_settings: dict,
+        model_settings: dict,
         aimsPAX_settings: dict,
         path_to_control: str = "./control.in",
         path_to_geometry: str = "./geometry.in",
     ):
 
         super().__init__(
-            mace_settings=mace_settings,
+            model_settings=model_settings,
             aimsPAX_settings=aimsPAX_settings,
             path_to_control=path_to_control,
             path_to_geometry=path_to_geometry,
@@ -413,7 +413,7 @@ class ALProcedureParallel(ALProcedure):
 
     def __init__(
         self,
-        mace_settings: dict,
+        model_settings: dict,
         aimsPAX_settings: dict,
         path_to_control: str = "./control.in",
         path_to_geometry: str = "./geometry.in",
@@ -436,7 +436,7 @@ class ALProcedureParallel(ALProcedure):
         self.comm_handler.size = self.comm.Get_size()
         self.comm_handler.comm = self.comm
         super().__init__(
-            mace_settings=mace_settings,
+            model_settings=model_settings,
             aimsPAX_settings=aimsPAX_settings,
             path_to_control=path_to_control,
             path_to_geometry=path_to_geometry,
@@ -1015,7 +1015,7 @@ class ALProcedurePARSL(ALProcedure):
 
     def __init__(
         self,
-        mace_settings: dict,
+        model_settings: dict,
         aimsPAX_settings: dict,
         path_to_control: str = "./control.in",
         path_to_geometry: str = "./geometry.in",
@@ -1027,7 +1027,7 @@ class ALProcedurePARSL(ALProcedure):
                 " to use this feature."
             )
         super().__init__(
-            mace_settings=mace_settings,
+            model_settings=model_settings,
             aimsPAX_settings=aimsPAX_settings,
             path_to_control=path_to_control,
             path_to_geometry=path_to_geometry,

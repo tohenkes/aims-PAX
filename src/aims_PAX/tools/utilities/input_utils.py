@@ -1,24 +1,24 @@
 import logging
 import os
 from typing import Union
-from .input_checks import check_aimsPAX_settings, check_MACE_settings
+from .input_checks import check_aimsPAX_settings, check_model_settings
 from ase.io import read
 from yaml import safe_load
 import ase
 
 
 def read_input_files(
-    path_to_mace_settings: str = "./mace.yaml",
+    path_to_model_settings: str = "./model.yaml",
     path_to_aimsPAX_settings: str = "./aimsPAX.yaml",
     procedure: str = "full",
 ) -> tuple:
     """
-    Reads the input files for MACE and aimsPAX settings.
+    Reads the input files for model and aimsPAX settings.
     Checks the settings and returns the checked settings
     and paths to control and geometry files.
 
     Args:
-        path_to_mace_settings (str, optional): Path to the MACE settings file.
+        path_to_model_settings (str, optional): Path to the model settings file.
                                         Defaults to "./mace.yaml".
         path_to_aimsPAX_settings (str, optional): Path to the AIMS PAX
                                 settings file. Defaults to "./aimsPAX.yaml".
@@ -26,15 +26,15 @@ def read_input_files(
             checked. Can be "initial-ds", "al" or "full". Defaults to "full".
 
     Returns:
-        tuple: A tuple containing the checked MACE settings, checked AIMS PAX
+        tuple: A tuple containing the checked model settings, checked AIMS PAX
             settings, path to control file, and path to geometry file.
 
     Returns:
-        tuple: A tuple containing the checked MACE settings, checked AIMS PAX
+        tuple: A tuple containing the checked model settings, checked AIMS PAX
         settings, path to control file, and path to geometry file.
     """
-    with open(path_to_mace_settings, "r") as file:
-        mace_settings = safe_load(file)
+    with open(path_to_model_settings, "r") as file:
+        model_settings = safe_load(file)
     with open(path_to_aimsPAX_settings, "r") as file:
         aimsPAX_settings = safe_load(file)
 
@@ -42,7 +42,7 @@ def read_input_files(
         aimsPAX_settings, procedure=procedure
     )
 
-    mace_settings = check_MACE_settings(mace_settings)
+    model_settings = check_model_settings(model_settings)
 
     path_to_control = aimsPAX_settings["MISC"].get(
         "path_to_control", "./control.in"
@@ -52,7 +52,7 @@ def read_input_files(
     )
 
     return (
-        mace_settings,
+        model_settings,
         aimsPAX_settings,
         path_to_control,
         path_to_geometry,

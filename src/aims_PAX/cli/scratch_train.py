@@ -4,12 +4,12 @@ from yaml import safe_load
 
 def main():
     with open("./mace.yaml", "r") as file:
-        mace_settings = safe_load(file)
+        model_settings = safe_load(file)
     with open("./active_learning_settings.yaml", "r") as file:
         al_settings = safe_load(file)
 
     standard_ensemble = StandardMACEEnsembleProcedure(
-        mace_settings=mace_settings, active_learning_settings=al_settings
+        model_settings=model_settings, active_learning_settings=al_settings
     )
 
     standard_ensemble.train()

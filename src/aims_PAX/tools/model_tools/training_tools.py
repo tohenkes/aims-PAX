@@ -20,7 +20,7 @@ import os
 def setup_model_training(
     settings: dict,
     model,
-    model_type: str,
+    model_choice: str,
     tag: str,
     restart: bool = False,
     convergence: bool = False,
@@ -40,7 +40,7 @@ def setup_model_training(
 
     training_setup["loss_fn"] = loss_fn
 
-    if model_type.lower() == "mace":
+    if model_choice.lower() == "mace":
         optimizer = create_mace_optimizer(
             model=model,
             training_settings=training_settings,

@@ -63,7 +63,7 @@ Take a look at the example and its explanation (`example/explanation.md`) for mo
 
 Both procedures, initial dataset acquisition and active learning, are classes that can be used independently from each other. To only create an initial dataset you can run ```aims-PAX-initial-ds ```. Equivalently, to only run the active learning procedure (given that the previous step has been done or all the necessary files are present), just run ```aims-PAX-al```.
 
-**Note:** you can also change the names of the settings file and run `aims-PAX --mace_settings path/to/my_mace.yaml --aimsPAX-settings path/to/my_aimspax.yaml` for example.
+**Note:** you can also change the names of the settings file and run `aims-PAX --model_settings path/to/my_mace.yaml --aimsPAX-settings path/to/my_aimspax.yaml` for example.
 
 ### Common Pitfalls
 

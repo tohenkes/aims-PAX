@@ -3,7 +3,7 @@ import numpy as np
 from .utilities import normalize_md_settings
 
 SCHEME = {
-    "required_global": ["MD", "CLUSTER"],
+    "required_global": ["MD", "CLUSTER", 'TRAINING'],
     "at_least_one_required_global": [
         "ACTIVE_LEARNING",
         "INITIAL_DATASET_GENERATION",
@@ -134,6 +134,9 @@ SCHEME = {
         "pchain": 3,
         "tloop": 1,
         "ploop": 1,
+    },
+    "optional_training": {
+        
     },
     "optional_misc": {
         "path_to_control": "./control.in",
@@ -268,43 +271,7 @@ SCHEME_DTYPES = {
     ]
 }
 
-SCHEME_MACE = {
-    "required_global": [
-        "GENERAL",
-    ],
-    "optional_global": ["ARCHITECTURE", "TRAINING", "MISC"],
-    "required_general": [
-        "name_exp",
-    ],
-    "optional_general": {
-        "checkpoints_dir": "./checkpoints",
-        "loss_dir": "./losses",
-        "model_dir": "./model",
-        "default_dtype": "float32",
-        "compute_stress": False,
-        "seed": 42,
-    },
-    "required_architecture": [],
-    "optional_architecture": {
-        "model": "ScaleShiftMACE",
-        "scaling": "rms_forces_scaling",
-        "r_max": 5.0,
-        "num_channels": 128,
-        "max_L": 1,
-        "max_ell": 3,
-        "radial_type": "bessel",
-        "num_radial_basis": 8,
-        "num_cutoff_basis": 5,
-        "interaction": "RealAgnosticResidualInteractionBlock",
-        "num_interactions": 2,
-        "correlation": 3,
-        "radial_MLP": [64, 64, 64],
-        "gate": "silu",
-        "MLP_irreps": "16x0e",
-        "interaction_first": "RealAgnosticResidualInteractionBlock",
-        "compute_avg_num_neighbors": True,
-        "atomic_energies": None,
-    },
+SCHEME_MODEL_TRAINING = {
     "required_training": [],
     "optional_training": {
         "batch_size": 5,
@@ -328,6 +295,9 @@ SCHEME_MACE = {
         "config_type_weights": {"Default": 1.0},
         "clip_grad": 10.0,
     },
+}
+
+SCHEME_MODEL_MISC = {
     "optional_misc": {
         "device": "cpu",
         "keep_checkpoints": False,
@@ -337,7 +307,29 @@ SCHEME_MACE = {
     },
 }
 
-SCHEME_MACE_DTYPES = {
+SCHEME_MODEL_GENERAL = {
+    "required_general": [
+    "name_exp",
+    "model_choice"
+    ],
+    "optional_general": {
+        "checkpoints_dir": "./checkpoints",
+        "loss_dir": "./losses",
+        "model_dir": "./model",
+        "default_dtype": "float32",
+        "compute_stress": False,
+        "seed": 42,
+    },
+}
+
+SCHEME_MODEL_GLOBAL = {
+    "required_global": [
+        "GENERAL",
+    ],
+    "optional_global": ["ARCHITECTURE", "TRAINING", "MISC"],
+}
+
+SCHEME_MODEL_DTYPES = {
     "strings": [
         "name_exp",
         "checkpoints_dir",
@@ -357,6 +349,15 @@ SCHEME_MACE_DTYPES = {
         "error_table",
         "log_level",
         "MLP_irreps",
+        #SO3LR
+        "message_normalization",
+        "radial_basis_fn",
+        "qk_non_linearity",
+        "cutoff_fn",
+        "activation_fn",
+        "energy_activation_fn",
+        "input_convention",
+        "neighborlist_format",
     ],
     "floats": [
         "r_max",
@@ -370,6 +371,9 @@ SCHEME_MACE_DTYPES = {
         "virials_weight",
         "stress_weight",
         "clip_grad",
+        #SO3LR
+        "electrostatic_energy_scale",
+        "dispersion_energy_scale",
     ],
     "ints": [
         "seed",
@@ -383,6 +387,13 @@ SCHEME_MACE_DTYPES = {
         "batch_size",
         "valid_batch_size",
         "scheduler_patience",
+        #SO3LR
+        "features_dim",
+        "num_att_heads",
+        "num_layers",
+        "final_mlp_layers",
+        "energy_regression_dim",
+        "cutoff_p",
     ],
     "bools": [
         "compute_stress",
@@ -392,15 +403,113 @@ SCHEME_MACE_DTYPES = {
         "ema",
         "keep_checkpoints",
         "restart_latest",
+        #SO3LR
+        "initialize_ev_to_zeros",
+        "trainable_rbf",
+        "energy_learn_atomic_type_shifts",
+        "energy_learn_atomic_type_scales",
+        "layer_normalization_1",
+        "layer_normalization_2",
+        "residual_mlp_1",
+        "residual_mlp_2",
+        "use_charge_embed",
+        "use_spin_embed",
+        "interaction_bias",
+        "layers_behave_like_identity_fn_at_init",
+        "output_is_zero_at_init",
+        "zbl_repulsion_bool",
+        "electrostatic_energy_bool",
+        "dispersion_energy_bool",
+        "dispersion_damping_bool",
     ],
     "lists": [
         "radial_MLP",
+        #SO3LR
+        "degrees",
     ],
     "dicts": ["config_type_weights"],
     "optional_lists": ["atomic_energies"],
     "optional_strings": [],
+    "optional_floats": [
+        "r_max_lr",
+    ]
 }
 
+SCHEME_MACE = {
+    "required_architecture": [],
+    "optional_architecture": {
+        "model": "ScaleShiftMACE",
+        "scaling": "rms_forces_scaling",
+        "r_max": 5.0,
+        "num_channels": 128,
+        "max_L": 1,
+        "max_ell": 3,
+        "radial_type": "bessel",
+        "num_radial_basis": 8,
+        "num_cutoff_basis": 5,
+        "interaction": "RealAgnosticResidualInteractionBlock",
+        "num_interactions": 2,
+        "correlation": 3,
+        "radial_MLP": [64, 64, 64],
+        "gate": "silu",
+        "MLP_irreps": "16x0e",
+        "interaction_first": "RealAgnosticResidualInteractionBlock",
+        "compute_avg_num_neighbors": True,
+        "atomic_energies": None,
+    },
+}
+SCHEME_MACE.update(SCHEME_MODEL_TRAINING)
+SCHEME_MACE.update(SCHEME_MODEL_MISC)
+SCHEME_MACE.update(SCHEME_MODEL_GENERAL)
+SCHEME_MACE.update(SCHEME_MODEL_GLOBAL)
+
+SCHEME_SO3LR = {
+    "required_architecture": [],
+    "optional_architecture": {
+        "model": "SO3LR",
+        "r_max": 4.5,
+        "features_dim": 128,
+        "num_radial_basis": 32,
+        "degrees": [1, 2, 3, 4],
+        "num_att_heads": 4,
+        "num_layers": 3,
+        "final_mlp_layers": 2,
+        "energy_regression_dim": 128,
+        "message_normalization": 'avg_num_neighbors',
+        "initialize_ev_to_zeros": False,
+        "radial_basis_fn": "bernstein",
+        "trainable_rbf": False,
+        "energy_learn_atomic_type_shifts": True,
+        "energy_learn_atomic_type_scales": True,
+        "layer_normalization_1": True,
+        "layer_normalization_2": True,
+        "residual_mlp_1": True,
+        "residual_mlp_2": False,
+        "use_charge_embed": True,
+        "use_spin_embed": True,
+        "interaction_bias": True,
+        "qk_non_linearity": "identity",
+        "cutoff_fn": "phys",
+        "cutoff_p": 5,
+        "activation_fn": "silu",
+        "energy_activation_fn": "identity",
+        "layers_behave_like_identity_fn_at_init": False,
+        "output_is_zero_at_init": False,
+        "input_convention": "positions",
+        "zbl_repulsion_bool": True,
+        "electrostatic_energy_bool": True,
+        "electrostatic_energy_scale": 4.0,
+        "dispersion_energy_bool": True,
+        "dispersion_energy_scale": 1.2,
+        "dispersion_damping_bool": True,
+        "r_max_lr": None,
+        "neighborlist_format": "sparse"
+    },
+}
+SCHEME_SO3LR.update(SCHEME_MODEL_TRAINING)
+SCHEME_SO3LR.update(SCHEME_MODEL_MISC)
+SCHEME_SO3LR.update(SCHEME_MODEL_GENERAL)
+SCHEME_SO3LR.update(SCHEME_MODEL_GLOBAL)
 
 def check_dtypes(
     settings: dict,
@@ -447,6 +556,10 @@ def check_dtypes(
             assert settings[k] is None or isinstance(
                 settings[k], list
             ), f"The value of `{k}` must be a list or None!"
+        elif k in scheme_dtype["optional_floats"]:
+            assert settings[k] is None or isinstance(
+                settings[k], float
+            ), f"The value of `{k}` must be a float or None!"
     return settings
 
 
@@ -755,7 +868,7 @@ def check_aimsPAX_settings(settings: dict, procedure: str = "full") -> dict:
     return settings
 
 
-def check_MACE_settings(settings: dict) -> dict:
+def check_model_settings(settings: dict) -> dict:
     """
     Validates and fills default values for MACE training settings
     based on SCHEME_MACE and SCHEME_MACE_DTYPES.
@@ -766,17 +879,36 @@ def check_MACE_settings(settings: dict) -> dict:
     Returns:
         dict: The validated and updated settings.
     """
+    try:
+        general_settings = settings["GENERAL"]
+        model_choice = general_settings.get('model_choice')
+    except KeyError:
+        raise KeyError("The `model_choice` must be specified in the `GENERAL` settings!")
+    
+    assert (
+        model_choice is not None, "The `model_choice` must be specified in the `GENERAL` settings!"
+    )
+    assert (
+        model_choice.lower() in ['mace', 'so3lr'],
+        f"The `model_choice` must be either 'mace' or 'so3lr', but got '{model_choice}'!"
+    )
+    
+    if model_choice.lower() == 'mace':
+        model_scheme_used = SCHEME_MACE
+    if model_choice.lower() == 'so3lr':
+        model_scheme_used = SCHEME_SO3LR
+        
     # Check top-level keys
     for k in settings.keys():
-        required_global = k in SCHEME_MACE["required_global"]
-        optional_global = k in SCHEME_MACE["optional_global"]
+        required_global = k in model_scheme_used["required_global"]
+        optional_global = k in model_scheme_used["optional_global"]
         if not (required_global or optional_global):
             raise ValueError(
                 f"The keyword `{k}` is not valid in the global MACE input structure!"
             )
 
     # Check all required global sections are present
-    for k in SCHEME_MACE["required_global"]:
+    for k in model_scheme_used["required_global"]:
         if k not in settings:
             raise ValueError(
                 f"The section `{k}` is required in the MACE settings!"
@@ -784,76 +916,76 @@ def check_MACE_settings(settings: dict) -> dict:
 
     # GENERAL block
     general_settings = settings.get("GENERAL", {})
-    for k in SCHEME_MACE["required_general"]:
+    for k in model_scheme_used["required_general"]:
         if k not in general_settings:
             raise ValueError(
                 f"The keyword `{k}` is required in the GENERAL settings!"
             )
-    for k in SCHEME_MACE["optional_general"]:
+    for k in model_scheme_used["optional_general"]:
         if k not in general_settings:
-            general_settings[k] = SCHEME_MACE["optional_general"][k]
+            general_settings[k] = model_scheme_used["optional_general"][k]
     general_settings = check_dtypes(
         settings=general_settings,
         scheme_key="required_general",
-        scheme=SCHEME_MACE,
-        scheme_dtype=SCHEME_MACE_DTYPES,
+        scheme=model_scheme_used,
+        scheme_dtype=SCHEME_MODEL_DTYPES,
     )
     general_settings = check_dtypes(
         settings=general_settings,
         scheme_key="optional_general",
-        scheme=SCHEME_MACE,
-        scheme_dtype=SCHEME_MACE_DTYPES,
+        scheme=model_scheme_used,
+        scheme_dtype=SCHEME_MODEL_DTYPES,
     )
     settings["GENERAL"] = general_settings
 
     # ARCHITECTURE block
     arch_settings = settings.get("ARCHITECTURE", {})
-    for k in SCHEME_MACE["optional_architecture"]:
+    for k in model_scheme_used["optional_architecture"]:
         if k not in arch_settings:
-            arch_settings[k] = SCHEME_MACE["optional_architecture"][k]
+            arch_settings[k] = model_scheme_used["optional_architecture"][k]
     arch_settings = check_dtypes(
         settings=arch_settings,
         scheme_key="required_architecture",
-        scheme=SCHEME_MACE,
-        scheme_dtype=SCHEME_MACE_DTYPES,
+        scheme=model_scheme_used,
+        scheme_dtype=SCHEME_MODEL_DTYPES,
     )
     arch_settings = check_dtypes(
         settings=arch_settings,
         scheme_key="optional_architecture",
-        scheme=SCHEME_MACE,
-        scheme_dtype=SCHEME_MACE_DTYPES,
+        scheme=model_scheme_used,
+        scheme_dtype=SCHEME_MODEL_DTYPES,
     )
     settings["ARCHITECTURE"] = arch_settings
 
     # TRAINING block
     training_settings = settings.get("TRAINING", {})
-    for k in SCHEME_MACE["optional_training"]:
+    for k in model_scheme_used["optional_training"]:
         if k not in training_settings:
-            training_settings[k] = SCHEME_MACE["optional_training"][k]
+            training_settings[k] = model_scheme_used["optional_training"][k]
     training_settings = check_dtypes(
         settings=training_settings,
         scheme_key="required_training",
-        scheme=SCHEME_MACE,
-        scheme_dtype=SCHEME_MACE_DTYPES,
+        scheme=model_scheme_used,
+        scheme_dtype=SCHEME_MODEL_DTYPES,
     )
     training_settings = check_dtypes(
         settings=training_settings,
         scheme_key="optional_training",
-        scheme=SCHEME_MACE,
-        scheme_dtype=SCHEME_MACE_DTYPES,
+        scheme=model_scheme_used,
+        scheme_dtype=SCHEME_MODEL_DTYPES,
     )
     settings["TRAINING"] = training_settings
 
     # MISC block
     misc_settings = settings.get("MISC", {})
-    for k in SCHEME_MACE["optional_misc"]:
+    for k in model_scheme_used["optional_misc"]:
         if k not in misc_settings:
-            misc_settings[k] = SCHEME_MACE["optional_misc"][k]
+            misc_settings[k] = model_scheme_used["optional_misc"][k]
     misc_settings = check_dtypes(
         settings=misc_settings,
         scheme_key="optional_misc",
-        scheme=SCHEME_MACE,
-        scheme_dtype=SCHEME_MACE_DTYPES,
+        scheme=model_scheme_used,
+        scheme_dtype=SCHEME_MODEL_DTYPES,
     )
     settings["MISC"] = misc_settings
 

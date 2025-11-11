@@ -20,13 +20,13 @@ except (ImportError, RuntimeError):
 def main():
 
     parser = argparse.ArgumentParser(
-        description="Create initial dataset for AIMLFF."
+        description="Create initial dataset for aims-PAX."
     )
     parser.add_argument(
-        "--mace-settings",
+        "--model-settings",
         type=str,
-        default="./mace.yaml",
-        help="Path to mace settings file",
+        default="./model.yaml",
+        help="Path to model settings file",
     )
     parser.add_argument(
         "--aimsPAX-settings",
@@ -36,9 +36,9 @@ def main():
     )
     args = parser.parse_args()
 
-    (mace_settings, aimsPAX_settings, path_to_control, path_to_geometry) = (
+    (model_settings, aimsPAX_settings, path_to_control, path_to_geometry) = (
         read_input_files(
-            path_to_mace_settings=args.mace_settings,
+            path_to_model_settings=args.model_settings,
             path_to_aimsPAX_settings=args.aimsPAX_settings,
             procedure="full",
         )
@@ -51,7 +51,7 @@ def main():
         == "aimd"
     ):
         initial_ds = InitialDatasetAIMD(
-            mace_settings=mace_settings,
+            model_settings=model_settings,
             al_settings=aimsPAX_settings,
             path_to_control=path_to_control,
             path_to_geometry=path_to_geometry,
@@ -64,7 +64,7 @@ def main():
     ):
         if aimsPAX_settings.get("CLUSTER", False):
             initial_ds = InitialDatasetPARSL(
-                mace_settings=mace_settings,
+                model_settings=model_settings,
                 aimsPAX_settings=aimsPAX_settings,
                 path_to_control=path_to_control,
                 path_to_geometry=path_to_geometry,
@@ -72,7 +72,7 @@ def main():
             )
         else:
             initial_ds = InitialDatasetFoundational(
-                mace_settings=mace_settings,
+                model_settings=model_settings,
                 aimsPAX_settings=aimsPAX_settings,
                 path_to_control=path_to_control,
                 path_to_geometry=path_to_geometry,
@@ -86,21 +86,21 @@ def main():
 
     if aimsPAX_settings["ACTIVE_LEARNING"].get("parallel", False):
         al = ALProcedureParallel(
-            mace_settings=mace_settings,
+            model_settings=model_settings,
             al_settings=aimsPAX_settings,
             path_to_control=path_to_control,
             path_to_geometry=path_to_geometry,
         )
     elif aimsPAX_settings.get("CLUSTER", False):
         al = ALProcedurePARSL(
-            mace_settings=mace_settings,
+            model_settings=model_settings,
             aimsPAX_settings=aimsPAX_settings,
             path_to_control=path_to_control,
             path_to_geometry=path_to_geometry,
         )
     else:
         al = ALProcedureSerial(
-            mace_settings=mace_settings,
+            model_settings=model_settings,
             aimsPAX_settings=aimsPAX_settings,
             path_to_control=path_to_control,
             path_to_geometry=path_to_geometry,

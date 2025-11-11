@@ -22,7 +22,7 @@ from aims_PAX.tools.utilities.parsl_utils import (
     handle_parsl_logger,
     prepare_parsl,
 )
-from aims_PAX.tools.train_epoch_mace import (
+from aims_PAX.tools.model_tools.train_epoch_mace import (
     train_epoch,
     validate_epoch_ensemble,
 )
@@ -151,7 +151,7 @@ class InitialDatasetProcedure(PrepareInitialDatasetProcedure):
                 for tag, model in self.ensemble.items():
 
                     logger = tools.MetricsLogger(
-                        directory=self.mace_settings["GENERAL"]["loss_dir"],
+                        directory=self.model_settings["GENERAL"]["loss_dir"],
                         tag=tag + "_train",
                     )
                     train_epoch(
@@ -187,7 +187,7 @@ class InitialDatasetProcedure(PrepareInitialDatasetProcedure):
                         training_setups=self.training_setups,
                         ensemble_set=self.ensemble_mace_sets,
                         logger=logger,
-                        log_errors=self.mace_settings["MISC"]["error_table"],
+                        log_errors=self.model_settings["MISC"]["error_table"],
                         epoch=self.epoch,
                     )
                     self.current_valid = metrics["mae_f"]
@@ -344,7 +344,7 @@ class InitialDatasetProcedure(PrepareInitialDatasetProcedure):
             save_ensemble(
                 ensemble=self.ensemble,
                 training_setups=self.training_setups,
-                mace_settings=self.mace_settings,
+                model_settings=self.model_settings,
             )
 
             if self.create_restart:
@@ -590,7 +590,7 @@ class InitialDatasetFoundationalParallel(InitialDatasetFoundational):
 
     def __init__(
         self,
-        mace_settings: dict,
+        model_settings: dict,
         aimsPAX_settings: dict,
         path_to_control: str = "./control.in",
         path_to_geometry: str = "./geometry.in",
@@ -598,7 +598,7 @@ class InitialDatasetFoundationalParallel(InitialDatasetFoundational):
 
         # this is necessary because of the way the MPI communicator is split
         super().__init__(
-            mace_settings=mace_settings,
+            model_settings=model_settings,
             aimsPAX_settings=aimsPAX_settings,
             path_to_control=path_to_control,
             path_to_geometry=path_to_geometry,
@@ -914,7 +914,7 @@ class InitialDatasetPARSL(InitialDatasetFoundational):
 
     def __init__(
         self,
-        mace_settings: dict,
+        model_settings: dict,
         aimsPAX_settings: dict,
         path_to_control: str = "./control.in",
         path_to_geometry: str = "./geometry.in",
@@ -922,7 +922,7 @@ class InitialDatasetPARSL(InitialDatasetFoundational):
     ):
 
         super().__init__(
-            mace_settings=mace_settings,
+            model_settings=model_settings,
             aimsPAX_settings=aimsPAX_settings,
             path_to_control=path_to_control,
             path_to_geometry=path_to_geometry,

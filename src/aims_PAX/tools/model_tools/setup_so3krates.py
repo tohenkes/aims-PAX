@@ -24,6 +24,7 @@ def create_base_so3krates_settings(
 
     model_config = dict(
         r_max=architecture_settings["r_max"],
+        features_dim=architecture_settings["features_dim"],
         num_radial_basis=architecture_settings["num_radial_basis"],
         degrees=architecture_settings["degrees"],
         num_att_heads=architecture_settings["num_att_heads"],

@@ -41,7 +41,9 @@ from aims_PAX.tools.model_tools.train_epoch_mace import (
     train_epoch,
     validate_epoch_ensemble,
 )
-from aims_PAX.tools.model_tools.setup_MACE_training import setup_mace_training
+from aims_PAX.tools.model_tools.training_tools import (
+    setup_model_training
+)
 from aims_PAX.tools.utilities.mpi_utils import CommHandler
 import ase
 import logging
@@ -78,7 +80,7 @@ class PrepareInitialDatasetProcedure:
     ) -> None:
         """
         Args:
-            mace_settings (dict): Settings for the MACE model and its training.
+            model_settings (dict): Settings for the MACE model and its training.
             al_settings (dict): Settings for the active learning procedure.
             path_to_aims_lib (str): Path to the compiled AIMS library.
             atomic_energies_dict (dict, optional): Dictionary containing the
@@ -180,7 +182,7 @@ class PrepareInitialDatasetProcedure:
         )
         self.seeds_tags_dict = create_seeds_tags_dict(
             seeds=self.ensemble_seeds,
-            mace_settings=self.model_settings,
+            model_settings=self.model_settings,
             misc_settings=self.misc,
         )
 
@@ -194,13 +196,13 @@ class PrepareInitialDatasetProcedure:
         if self.rank == 0:
             self.ensemble = setup_ensemble_dicts(
                 seeds_tags_dict=self.seeds_tags_dict,
-                mace_settings=self.model_settings,
+                model_settings=self.model_settings,
                 z_table=self.z_table,
                 ensemble_atomic_energies_dict=self.ensemble_atomic_energies_dict,
             )
             self.training_setups = ensemble_training_setups(
                 ensemble=self.ensemble,
-                mace_settings=self.model_settings,
+                model_settings=self.model_settings,
                 restart=self.restart,
                 checkpoints_dir=self.checkpoints_dir,
                 mol_idxs=self.mol_idxs,
@@ -274,7 +276,7 @@ class PrepareInitialDatasetProcedure:
         misc = model_settings["MISC"]
 
         # check which model:
-        self.model_type = general['model_type'].lower()
+        self.model_choice = general["model_choice"].lower()
         
         self.seed = general["seed"]
         self.r_max = architecture["r_max"]
@@ -290,8 +292,8 @@ class PrepareInitialDatasetProcedure:
         self.properties = ["energy", "forces"]
         if self.compute_stress:
             self.properties.append("stress")
-            
-        if self.model_type == "mace":
+
+        if self.model_choice == "mace":
             self.scaling = architecture["scaling"]
         else:
             self.scaling = None
@@ -708,9 +710,10 @@ class PrepareInitialDatasetProcedure:
 
             self.training_setups_convergence = {}
             for tag in self.ensemble.keys():
-                self.training_setups_convergence[tag] = setup_mace_training(
+                self.training_setups_convergence[tag] = setup_model_training(
                     settings=self.model_settings,
                     model=self.ensemble[tag],
+                    model_choice=self.model_choice,
                     tag=tag,
                     restart=self.restart,
                     convergence=True,
@@ -842,12 +845,12 @@ class ALConfiguration:
 
     def __init__(
         self,
-        mace_settings: dict,
+        model_settings: dict,
         aimsPAX_settings: dict,
         path_to_control: str = "./control.in",
         path_to_geometry: str = "./geometry.in",
     ):
-        self.mace_settings = mace_settings
+        self.model_settings = model_settings
         self.path_to_control = path_to_control
         self.path_to_geometry = path_to_geometry
         self.aimsPAX_settings = aimsPAX_settings
@@ -856,28 +859,29 @@ class ALConfiguration:
         self.cluster_settings = aimsPAX_settings.get("CLUSTER", None)
         self.misc = aimsPAX_settings.get("MISC", {})
 
-        self._setup_mace_configuration()
+        self._setup_model_configuration()
         self._setup_aimsPAX_configuration()
 
-    def _setup_mace_configuration(self):
-        """Setup MACE-specific configuration."""
-        general = self.mace_settings["GENERAL"]
+    def _setup_model_configuration(self):
+        """Setup model-specific configuration."""
+        general = self.model_settings["GENERAL"]
         self.seed = general["seed"]
         self.checkpoints_dir = f"{general['checkpoints_dir']}/al"
         self.model_dir = general["model_dir"]
         self.dtype = general["default_dtype"]
         self.compute_stress = general.get("compute_stress", False)
-
-        architecture = self.mace_settings["ARCHITECTURE"]
+        self.model_choice = general["model_choice"].lower()
+        
+        architecture = self.model_settings["ARCHITECTURE"]
         self.r_max = architecture["r_max"]
         self.atomic_energies_dict = architecture.get("atomic_energies", None)
 
-        training = self.mace_settings["TRAINING"]
+        training = self.model_settings["TRAINING"]
         self.set_batch_size = training["batch_size"]
         self.set_valid_batch_size = training["valid_batch_size"]
         self.scaling = architecture["scaling"]
 
-        self.device = self.mace_settings["MISC"]["device"]
+        self.device = self.model_settings["MISC"]["device"]
         torch.set_default_dtype(dtype_mapping[self.dtype])
 
         self.properties = ["energy", "forces"]
@@ -985,7 +989,7 @@ class ALConfiguration:
             self.switched_on_intermol = False
 
             # Check if using intermolecular loss
-            loss_type = self.mace_settings["TRAINING"]["loss"].lower()
+            loss_type = self.model_settings["TRAINING"]["loss"].lower()
             self.using_intermol_loss = loss_type == "intermol"
 
 
@@ -1242,7 +1246,7 @@ class ALEnsemble:
 
         self.training_setups = ensemble_training_setups(
             ensemble=self.ensemble,
-            mace_settings=self.config.mace_settings,
+            model_settings=self.config.model_settings,
             restart=self.config.restart,
             checkpoints_dir=self.config.checkpoints_dir,
             mol_idxs=self.config.mol_idxs,
@@ -1910,7 +1914,7 @@ class PrepareALProcedure:
 
     def __init__(
         self,
-        mace_settings: dict,
+        model_settings: dict,
         aimsPAX_settings: dict,
         path_to_control: str = "./control.in",
         path_to_geometry: str = "./geometry.in",
@@ -1923,7 +1927,7 @@ class PrepareALProcedure:
 
         # Initialize configuration
         self.config = ALConfiguration(
-            mace_settings,
+            model_settings,
             aimsPAX_settings,
             path_to_control=path_to_control,
             path_to_geometry=path_to_geometry,
@@ -1943,7 +1947,7 @@ class PrepareALProcedure:
                 "ACTIVE_LEARNING", aimsPAX_settings["ACTIVE_LEARNING"]
             )
             logging.info("Using following settings for MACE:")
-            log_yaml_block("MACE", mace_settings)
+            log_yaml_block("MACE", model_settings)
         # Initialize all managers
         self.state_manager = ALStateManager(self.config, self.comm_handler)
         self.ensemble_manager = ALEnsemble(
@@ -2014,7 +2018,7 @@ class PrepareALProcedure:
 
         logger_level = (
             logging.DEBUG
-            if self.config.mace_settings["MISC"]["log_level"].lower()
+            if self.config.model_settings["MISC"]["log_level"].lower()
             == "debug"
             else logging.INFO
         )

@@ -36,9 +36,9 @@ from aims_PAX.tools.utilities.mpi_utils import (
     send_points_non_blocking,
     CommHandler,
 )
-from aims_PAX.tools.model_tools.setup_MACE_training import (
-    setup_mace_training,
-    reset_optimizer,
+from aims_PAX.tools.model_tools.training_tools import (
+    setup_model_training,
+    reset_mace_optimizer,
 )
 from aims_PAX.tools.model_tools.train_epoch_mace import (
     train_epoch,
@@ -360,15 +360,15 @@ class TrainingOrchestrator:
             and self.state_manager.ensemble_reset_opt.get(tag, False)
         ):
             logging.info(f"Resetting optimizer for model {tag}.")
-            session.training_setups[tag] = reset_optimizer(
-                model, training_setup, self.config.mace_settings["TRAINING"]
+            session.training_setups[tag] = reset_mace_optimizer(
+                model, training_setup, self.config.model_settings["TRAINING"]
             )
             self.state_manager.ensemble_reset_opt[tag] = False
             training_setup = session.training_setups[tag]
 
         if logger is None:
             logger = tools.MetricsLogger(
-                directory=self.config.mace_settings["GENERAL"]["loss_dir"],
+                directory=self.config.model_settings["GENERAL"]["loss_dir"],
                 tag=tag + "_train",
             )
 
@@ -437,7 +437,7 @@ class TrainingOrchestrator:
             training_setups=session.training_setups,
             ensemble_set=session.ensemble_mace_sets,
             logger=logger,
-            log_errors=self.config.mace_settings["MISC"]["error_table"],
+            log_errors=self.config.model_settings["MISC"]["error_table"],
             epoch=self._get_validation_epoch(session, trajectory_idx),
             data_loader_key=self.valid_loader_key
         )
@@ -807,9 +807,10 @@ class ALTrainingManager:
         # Reset training configurations
         self.training_setups_convergence = {}
         for tag in self.ensemble_manager.ensemble.keys():
-            self.training_setups_convergence[tag] = setup_mace_training(
-                settings=self.config.mace_settings,
+            self.training_setups_convergence[tag] = setup_model_training(
+                settings=self.config.model_settings,
                 model=self.ensemble_manager.ensemble[tag],
+                model_choice=self.config.model_choice,
                 tag=tag,
                 restart=self.config.restart,
                 convergence=True,
@@ -914,7 +915,7 @@ class ALTrainingManager:
         save_models(
             ensemble=self.ensemble_manager.ensemble,
             training_setups=session.training_setups,
-            model_dir=self.config.mace_settings["GENERAL"]["model_dir"],
+            model_dir=self.config.model_settings["GENERAL"]["model_dir"],
             current_epoch=session.current_epoch,
         )
         # save model(s) and datasets in final results directory
@@ -1920,7 +1921,7 @@ class ALAnalysisManager:
                         models=list(self.ensemble_manager.ensemble.values()),
                         atoms_list=[point],
                         device=self.config.device,
-                        dtype=self.config.mace_settings["GENERAL"][
+                        dtype=self.config.model_settings["GENERAL"][
                             "default_dtype"
                         ],
                     )

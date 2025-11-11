@@ -207,7 +207,7 @@ def select_best_member(
 
 def ensemble_training_setups(
     ensemble: dict,
-    mace_settings: dict,
+    model_settings: dict,
     checkpoints_dir: str = None,
     restart: bool = False,
     mol_idxs: Optional[np.ndarray] = None,
@@ -217,7 +217,7 @@ def ensemble_training_setups(
 
     Args:
         ensemble (dict): Dictionary of MACE models in the ensemble.
-        mace_settings (dict): Model settings dictionary containing
+        model_settings (dict): Model settings dictionary containing
                               the experiment name and all model and training
                               settings.
         checkpoints_dir (str, optional): Path to the folder where
@@ -234,9 +234,9 @@ def ensemble_training_setups(
     training_setups = {}
     for tag, model in ensemble.items():
         training_setups[tag] = setup_model_training(
-            settings=mace_settings,
+            settings=model_settings,
             model=model,
-            model_type="mace",
+            model_choice="mace",
             tag=tag,
             restart=restart,
             checkpoints_dir=checkpoints_dir,
@@ -247,7 +247,7 @@ def ensemble_training_setups(
 
 def create_seeds_tags_dict(
     seeds: np.array,
-    mace_settings: dict,
+    model_settings: dict,
     misc_settings: dict,
     save_seeds_tags_dict: str = "seeds_tags_dict.npz",
 ) -> dict:
@@ -257,7 +257,7 @@ def create_seeds_tags_dict(
 
     Args:
         seeds (np.array): Array of seeds for the ensemble.
-        mace_settings (dict): Model settings dictionary containing
+        model_settings (dict): Model settings dictionary containing
                               the experiment name.
         al_settings (dict, optional): Active learning settings..
         save_seeds_tags_dict (str, optional): Name of the resulting dict.
@@ -268,7 +268,7 @@ def create_seeds_tags_dict(
     """
     seeds_tags_dict = {}
     for seed in seeds:
-        tag = mace_settings["GENERAL"]["name_exp"] + "-" + str(seed)
+        tag = model_settings["GENERAL"]["name_exp"] + "-" + str(seed)
         seeds_tags_dict[tag] = seed
     if save_seeds_tags_dict:
         np.savez(
@@ -654,19 +654,19 @@ def list_latest_file(directory: str) -> str:
 
 
 def save_ensemble(
-    ensemble: dict, training_setups: dict, mace_settings: dict
+    ensemble: dict, training_setups: dict, model_settings: dict
 ) -> None:
     """
     Save the ensemble models to disk. If EMA is used, the averaged parameters
     are saved, otherwise the model parameters are saved directly.
-    The path to the models is defined in the mace_settings under
+    The path to the models is defined in the model_settings under
     "GENERAL" -> "model_dir". The models are saved with the tag as the filename
     and the extension ".model".
 
     Args:
         ensemble (dict): Dictionary of models.
         training_setups (dict): Dictionary of training setups for each model.
-        mace_settings (dict): Dictionary of MACE settings, specificied by the
+        model_settings (dict): Dictionary of MACE settings, specificied by the
                                      user in the config file.
     """
     for tag, model in ensemble.items():
@@ -678,7 +678,7 @@ def save_ensemble(
         with param_context:
             torch.save(
                 model,
-                Path(mace_settings["GENERAL"]["model_dir"]) / (tag + ".model"),
+                Path(model_settings["GENERAL"]["model_dir"]) / (tag + ".model"),
             )
 
 
