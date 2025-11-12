@@ -981,18 +981,18 @@ class InitialDatasetPARSL(InitialDatasetFoundational):
                     directory = self.calc_dir / f"initial_calc_{self.calc_idx}"
                     # if there is only one entry in aims_settings the same
                     # settings are used for all systems
-                    system_idx = idx if len(self.aims_settings) > 1 else 0
+                    settings_idx = idx if len(self.aims_settings) > 1 else 0
                     temp_result = recalc_dft_parsl(
                         positions=atoms.get_positions(),
                         species=atoms.get_chemical_symbols(),
                         cell=atoms.get_cell(),
                         pbc=atoms.pbc,
-                        aims_settings=self.aims_settings[system_idx],
+                        aims_settings=self.aims_settings[settings_idx],
                         directory=directory,
                         properties=self.properties,
                         ase_aims_command=self.launch_str,
                     )
-                    job_results[system_idx][i] = temp_result
+                    job_results[idx][i] = temp_result
                     calc_launched += 1
 
             while calc_launched > 0:
