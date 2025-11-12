@@ -128,7 +128,7 @@ Example settings can be found in the `examples` folder.
 | max_initial_set_size | `int` or `float` | `np.inf` | Maximum size of the initial training dataset. |
 | progress_dft_update | `int` | `10` | Intervals at which progress of DFT calculations is logged.|
 | scheduler_initial | `bool` | `True` | Whether to use a learning rate scheduler during initial training. |
-| skip_step_initial | `int` | `25` | Step interval for evaluating the ML force field during initial training. |
+| skip_step_initial | `int` | `25` | Intervals at which a structure is taken from the MD simulation either for the dataset in case of AIMD or for DFT in case of using an MLFF. |
 | valid_ratio | `float` | `0.1` | Fraction of data reserved for validation. |
 | valid_skip | `int` | `1` | Number of training steps between validation runs in initial training. |
 
@@ -205,11 +205,11 @@ Settings for PARSL.
 | &nbsp;&nbsp;&nbsp;&nbsp;&nbsp;\*init_blocks | `int` | — | Initial number of blocks to launch. |
 | &nbsp;&nbsp;&nbsp;&nbsp;&nbsp;\*min_blocks | `int` | — | Minimum number of blocks allowed. |
 | &nbsp;&nbsp;&nbsp;&nbsp;&nbsp;\*max_blocks | `int` | — | Maximum number of blocks allowed. |
-| &nbsp;&nbsp;&nbsp;&nbsp;&nbsp;\*label | `str` | —| Unique label for this Parsl configuration. |
+| &nbsp;&nbsp;&nbsp;&nbsp;&nbsp;\*label | `str` | —| Unique label for this Parsl configuration. IMPORTANT: If you run multiple instances of aims-PAX on the same machine make sure that the labels are unique for each instance!|
 | &nbsp;&nbsp;&nbsp;&nbsp;&nbsp;run_dir | `str` | `None` | Directory to store runtime files. |
 | &nbsp;&nbsp;&nbsp;&nbsp;&nbsp;function_dir | `str`| `None` | Directory for Parsl function storage. |
 | \*slurm_str | `str` (multiline) | — | SLURM job script header specifying job resources and options. |
-| \*worker_str | `str` (multiline) | — | Shell commands to configure the environment for each worker process e.g. loading modules, activating conda environment. |
+| \*worker_str | `str` (multiline) | — | Shell commands to configure the environment for each worker process e.g. loading modules, activating conda environment. IMPORTANT: On most systems it's necessary to set the following environment variable so that multiple jobs don't interfere with each other: `export WORK_QUEUE_DISABLE_SHARED_PORT=1`. |
 | \*launch_str | `str` | — | Command to run FHI aims e.g. `"srun path/to/aims/aims.XXX.scalapack.mpi.x >> aims.out"` |
 | \*calc_dir | `str` | — | Path to the directory used for calculation outputs. |
 | clean_dirs | `bool` | `True` | Whether to remove calculation directories after DFT computations. |
@@ -234,7 +234,6 @@ Currently these settings are used for *ab initio* and MLFF MD.
 
 | Parameter | Type | Default | Description |
 |-----------|------|---------|-------------|
-
 | \*stat_ensemble | `str` | — | Statistical ensemble for molecular dynamics (e.g., `NVT`, `NPT`). |
 | barostat | `str` | `MTK`| Barostat used when `NPT` is chosen. Stands for Full [Martyna-Tobias-Klein barostat](https://doi.org/10.1063/1.467468).|
 | friction | `float` | `0.001` | Friction coefficient for Langevin dynamics (in fs<sup>-1</sup>). |
@@ -303,7 +302,7 @@ We use exactly the same names as employed in the [MACE code](https://github.com/
 
 | Parameter       | Type          | Default     | Description                                          |
 |-----------------|---------------|-------------|------------------------------------------------------|
-| atomic_energies | `list` or `None` | `None `    | Atomic energy references for each element. If `None`, atomic energies are determined using the training set using linear least squares. |
+| atomic_energies | `dict` or `None` | `None `    | Atomic energy references for each element. Dictionary is structured as follows: {atomic_number: energy}. If `None`, atomic energies are determined using the training set using linear least squares. |
 | compute_avg_num_neighbors | `bool` | `True`      | Whether to compute average number of neighbors. |
 | correlation     | `int`         | `3`           | Correlation order for many-body interactions. |
 | gate            | `str`         | `"silu"`      | Activation function. |

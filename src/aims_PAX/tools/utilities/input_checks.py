@@ -428,8 +428,10 @@ SCHEME_MODEL_DTYPES = {
         "degrees",
     ],
     "dicts": ["config_type_weights"],
-    "optional_lists": ["atomic_energies"],
+    "optional_lists": [],
     "optional_strings": [],
+    "optional_dicts": ["atomic_energies"],
+    "optional_dicts_strings": [],
     "optional_floats": [
         "r_max_lr",
     ]
