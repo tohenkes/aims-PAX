@@ -104,6 +104,7 @@ SCHEME = {
             "dispersion_lr_damping": None
         },
         "replay_strategy": "full_dataset",
+        "train_subset_size": None,
     },
     "optional_cluster": {
         "type": "slurm",
@@ -245,6 +246,7 @@ SCHEME_DTYPES = {
     "optional_strings": [  # Fields that can be None or string
         "seeds_tags_dict",
         "aims_lib_path",
+        "train_subset_size",
     ],
     "optional_floats": [
         "r_max_lr",

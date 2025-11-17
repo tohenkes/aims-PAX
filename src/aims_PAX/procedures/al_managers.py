@@ -125,8 +125,8 @@ class ALDataManager:
             max_size_reached = self._add_to_training_set(
                 idx, received_point, mace_point
             )
-            if self.config.replay_strategy == "random_batch":
-                mace_sets = self._create_training_batch(
+            if self.config.replay_strategy in ["random_batch", "random_subset"]:
+                mace_sets = self._create_training_subset(
                     mace_point, self.ensemble_manager.ensemble_mace_sets
                 )
                 self.ensemble_manager.ensemble_mace_sets = mace_sets
@@ -138,17 +138,17 @@ class ALDataManager:
         self.state_manager.total_points_added += 1
         return False
 
-    def _check_batch_size(self, set_batch_size, tag, validation=False):
+    def _check_subset_size(self, set_subset_size, tag, validation=False):
         key = "valid" if validation else "train"
-        batch_size = (
+        subset_size = (
             len(self.ensemble_manager.ensemble_mace_sets[tag][key])
             if len(self.ensemble_manager.ensemble_mace_sets[tag][key])
-            < set_batch_size
-            else set_batch_size
+            < set_subset_size
+            else set_subset_size
         )
-        return batch_size
+        return subset_size
 
-    def _create_training_batch(
+    def _create_training_subset(
             self, 
             mace_point, 
             mace_sets: dict
@@ -158,32 +158,52 @@ class ALDataManager:
         point and a random selection of points from the current training set.
         """
 
-        for tag in self.ensemble_manager.ensemble_ase_sets.keys():
-            train_batch_size = self._check_batch_size(
+        if self.config.replay_strategy == "random_batch":
+            train_subset_size = self._check_subset_size(
                 self.config.set_batch_size, tag
             )
-            valid_batch_size = self._check_batch_size(
+            valid_subset_size = self._check_subset_size(
                 self.config.set_valid_batch_size, tag, validation=True
             )
+            train_batch_size = train_subset_size
+            valid_batch_size = valid_subset_size
+
+        elif self.config.replay_strategy == "random_subset":
+            train_subset_size = self.config.train_subset_size
+            valid_subset_size = int(self.config.valid_ratio * train_subset_size)
+            train_batch_size = self._check_subset_size(
+                self.config.set_batch_size, tag
+            )
+            valid_batch_size = self._check_subset_size(
+                self.config.set_valid_batch_size, tag, validation=True
+            )
+            
+        for tag in self.ensemble_manager.ensemble_ase_sets.keys():
+
             random_sample_train = random.sample(
                 self.ensemble_manager.ensemble_mace_sets[tag]["train"],
-                train_batch_size - 1,
+                train_subset_size - 1,
             )
+
             random_sample_valid = random.sample(
                 self.ensemble_manager.ensemble_mace_sets[tag]["valid"],
-                valid_batch_size,
+                valid_subset_size,
             )
             train_set = random_sample_train + mace_point
             valid_set = random_sample_valid
             (
-                mace_sets[tag]["train_batch"],
-                mace_sets[tag]["valid_batch"],
+                mace_sets[tag]["train_subset"],
+                mace_sets[tag]["valid_subset"],
             ) = create_dataloader(
                 train_set,
                 valid_set,
                 train_batch_size,
                 valid_batch_size,
             )
+        
+        logging.info(f'Training loader has {len(mace_sets[tag]["train_subset"])} batches.')
+        logging.info(f'Training set has {train_subset_size} points.')
+
         return mace_sets
 
     def _add_to_validation_set(
@@ -330,11 +350,11 @@ class TrainingOrchestrator:
         self.restart_manager = restart_manager
         self.md_manager = md_manager
         self.train_loader_key = (
-            "train_batch" if self.config.replay_strategy == "random_batch"
+            "train_subset" if self.config.replay_strategy == "random_batch"
             else "train_loader"
         )
         self.valid_loader_key = (
-            "valid_batch" if self.config.replay_strategy == "random_batch"
+            "valid_subset" if self.config.replay_strategy == "random_batch"
             else "valid_loader"
         )
 

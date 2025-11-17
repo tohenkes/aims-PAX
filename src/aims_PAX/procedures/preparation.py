@@ -881,6 +881,12 @@ class ALConfiguration:
         
         # Training procedures (TODO: Move training methods from model file here)
         self.replay_strategy = self.al_settings["replay_strategy"]
+        self.train_subset_size = self.al_settings["train_subset_size"]
+        if self.replay_strategy == "random_subset":
+            assert self.train_subset_size is not None, (
+                "train_subset_size must be specified for random_subset "
+                "replay strategy."
+            )
         
         # Paths
         self.dataset_dir = Path(self.misc["dataset_dir"])
