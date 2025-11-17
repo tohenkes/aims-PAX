@@ -157,29 +157,35 @@ class ALDataManager:
         Creates a single batch of specified size. It includes the newly sampled
         point and a random selection of points from the current training set.
         """
-
-        if self.config.replay_strategy == "random_batch":
-            train_subset_size = self._check_subset_size(
-                self.config.set_batch_size, tag
-            )
-            valid_subset_size = self._check_subset_size(
-                self.config.set_valid_batch_size, tag, validation=True
-            )
-            train_batch_size = train_subset_size
-            valid_batch_size = valid_subset_size
-
-        elif self.config.replay_strategy == "random_subset":
-            train_subset_size = self.config.train_subset_size
-            valid_subset_size = int(self.config.valid_ratio * train_subset_size)
-            train_batch_size = self._check_subset_size(
-                self.config.set_batch_size, tag
-            )
-            valid_batch_size = self._check_subset_size(
-                self.config.set_valid_batch_size, tag, validation=True
-            )
             
         for tag in self.ensemble_manager.ensemble_ase_sets.keys():
 
+            if self.config.replay_strategy == "random_batch":
+                train_subset_size = self._check_subset_size(
+                    self.config.set_batch_size, tag
+                )
+                valid_subset_size = self._check_subset_size(
+                    self.config.set_valid_batch_size, tag, validation=True
+                )
+                train_batch_size = train_subset_size
+                valid_batch_size = valid_subset_size
+
+            elif self.config.replay_strategy == "random_subset":
+                train_subset_size = self._check_subset_size(
+                    self.config.train_subset_size, tag
+                )
+                valid_subset_size = self._check_subset_size(
+                    int(self.config.valid_ratio * train_subset_size),
+                    tag,
+                    validation=True,
+                )
+                train_batch_size = self._check_subset_size(
+                    self.config.set_batch_size, tag
+                )
+                valid_batch_size = self._check_subset_size(
+                    self.config.set_valid_batch_size, tag, validation=True
+                )
+                
             random_sample_train = random.sample(
                 self.ensemble_manager.ensemble_mace_sets[tag]["train"],
                 train_subset_size - 1,

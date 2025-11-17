@@ -246,6 +246,8 @@ SCHEME_DTYPES = {
     "optional_strings": [  # Fields that can be None or string
         "seeds_tags_dict",
         "aims_lib_path",
+    ],
+    "optional_ints": [
         "train_subset_size",
     ],
     "optional_floats": [
@@ -438,7 +440,8 @@ SCHEME_MODEL_DTYPES = {
     "optional_dicts_strings": [],
     "optional_floats": [
         "r_max_lr",
-    ]
+    ],
+    "optional_ints": []
 }
 
 SCHEME_MACE = {
@@ -566,6 +569,10 @@ def check_dtypes(
             assert settings[k] is None or isinstance(
                 settings[k], float
             ), f"The value of `{k}` must be a float or None!"
+        elif k in scheme_dtype["optional_ints"]:
+            assert settings[k] is None or isinstance(
+                settings[k], int
+            ), f"The value of `{k}` must be an integer or None!"
     return settings
 
 
