@@ -76,7 +76,7 @@ def setup_model_training(
     training_setup["output_args"] = {
         "forces": True,
         "virials": False,  # TODO: Remove hardcoding
-        "stress": general_settings["compute_stress"],
+        "stress": misc_settings["compute_stress"],
     }
     training_setup["epoch"] = epoch
     return training_setup

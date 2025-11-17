@@ -1,7 +1,8 @@
 from typing import Optional
 import numpy as np
 from so3krates_torch.modules.models import So3krates, SO3LR
-from mace import tools, utils
+from mace import tools
+from mace.tools import AtomicNumberTable
 import torch
 
 
@@ -81,7 +82,7 @@ def setup_so3krates(
         So3krates: So3krates model
     """
     if z_table is None:
-        z_table = utils.AtomicNumberTable([int(z) for z in range(1, 119)])
+        z_table = AtomicNumberTable([int(z) for z in range(1, 119)])
 
     model_config = create_base_so3krates_settings(
         settings,

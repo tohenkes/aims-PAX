@@ -8,7 +8,9 @@ from typing import Optional, Any, Dict, Union
 from pathlib import Path
 from mace import tools, modules
 from mace.tools import AtomicNumberTable
+from so3krates_torch.modules.models import So3krates, SO3LR
 from aims_PAX.tools.model_tools.setup_MACE import setup_mace
+from aims_PAX.tools.model_tools.setup_so3 import setup_so3krates, setup_so3lr
 from aims_PAX.tools.model_tools.training_tools import setup_model_training
 import ase.data
 from ase.io import read
@@ -39,6 +41,58 @@ Pbc = tuple  # (3,)
 
 DEFAULT_CONFIG_TYPE = "Default"
 DEFAULT_CONFIG_TYPE_WEIGHTS = {DEFAULT_CONFIG_TYPE: 1.0}
+
+def get_free_vols(lines):
+    active = False
+    freevol = []
+    for line in lines:
+       if not active:
+          if "Performing Hirshfeld analysis of fragment charges and moments" in line:
+                active = True
+       else:
+          if "Free atom volume" in line:
+             fav = float(re.findall("\-?\d+(?:\.\d+)", line)[0])
+             freevol.append(fav)
+    return freevol
+
+
+def apply_model_settings(
+    target,
+    model_settings: dict,
+) -> None:
+
+    target.model_settings = model_settings
+    
+    general = model_settings["GENERAL"]
+    target.model_choice = general["model_choice"].lower()
+    target.seed = general["seed"]
+    target.checkpoints_dir = general["checkpoints_dir"]
+    target.dtype = general["default_dtype"]
+    torch.set_default_dtype(dtype_mapping[target.dtype])
+    target.model_dir = general["model_dir"]
+    
+    architecture = model_settings["ARCHITECTURE"]
+    target.r_max = architecture["r_max"]
+    target.atomic_energies_dict = architecture["atomic_energies"]
+    if target.model_choice == "mace":
+        target.scaling = architecture["scaling"]
+    else:
+        target.scaling = None
+        
+    training = model_settings["TRAINING"]
+    target.set_batch_size = training["batch_size"]
+    target.set_valid_batch_size = training["valid_batch_size"]
+    
+    misc = model_settings["MISC"]
+    target.device = misc["device"]
+    target.compute_stress = misc["compute_stress"]
+    target.compute_dipole = misc["compute_dipole"]
+    
+    target.properties = ["energy", "forces"]
+    if target.compute_stress:
+        target.properties.append("stress")
+    if target.compute_dipole:
+        target.properties.append("dipole")
 
 
 def is_multi_trajectory_md(
@@ -205,7 +259,7 @@ def select_best_member(
     return min(ensemble_valid_loss, key=ensemble_valid_loss.get)
 
 
-def ensemble_training_setups(
+def get_ensemble_training_setups(
     ensemble: dict,
     model_settings: dict,
     checkpoints_dir: str = None,
@@ -216,7 +270,7 @@ def ensemble_training_setups(
     Creates a dictionary of training setups for each model in the ensemble.
 
     Args:
-        ensemble (dict): Dictionary of MACE models in the ensemble.
+        ensemble (dict): Dictionary of models in the ensemble.
         model_settings (dict): Model settings dictionary containing
                               the experiment name and all model and training
                               settings.
@@ -231,12 +285,14 @@ def ensemble_training_setups(
     Returns:
         dict: Dictionary of training setups for each model in the ensemble.
     """
+    
+    model_choice = model_settings["GENERAL"]["model_choice"].lower()
     training_setups = {}
     for tag, model in ensemble.items():
         training_setups[tag] = setup_model_training(
             settings=model_settings,
             model=model,
-            model_choice="mace",
+            model_choice=model_choice,
             tag=tag,
             restart=restart,
             checkpoints_dir=checkpoints_dir,
@@ -311,11 +367,26 @@ def setup_ensemble_dicts(
         model_settings["GENERAL"]["seed"] = seed
         tag = model_settings["GENERAL"]["name_exp"] + "-" + str(seed)
         seeds_tags_dict[tag] = seed
-        ensemble[tag] = setup_mace(
-            settings=model_settings,
-            z_table=z_table,
-            atomic_energies_dict=ensemble_atomic_energies_dict[tag],
-        )
+        
+        model_choice = model_settings["GENERAL"]["model_choice"].lower()
+        if model_choice == "mace":
+            ensemble[tag] = setup_mace(
+                settings=model_settings,
+                z_table=z_table,
+                atomic_energies_dict=ensemble_atomic_energies_dict[tag],
+            )
+        elif model_choice == "so3krates":
+            ensemble[tag] = setup_so3krates(
+                settings=model_settings,
+                z_table=z_table,
+                atomic_energies_dict=ensemble_atomic_energies_dict[tag],
+            )
+        elif model_choice == "so3lr":
+            ensemble[tag] = setup_so3lr(
+                settings=model_settings,
+                z_table=z_table,
+                atomic_energies_dict=ensemble_atomic_energies_dict[tag],
+            )
     return ensemble
 
 
@@ -474,6 +545,134 @@ def update_model_auxiliaries(
         device
     )
     model.scale_shift = modules.blocks.ScaleShiftBlock(scale=std, shift=mean)
+
+
+def update_mace_auxiliaries(
+    model: modules.MACE,
+    mace_sets: dict,
+    scaling: str,
+    atomic_energies_list: list,
+    update_atomic_energies: bool = False,
+    atomic_energies_dict: dict = None,
+    z_table: tools.AtomicNumberTable = None,
+    dtype: str = "float64",
+    device: str = "cpu",
+):
+    """
+    Update the average number of neighbors, scale and shift of
+    the MACE model with the given data
+
+    Args:
+        model (modules.MACE): The MACE model to be updated.
+        mace_sets (dict): Dictionary containing the training and validation
+                            sets.
+        scaling (str): Scaling method to be used.
+        atomic_energies_list (list): List of atomic energies.
+        atomic_energies_dict (dict): Dictionary of atomic energies.
+        update_atomic_energies (bool): Whether to update the atomic energies.
+        z_table (tools.AtomicNumberTable): Table of elements.
+        dtype (str): Dtype of the model.
+        device (str): Device to be used for the model.
+
+    Returns:
+         None
+    """
+    train_loader = mace_sets["train_loader"]
+
+    if update_atomic_energies:
+        assert z_table is not None
+        assert atomic_energies_dict is not None
+
+        energies_train = torch.stack(
+            [point.energy.reshape(1) for point in mace_sets["train"]]
+        )
+        zs_train = [
+            [
+                z_table.index_to_z(torch.nonzero(one_hot).item())
+                for one_hot in point.node_attrs
+            ]
+            for point in mace_sets["train"]
+        ]
+        new_atomic_energies_dict = compute_average_E0s(
+            energies_train, zs_train, z_table
+        )
+        atomic_energies_dict.update(new_atomic_energies_dict)
+        atomic_energies_list = [
+            atomic_energies_dict[z] for z in atomic_energies_dict.keys()
+        ]
+        atomic_energies_tensor = torch.tensor(
+            atomic_energies_list, dtype=dtype_mapping[dtype]
+        )
+
+        model.atomic_energies_fn.atomic_energies = atomic_energies_tensor.to(
+            device
+        )
+
+    average_neighbors = modules.compute_avg_num_neighbors(train_loader)
+    for interaction_idx in range(len(model.interactions)):
+        model.interactions[interaction_idx].avg_num_neighbors = (
+            average_neighbors
+        )
+    mean, std = modules.scaling_classes[scaling](
+        train_loader, atomic_energies_list
+    )
+    mean, std = torch.from_numpy(mean).to(device), torch.from_numpy(std).to(
+        device
+    )
+    model.scale_shift = modules.blocks.ScaleShiftBlock(scale=std, shift=mean)
+
+
+def update_energy_shifts_mace(
+    model: modules.MACE,
+    atomic_energies_dict: dict,
+    device: str,
+    dtype: str = "float64",
+):
+    atomic_energies_list = [
+        atomic_energies_dict[z] for z in atomic_energies_dict.keys()
+    ]
+    atomic_energies_tensor = torch.tensor(
+        atomic_energies_list, dtype=dtype_mapping[dtype]
+    )
+
+    model.atomic_energies_fn.atomic_energies = atomic_energies_tensor.to(
+        device
+    )
+
+
+def update_avg_num_neighbors_mace(
+    model: modules.MACE,
+    avg_num_neighbors: float,
+):
+    for interaction in model.interactions:
+        interaction.avg_num_neighbors = avg_num_neighbors
+
+
+def update_scale_shift_block_mace(
+    model: modules.MACE,
+    mean: float,
+    std: float,
+):
+    model.scale_shift = modules.blocks.ScaleShiftBlock(scale=std, shift=mean)
+
+
+def update_energy_shifts_so3(
+    model: SO3LR,
+    atomic_energies_dict: dict,
+):
+    model.atomic_energy_output_block.set_defined_energy_shifts(
+        atomic_energies_dict
+    )
+
+
+def update_avg_num_neighbors_so3(
+    model: SO3LR,
+    avg_num_neighbors: float,
+):
+    model.avg_num_neighbors = avg_num_neighbors
+    for layer in model.euclidean_transformers:
+        layer.euclidean_attention_block.att_norm_inv = avg_num_neighbors
+        layer.euclidean_attention_block.att_norm_ev = avg_num_neighbors
 
 
 def save_checkpoint(

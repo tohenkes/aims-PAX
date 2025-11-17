@@ -16,7 +16,7 @@ from aims_PAX.tools.utilities.data_handling import (
     create_dataloader,
 )
 from aims_PAX.tools.utilities.utilities import (
-    ensemble_training_setups,
+    get_ensemble_training_setups,
     ensemble_from_folder,
     Z_from_geometry,
     list_files_in_directory,
@@ -33,6 +33,7 @@ from aims_PAX.tools.utilities.utilities import (
     create_keyspec,
     log_yaml_block,
     normalize_md_settings,
+    apply_model_settings,
     AIMSControlParser,
     ModifyMD,
 )
@@ -80,7 +81,7 @@ class PrepareInitialDatasetProcedure:
     ) -> None:
         """
         Args:
-            model_settings (dict): Settings for the MACE model and its training.
+            model_settings (dict): Settings for the model and its training.
             al_settings (dict): Settings for the active learning procedure.
             path_to_aims_lib (str): Path to the compiled AIMS library.
             atomic_energies_dict (dict, optional): Dictionary containing the
@@ -125,8 +126,8 @@ class PrepareInitialDatasetProcedure:
         self.control_parser = AIMSControlParser()
         self._handle_model_settings(model_settings)
         if self.rank == 0:
-            logging.info("Using following settings for MACE:")
-            log_yaml_block("MACE", model_settings)
+            logging.info(f"Using following settings for {self.model_choice.upper()}:")
+            log_yaml_block(self.model_choice.upper(), model_settings)
 
         self._handle_settings(aimsPAX_settings)
         self._handle_aims_settings(path_to_control)
@@ -170,6 +171,7 @@ class PrepareInitialDatasetProcedure:
                 "Running Initial Dataset Procedure with "
                 f"{len(self.trajectories)} geometries."
             )
+        # TODO: adapt to so3lr, it always uses all 118
         self.z = Z_from_geometry(self.trajectories)
         self.z_table = create_ztable(self.z)
 
@@ -200,7 +202,7 @@ class PrepareInitialDatasetProcedure:
                 z_table=self.z_table,
                 ensemble_atomic_energies_dict=self.ensemble_atomic_energies_dict,
             )
-            self.training_setups = ensemble_training_setups(
+            self.training_setups = get_ensemble_training_setups(
                 ensemble=self.ensemble,
                 model_settings=self.model_settings,
                 restart=self.restart,
@@ -269,34 +271,10 @@ class PrepareInitialDatasetProcedure:
             model_settings (dict): Dictionary containing the MACE settings.
         """
 
-        self.model_settings = model_settings
-        general = model_settings["GENERAL"]
-        architecture = model_settings["ARCHITECTURE"]
-        training = model_settings["TRAINING"]
-        misc = model_settings["MISC"]
-
-        # check which model:
-        self.model_choice = general["model_choice"].lower()
-        
-        self.seed = general["seed"]
-        self.r_max = architecture["r_max"]
-        self.set_batch_size = training["batch_size"]
-        self.set_valid_batch_size = training["valid_batch_size"]
-        self.checkpoints_dir = general["checkpoints_dir"] + "/initial"
-        
-        self.dtype = general["default_dtype"]
-        torch.set_default_dtype(dtype_mapping[self.dtype])
-        self.device = misc["device"]
-        self.atomic_energies_dict = architecture.get("atomic_energies")
-        self.compute_stress = misc.get("compute_stress", False)
-        self.properties = ["energy", "forces"]
-        if self.compute_stress:
-            self.properties.append("stress")
-
-        if self.model_choice == "mace":
-            self.scaling = architecture["scaling"]
-        else:
-            self.scaling = None
+        apply_model_settings(
+            target=self,
+            model_settings=model_settings
+        )
 
     def _handle_settings(self, aimsPAX_settings: dict) -> None:
         """
@@ -558,7 +536,7 @@ class PrepareInitialDatasetProcedure:
         if self.rank == 0:
             if self.atomic_energies_dict is None:
                 if self.restart:
-
+                    #TODO: adapt to so3lr
                     logging.info("Loading atomic energies from checkpoint.")
                     (
                         self.ensemble_atomic_energies,
@@ -864,29 +842,13 @@ class ALConfiguration:
 
     def _setup_model_configuration(self):
         """Setup model-specific configuration."""
-        general = self.model_settings["GENERAL"]
-        self.seed = general["seed"]
-        self.checkpoints_dir = f"{general['checkpoints_dir']}/al"
-        self.model_dir = general["model_dir"]
-        self.dtype = general["default_dtype"]
-        self.compute_stress = general.get("compute_stress", False)
-        self.model_choice = general["model_choice"].lower()
         
-        architecture = self.model_settings["ARCHITECTURE"]
-        self.r_max = architecture["r_max"]
-        self.atomic_energies_dict = architecture.get("atomic_energies", None)
-
-        training = self.model_settings["TRAINING"]
-        self.set_batch_size = training["batch_size"]
-        self.set_valid_batch_size = training["valid_batch_size"]
-        self.scaling = architecture["scaling"]
-
-        self.device = self.model_settings["MISC"]["device"]
-        torch.set_default_dtype(dtype_mapping[self.dtype])
-
-        self.properties = ["energy", "forces"]
-        if self.compute_stress:
-            self.properties.append("stress")
+        apply_model_settings(
+            target=self,
+            model_settings=self.model_settings
+        )
+        self.checkpoints_dir += "/al"
+        
 
     def _setup_aimsPAX_configuration(self):
         """Setup active learning configuration."""
@@ -1244,7 +1206,7 @@ class ALEnsemble:
             dtype=dtype_mapping[self.config.dtype],
         )
 
-        self.training_setups = ensemble_training_setups(
+        self.training_setups = get_ensemble_training_setups(
             ensemble=self.ensemble,
             model_settings=self.config.model_settings,
             restart=self.config.restart,

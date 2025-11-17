@@ -1013,6 +1013,12 @@ class InitialDatasetPARSL(InitialDatasetFoundational):
                             current_point.arrays["REF_forces"] = temp["forces"]
                             if self.compute_stress:
                                 current_point.info["REF_stress"] = temp["stress"]
+                            if "hirshfeld_ratios" in temp.keys():
+                                current_point.arrays[
+                                    "REF_hirshfeld_ratios"
+                                ] = temp["hirshfeld_ratios"]
+                            if "dipole" in temp.keys():
+                                current_point.info["REF_dipole"] = temp["dipole"]
                             recalculated_points.append(current_point)
 
                             if (

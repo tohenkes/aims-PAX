@@ -304,6 +304,8 @@ SCHEME_MODEL_MISC = {
         "restart_latest": False,
         "error_table": "PerAtomMAE",
         "log_level": "INFO",
+        "compute_stress": False,
+        "compute_dipole": False,
     },
 }
 
@@ -317,7 +319,6 @@ SCHEME_MODEL_GENERAL = {
         "loss_dir": "./losses",
         "model_dir": "./model",
         "default_dtype": "float32",
-        "compute_stress": False,
         "seed": 42,
     },
 }
@@ -397,6 +398,7 @@ SCHEME_MODEL_DTYPES = {
     ],
     "bools": [
         "compute_stress",
+        "compute_dipole",
         "compute_avg_num_neighbors",
         "amsgrad",
         "swa",

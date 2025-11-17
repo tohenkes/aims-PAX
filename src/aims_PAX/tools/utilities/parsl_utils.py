@@ -2,6 +2,7 @@ import os
 from parsl.config import Config
 from parsl.executors import WorkQueueExecutor
 from parsl.providers import SlurmProvider
+from aims_PAX.tools.utilities.utilities import get_free_vols
 from parsl import python_app
 import numpy as np
 import re
@@ -207,6 +208,7 @@ def recalc_dft_parsl(
     ase_aims_command: str,
     directory: str = "./",
     properties: list = ["energy", "forces"],
+    aims_output_file: str = "aims.out",
 ):
     """
     PARSL app that runs the DFT calculations using ASE AIMS calculator.
@@ -253,8 +255,16 @@ def recalc_dft_parsl(
     )
     try:
         calc.calculate(atoms=atoms, properties=properties, system_changes=None)
+        results = calc.results
+        if "hirshfeld_volumes" in results.keys():
+            with open(os.path.join(directory, aims_output_file), "r") as f:
+                aims_output = f.readlines()
+            free_vols = get_free_vols(aims_output)
+            hirshfeld_vols = results["hirshfeld_volumes"]
+            hirshfeld_ratios = hirshfeld_vols / free_vols
+            results["hirshfeld_ratios"] = hirshfeld_ratios
         return calc.results
-    except ParseError:
+    except ParseError as pe:
         return None
     except Exception as e:
         # Handle any other calculation failures (including subprocess errors)
