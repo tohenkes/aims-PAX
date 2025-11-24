@@ -131,6 +131,7 @@ Example settings can be found in the `examples` folder.
 | skip_step_initial | `int` | `25` | Intervals at which a structure is taken from the MD simulation either for the dataset in case of AIMD or for DFT in case of using an MLFF. |
 | valid_ratio | `float` | `0.1` | Fraction of data reserved for validation. |
 | valid_skip | `int` | `1` | Number of training steps between validation runs in initial training. |
+| distinct_model_set | `bool` | `True` | Wether to sample enough points so that every model in the ensemble gets distinct data sets. If set to `False`, the same dataset is used for all ensemble members. |
 
 
 ##### Convergence 

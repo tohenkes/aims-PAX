@@ -62,6 +62,37 @@ class InitialDatasetProcedure(PrepareInitialDatasetProcedure):
         """
         raise NotImplementedError
 
+    def _get_member_points(self, member_number: int) -> list:
+        """
+        Gets the points assigned to the given ensemble member.
+        If self.distinct_model_sets is True, each ensemble member
+        gets its own set of points. Otherwise, all ensemble members
+        share the same set of points.
+
+        Args:
+            member_number (int): Ensemble member number.
+
+        Returns:
+            list: List of ASE Atoms objects.
+        """
+        
+        if self.distinct_model_sets:
+            start_idx = (
+                len(self.atoms)
+                * self.n_points_per_sampling_step_idg
+                * member_number
+            )
+            end_idx = (
+                len(self.atoms)
+                * self.n_points_per_sampling_step_idg
+                * (member_number + 1)
+            )
+        else:
+            start_idx = 0
+            end_idx = len(self.sampled_points)
+            
+        return self.sampled_points[start_idx:end_idx]
+
     def _train(self) -> bool:
         """
         Trains the model(s) on the sampled points and updates the
@@ -76,13 +107,7 @@ class InitialDatasetProcedure(PrepareInitialDatasetProcedure):
             # each ensemble member collects their respective points
             for number, (tag, model) in enumerate(self.ensemble.items()):
 
-                member_points = self.sampled_points[
-                    len(self.atoms)
-                    * self.n_points_per_sampling_step_idg
-                    * number : len(self.atoms)
-                    * self.n_points_per_sampling_step_idg
-                    * (number + 1)
-                ]
+                member_points = self._get_member_points(number)
 
                 (
                     self.ensemble_ase_sets[tag],
@@ -494,6 +519,22 @@ class InitialDatasetFoundational(InitialDatasetProcedure):
                 logging.info("SCF not converged.")
             return None
 
+    def _num_samples_per_traj(self) -> int:
+        """
+        Returns the number of samples per trajectory.
+        If distinct_model_sets is True, each ensemble member
+        gets its own set of points. Otherwise, all ensemble members
+        share the same set of points. Thus, the number of samples
+        per trajectory is different in the two cases.
+        
+        Returns:
+            int: Number of samples per trajectory.
+        """
+        if self.distinct_model_sets:
+            return self.ensemble_size * self.n_points_per_sampling_step_idg
+        else:
+            return self.n_points_per_sampling_step_idg
+
     def _md_w_foundational(
         self,
     ):
@@ -505,13 +546,18 @@ class InitialDatasetFoundational(InitialDatasetProcedure):
         """
 
         self.comm_handler.barrier()
+        samples_per_trajectory = self._num_samples_per_traj()
+        samples_per_step = samples_per_trajectory * len(self.trajectories)
+        logging.info(
+            f"Sampling {samples_per_step} points using foundational model."
+        )
         self.sampled_points = {idx: [] for idx in self.trajectories.keys()}
         if self.rank == 0:
             for idx in self.trajectories.keys():
                 dyn = self.md_drivers[idx]
                 atoms = self.trajectories[idx]
                 for _ in range(
-                    self.ensemble_size * self.n_points_per_sampling_step_idg
+                    samples_per_trajectory
                 ):
                     current_point = self._run_MD(atoms, dyn)
                     self.sampled_points[idx].append(current_point)

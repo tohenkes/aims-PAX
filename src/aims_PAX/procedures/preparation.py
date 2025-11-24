@@ -340,6 +340,7 @@ class PrepareInitialDatasetProcedure:
                 "last_initial_losses": None,
                 "initial_ds_done": False,
             }
+        self.distinct_model_sets = self.idg_settings["distinct_model_sets"]
 
     def _update_restart_dict(self):
         self._collect_restart_points(self.trajectories)

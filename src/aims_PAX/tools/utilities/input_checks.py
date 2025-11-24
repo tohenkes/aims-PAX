@@ -63,6 +63,7 @@ SCHEME = {
         "max_convergence_epochs": 500,
         "aims_lib_path": None,
         "progress_dft_update": 10,
+        "distinct_model_sets": True,
     },
     "optional_foundational": {
         "mace_model": "small",
@@ -263,6 +264,7 @@ SCHEME_DTYPES = {
         "clean_dirs",
         "extend_existing_final_ds",
         "use_foundational",
+        "distinct_model_sets",
     ],
     "lists": ["mol_idxs"],
     "optional_lists": [],
