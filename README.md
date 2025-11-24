@@ -198,7 +198,6 @@ Settings for PARSL.
 | Parameter | Type | Default | Description |
 |-----------|------|---------|-------------|
 | type | `str` | `'slurm'` | Cluster backend type. Currently only `slurm` is available. |
-| \*project_name | `str` | — | Name of the PARSL run. |
 | \*parsl_options | `dict` | — | Parsl configuration options. |
 | &nbsp;&nbsp;&nbsp;&nbsp;&nbsp;\*nodes_per_block | `int` | — | Number of nodes per block. |
 | &nbsp;&nbsp;&nbsp;&nbsp;&nbsp;\*init_blocks | `int` | — | Initial number of blocks to launch. |

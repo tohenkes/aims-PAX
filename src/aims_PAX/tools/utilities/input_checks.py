@@ -15,7 +15,6 @@ SCHEME = {
     ],
     "required_idg": ["species_dir", "n_points_per_sampling_step_idg"],
     "required_cluster": [
-        "project_name",
         "parsl_options",
         "slurm_str",
         "worker_str",
@@ -205,7 +204,6 @@ SCHEME_DTYPES = {
     ],
     "strings": [
         "species_dir",
-        "project_name",
         "label",
         "slurm_str",
         "worker_str",

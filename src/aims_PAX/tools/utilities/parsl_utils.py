@@ -8,16 +8,6 @@ import re
 import logging
 from ase.io import ParseError
 from pathlib import Path
-import socket
-
-
-def get_free_port():
-    """
-    Select a free port for the PARSL server to use.
-    """
-    with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
-        s.bind(("", 0))  # let OS pick an available port
-        return s.getsockname()[1]
 
 
 def prepare_parsl(cluster_settings: dict = None) -> dict:
@@ -89,7 +79,6 @@ def create_parsl_config(cluster_settings: dict) -> Config:
     Args:
         cluster_settings (dict): A dictionary containing parsl options.
         The dictionary should contain the following:
-        - "project_name": Name of the project (default: "fhi_aims_dft")
         - "parsl_options": A dictionary with the following keys:
             - "nodes_per_block": Number of nodes per block (default: 1)
             - "init_blocks": Initial number of blocks (default: 1)
@@ -116,7 +105,6 @@ def create_parsl_config(cluster_settings: dict) -> Config:
         Config: A PARSL configuration object with the specified settings.
     """
 
-    project_name = cluster_settings.get("project_name", "fhi_aims_dft")
     parsl_options = cluster_settings["parsl_options"]
 
     nodes_per_block = parsl_options.get("nodes_per_block", 1)
@@ -133,9 +121,6 @@ def create_parsl_config(cluster_settings: dict) -> Config:
         "function_dir", parsl_info_dir / "function_dir"
     )
 
-    port = parsl_options.get(
-        "port", get_free_port()
-    )  # 0 means automatically choose a free port
     label = parsl_options.get("label", "workqueue")
 
     try:
@@ -166,10 +151,10 @@ def create_parsl_config(cluster_settings: dict) -> Config:
         executors=[
             WorkQueueExecutor(
                 label=label,
-                port=port,
-                project_name=project_name,
+                port=0,
                 shared_fs=True,  # assumes shared file system
                 function_dir=str(function_dir),
+                autocategory=False,
                 provider=SlurmProvider(
                     partition=partition,
                     nodes_per_block=nodes_per_block,
@@ -182,6 +167,9 @@ def create_parsl_config(cluster_settings: dict) -> Config:
             )
         ],
         run_dir=str(run_dir),
+        app_cache=False,
+        initialize_logging=False,
+        retries=3
     )
     return config
 
