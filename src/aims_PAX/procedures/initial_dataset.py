@@ -470,7 +470,8 @@ class InitialDatasetFoundational(InitialDatasetProcedure):
                 model=mace_model,
                 dispersion=False,
                 default_dtype=self.dtype,
-                device=self.device
+                device=self.device,
+                enable_cueq=self.enable_cueq
             )
         elif model_choice == 'so3lr':
             r_max_lr = foundational_model_settings['r_max_lr']
@@ -549,11 +550,12 @@ class InitialDatasetFoundational(InitialDatasetProcedure):
         samples_per_trajectory = self._num_samples_per_traj()
         samples_per_step = samples_per_trajectory * len(self.trajectories)
         logging.info(
-            f"Sampling {samples_per_step} points using foundational model."
+            f"Sampling {samples_per_step} points from using foundational model."
         )
         self.sampled_points = {idx: [] for idx in self.trajectories.keys()}
         if self.rank == 0:
             for idx in self.trajectories.keys():
+                logging.info(f"Sampling from trajectory {idx}. Number of MD steps: {self.skip_step * samples_per_trajectory}.")
                 dyn = self.md_drivers[idx]
                 atoms = self.trajectories[idx]
                 for _ in range(

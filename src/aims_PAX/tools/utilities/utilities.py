@@ -7,6 +7,8 @@ import numpy as np
 from typing import Optional, Any, Dict, Union
 from pathlib import Path
 from mace import tools, modules
+from mace.cli.convert_e3nn_cueq import run as convert_e3nn_cueq
+from mace.cli.convert_cueq_e3nn import run as convert_cueq_e3nn
 from mace.tools import AtomicNumberTable
 from so3krates_torch.modules.models import So3krates, SO3LR
 from aims_PAX.tools.model_tools.setup_MACE import setup_mace
@@ -93,6 +95,8 @@ def apply_model_settings(
         target.properties.append("stress")
     if target.compute_dipole:
         target.properties.append("dipole")
+    target.enable_cueq = misc["enable_cueq"]
+    target.enable_cueq_train = misc["enable_cueq_train"]
 
 
 def is_multi_trajectory_md(
@@ -185,7 +189,12 @@ def compute_average_E0s(
     return atomic_energies_dict
 
 
-def ensemble_from_folder(path_to_models: str, device: str, dtype) -> list:
+def ensemble_from_folder(
+        path_to_models: str,
+        device: str,
+        dtype,
+        convert_to_cueq: bool = False
+            ) -> list:
     """
     Load an ensemble of models from a folder.
     (Can't handle other file formats than .pt at the moment.)
@@ -193,7 +202,8 @@ def ensemble_from_folder(path_to_models: str, device: str, dtype) -> list:
     Args:
         path_to_models (str): Path to the folder containing the models.
         device (str): Device to load the models on.
-
+        dtype: Data type to load the models with.
+        convert_to_cueq (bool, optional): Whether to convert the models to CuEQ format. Defaults to False.
     Returns:
         list: List of models.
     """
@@ -208,6 +218,14 @@ def ensemble_from_folder(path_to_models: str, device: str, dtype) -> list:
             model = torch.load(
                 complete_path, map_location=device, weights_only=False
             ).to(dtype)
+            
+            if convert_to_cueq:
+                model = convert_e3nn_cueq(
+                    input_model=model,
+                    device=device,
+                    return_model=True
+                )
+
             filename_without_suffix = os.path.splitext(filename)[0]
             ensemble[filename_without_suffix] = model
     return ensemble
@@ -722,7 +740,11 @@ def save_checkpoint(
 
 
 def save_models(
-    ensemble: dict, training_setups: dict, model_dir: str, current_epoch: int
+    ensemble: dict,
+    training_setups: dict, 
+    model_dir: str, 
+    current_epoch: int,
+    convert_cueq_to_e3nn: bool = False
 ):
     for tag, model in ensemble.items():
         training_setup = training_setups[tag]
@@ -732,6 +754,13 @@ def save_models(
             if training_setup["ema"] is not None
             else nullcontext()
         )
+        
+        if convert_cueq_to_e3nn:
+            model = convert_cueq_e3nn(
+                input_model=model,
+                device=training_setup["device"],
+                return_model=True
+            )
 
         with param_context:
             torch.save(

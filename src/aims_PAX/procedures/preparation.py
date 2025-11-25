@@ -275,6 +275,12 @@ class PrepareInitialDatasetProcedure:
             target=self,
             model_settings=model_settings
         )
+        # No CuEQ training during initial dataset generation
+        # (because avg_num_neighbors, mean, std, atomic energies etc
+        # are changing all the time; not possible to modify with CuEQ)
+        self.enable_cueq_train = False
+        model_settings["MISC"]["enable_cueq_train"] = False
+
 
     def _handle_settings(self, aimsPAX_settings: dict) -> None:
         """
@@ -1211,6 +1217,7 @@ class ALEnsemble:
             path_to_models=self.config.model_dir,
             device=self.config.device,
             dtype=dtype_mapping[self.config.dtype],
+            convert_to_cueq=self.config.enable_cueq_train,
         )
 
         self.training_setups = get_ensemble_training_setups(
@@ -1383,7 +1390,8 @@ class ALCalculatorMLFF:
                 model=mace_model,
                 dispersion=False,
                 default_dtype=self.config.dtype,
-                device=self.config.device
+                device=self.config.device,
+                enable_cueq=self.config.enable_cueq,
             )
             # for uncertainty estimation
             model_paths = list_files_in_directory(self.config.model_dir)
@@ -1399,6 +1407,7 @@ class ALCalculatorMLFF:
                 models=self.models,
                 device=self.config.device,
                 default_dtype=self.config.dtype,
+                enable_cueq=self.config.enable_cueq,
             )
             
         else:
@@ -1417,6 +1426,7 @@ class ALCalculatorMLFF:
                 models=self.models,
                 device=self.config.device,
                 default_dtype=self.config.dtype,
+                enable_cueq=self.config.enable_cueq,
             )
 
 class ALMD:

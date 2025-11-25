@@ -923,18 +923,18 @@ class ALTrainingManager:
                 train_batch_size,
                 valid_batch_size,
             )
-
-            update_model_auxiliaries(
-                model,
-                mace_sets[tag],
-                self.config.scaling,
-                self.mlff_manager.ensemble_atomic_energies[tag],
-                self.mlff_manager.update_atomic_energies,
-                self.mlff_manager.ensemble_atomic_energies_dict[tag],
-                self.ensemble_manager.z_table,
-                self.config.dtype,
-                self.config.device,
-            )
+            if not self.config.enable_cueq_train:
+                update_model_auxiliaries(
+                    model,
+                    mace_sets[tag],
+                    self.config.scaling,
+                    self.mlff_manager.ensemble_atomic_energies[tag],
+                    self.mlff_manager.update_atomic_energies,
+                    self.mlff_manager.ensemble_atomic_energies_dict[tag],
+                    self.ensemble_manager.z_table,
+                    self.config.dtype,
+                    self.config.device,
+                )
         return mace_sets
 
     def _final_save(self, session: TrainingSession):
@@ -943,6 +943,7 @@ class ALTrainingManager:
             training_setups=session.training_setups,
             model_dir=self.config.model_settings["GENERAL"]["model_dir"],
             current_epoch=session.current_epoch,
+            convert_cueq_to_e3nn=self.config.enable_cueq_train
         )
         # save model(s) and datasets in final results directory
         os.makedirs("results", exist_ok=True)
@@ -956,6 +957,7 @@ class ALTrainingManager:
             training_setups=self.ensemble_manager.training_setups,
             model_dir=Path("results"),
             current_epoch=self.state_manager.total_epoch,
+            convert_cueq_to_e3nn=self.config.enable_cueq_train
         )
 
 
@@ -1048,7 +1050,7 @@ class ALDFTManager:
             self.state_manager.trajectory_status[idx] = "waiting"
             if self.rank == 0:
                 logging.info(
-                    f"Trajectory worker {idx} is going to add point "
+                    f"Trajectory worker {idx} is going to add a point "
                     "to the dataset."
                 )
 
@@ -1257,7 +1259,7 @@ class ALDFTManagerParallel(ALDFTManager):
     def handle_dft_call(self, point, idx):
         self.comm_handler.barrier()
         if self.rank == 0:
-            logging.info(f"Trajectory worker {idx} is sending point to DFT.")
+            logging.info(f"Trajectory worker {idx} is sending a point to DFT.")
             send_points_non_blocking(
                 idx=idx,
                 point_data=point,
@@ -1271,7 +1273,7 @@ class ALDFTManagerParallel(ALDFTManager):
 
         if self.rank == 0:
             logging.info(
-                f"Trajectory worker {idx} is waiting for job to finish."
+                f"Trajectory worker {idx} is waiting for a job to finish."
             )
 
 
@@ -1319,11 +1321,11 @@ class ALDFTManagerPARSL(ALDFTManager):
         threading.Thread(target=self._dft_thread, daemon=True).start()
 
     def handle_dft_call(self, point, idx: int):
-        logging.info(f"Trajectory worker {idx} is sending point to DFT.")
+        logging.info(f"Trajectory worker {idx} is sending a point to DFT.")
         self.state_manager.trajectory_status[idx] = "waiting"
         self.state_manager.num_workers_training += 1
         self.ab_initio_queue.put((idx, point))
-        logging.info(f"Trajectory worker {idx} is waiting for job to finish.")
+        logging.info(f"Trajectory worker {idx} is waiting for a job to finish.")
 
     def _dft_thread(self):
         """
@@ -1492,7 +1494,7 @@ class ALRunningManager:
 
             if self.rank == 0:
                 logging.info(
-                    f"Trajectory worker {idx} reached maximum MD steps "
+                    f"Trajectory {idx} reached the maximum number of MD steps "
                     "and is killed."
                 )
 
@@ -1585,7 +1587,7 @@ class ALRunningManager:
         """
         if self.rank == 0:
             logging.info(
-                f"Trajectory worker {idx} at MD step {current_MD_step}."
+                f"Trajectory {idx} is at MD step {current_MD_step}."
             )
 
             point = trajectories[idx].copy()
@@ -2146,7 +2148,7 @@ class ALAnalysisManagerParallel(ALAnalysisManager):
             # procedure, we have to relaunch the dft job and then
             # leave the function
             logging.info(
-                f"Trajectory worker {idx} is restarting DFT analysis."
+                f"Trajectory worker {idx} is restarting the DFT analysis."
             )
             self._analysis_dft_call(idx, self.state_manager.trajectories[idx])
             self.state_manager.first_wait_after_restart[idx] = False
@@ -2275,7 +2277,7 @@ class ALAnalysisManagerParallel(ALAnalysisManager):
         self.comm_handler.barrier()
         if self.rank == 0:
             logging.info(
-                f"Trajectory worker {idx} is waiting for analysis job to finish."
+                f"Trajectory worker {idx} is waiting for a analysis job to finish."
             )
         return None
 

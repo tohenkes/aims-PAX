@@ -2,7 +2,7 @@ from typing import Optional
 import numpy as np
 from e3nn import o3
 from mace import modules, tools
-import torch
+from mace.cli.convert_e3nn_cueq import run as convert_e3nn_cueq
 
 #############################################################################
 ############ This part is mostly taken from the MACE source code ############
@@ -103,6 +103,13 @@ def setup_mace(
         atomic_inter_scale=atomic_inter_scale,
         atomic_inter_shift=atomic_inter_shift,
     )
-    model.to(misc_settings["device"])
-
+    
+    if misc_settings["enable_cueq_train"]:
+        model = convert_e3nn_cueq(
+            input_model=model,
+            device=misc_settings["device"],
+            return_model=True,
+        )
+    else:
+        model.to(misc_settings["device"])
     return model

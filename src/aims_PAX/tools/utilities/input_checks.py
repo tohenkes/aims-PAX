@@ -310,6 +310,8 @@ SCHEME_MODEL_MISC = {
         "log_level": "INFO",
         "compute_stress": False,
         "compute_dipole": False,
+        "enable_cueq": False,
+        "enable_cueq_train": False
     },
 }
 
@@ -409,6 +411,8 @@ SCHEME_MODEL_DTYPES = {
         "ema",
         "keep_checkpoints",
         "restart_latest",
+        "enable_cueq",
+        "enable_cueq_train",
         #SO3LR
         "initialize_ev_to_zeros",
         "trainable_rbf",
