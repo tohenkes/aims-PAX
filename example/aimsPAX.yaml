@@ -42,7 +42,6 @@ MISC:
 
 CLUSTER:
   type: slurm
-  project_name: 'aimsPAX_example'
   parsl_options:
     nodes_per_block: 1
     init_blocks: 1
