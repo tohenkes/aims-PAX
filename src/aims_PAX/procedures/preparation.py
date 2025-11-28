@@ -984,6 +984,7 @@ class ALStateManager:
         self.trajectory_total_epochs = {}
         self.trajectory_intermediate_epochs = {}
         self.uncert_not_crossed = {}
+        self.last_point_added = {}
 
         # Ensemble state
         self.seeds_tags_dict = {}
@@ -1271,6 +1272,81 @@ class ALEnsemble:
             self.train_dataset_len, root=0
         )
         self.comm_handler.barrier()
+
+    def _check_subset_size(self, set_subset_size, tag, validation=False):
+        key = "valid" if validation else "train"
+        subset_size = (
+            len(self.ensemble_mace_sets[tag][key])
+            if len(self.ensemble_mace_sets[tag][key])
+            < set_subset_size
+            else set_subset_size
+        )
+        return subset_size
+
+    def create_training_subset(
+            self, 
+            mace_point,
+            idx: int, 
+            ):
+        """
+        Creates a single batch of specified size. It includes the newly sampled
+        point and a random selection of points from the current training set.
+        """
+            
+        for tag in self.ensemble_ase_sets.keys():
+            self.ensemble_mace_sets[tag]["train_subset"] = {}
+            self.ensemble_mace_sets[tag]["valid_subset"] = {}
+
+            if self.config.replay_strategy == "random_batch":
+                train_subset_size = self._check_subset_size(
+                    self.config.set_batch_size, tag
+                )
+                valid_subset_size = self._check_subset_size(
+                    self.config.set_valid_batch_size, tag, validation=True
+                )
+                train_batch_size = train_subset_size
+                valid_batch_size = valid_subset_size
+
+            elif self.config.replay_strategy == "random_subset":
+                train_subset_size = self._check_subset_size(
+                    self.config.train_subset_size, tag
+                )
+                valid_subset_size = self._check_subset_size(
+                    int(self.config.valid_ratio * train_subset_size),
+                    tag,
+                    validation=True,
+                )
+                train_batch_size = self._check_subset_size(
+                    self.config.set_batch_size, tag
+                )
+                valid_batch_size = self._check_subset_size(
+                    self.config.set_valid_batch_size, tag, validation=True
+                )
+                
+            random_sample_train = random.sample(
+                self.ensemble_mace_sets[tag]["train"],
+                train_subset_size - 1,
+            )
+
+            random_sample_valid = random.sample(
+                self.ensemble_mace_sets[tag]["valid"],
+                valid_subset_size,
+            )
+            train_set = random_sample_train + mace_point
+            valid_set = random_sample_valid
+            (
+                self.ensemble_mace_sets[tag]["train_subset"][idx],
+                self.ensemble_mace_sets[tag]["valid_subset"][idx],
+            ) = create_dataloader(
+                train_set,
+                valid_set,
+                train_batch_size,
+                valid_batch_size,
+            )
+        
+        logging.info(f'Training loader has {len(self.ensemble_mace_sets[tag]["train_subset"][idx])} batches.')
+        logging.info(f'Training set has {train_subset_size} points.')
+
 
 
 class ALCalculatorMLFF:
@@ -1640,11 +1716,13 @@ class ALRestart:
         state_manager: ALStateManager,
         comm_handler,
         md_manager: ALMD,
+        ensemble_manager: ALEnsemble,
     ):
         self.config = config
         self.state_manager = state_manager
         self.md_manager = md_manager
         self.comm_handler = comm_handler
+        self.ensemble_manager = ensemble_manager
         self.rank = comm_handler.get_rank()
 
         if config.create_restart:
@@ -1675,6 +1753,7 @@ class ALRestart:
             "uncertainties": None,
             "al_done": False,
             "best_member": None,
+            "last_point_added": None,
         }
 
         self.save_restart = False
@@ -1726,6 +1805,7 @@ class ALRestart:
             "check",
             "uncertainties",
             "uncert_not_crossed",
+            "last_point_added",
         ]
 
         if self.config.analysis:
@@ -1761,6 +1841,17 @@ class ALRestart:
         # Special handling for uncertainty_checks
         if self.config.analysis and self.config.mol_idxs is not None:
             self.state_manager.uncertainty_checks = []
+            
+        # Special handling for subset data sets if applies
+        if self.config.replay_strategy in [
+            "random_batch",
+            "random_subset"
+            ]:
+            for idx in range(self.config.num_trajectories):
+                self.ensemble_manager.create_training_subset(
+                    mace_point=self.state_manager.last_point_added[idx],
+                    idx=idx,
+                )
 
     def _broadcast_restart_state(self):
         """Broadcast restart state from rank 0 to all processes."""
@@ -1844,6 +1935,7 @@ class ALRestart:
             "check",
             "uncertainties",
             "uncert_not_crossed",
+            "last_point_added",
         ]
 
         update_dict = {
@@ -1939,7 +2031,11 @@ class PrepareALProcedure:
             self.config, self.state_manager, self.comm_handler
         )
         self.restart_manager = ALRestart(
-            self.config, self.state_manager, self.comm_handler, self.md_manager
+            self.config,
+            self.state_manager,
+            self.comm_handler,
+            self.md_manager,
+            self.ensemble_manager
         )
 
         # Set random seed
@@ -1955,6 +2051,7 @@ class PrepareALProcedure:
 
         if self.config.restart:
             self.restart_manager.handle_restart()
+
         else:
             self.state_manager.initialize_fresh_state(
                 self.config.path_to_geometry

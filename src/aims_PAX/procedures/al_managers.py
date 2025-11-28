@@ -109,6 +109,7 @@ class ALDataManager:
             r_max=self.config.r_max,
             key_specification=self.config.key_specification,
         )
+        self.state_manager.last_point_added[idx] = mace_point
 
         # Determines if a point should go to validation or training set
         validation_quota = (
@@ -126,10 +127,10 @@ class ALDataManager:
                 idx, received_point, mace_point
             )
             if self.config.replay_strategy in ["random_batch", "random_subset"]:
-                mace_sets = self._create_training_subset(
-                    mace_point, self.ensemble_manager.ensemble_mace_sets
+                self.ensemble_manager.create_training_subset(
+                    mace_point,
+                    idx,
                 )
-                self.ensemble_manager.ensemble_mace_sets = mace_sets
             
             if max_size_reached:
                 return True
@@ -137,80 +138,6 @@ class ALDataManager:
 
         self.state_manager.total_points_added += 1
         return False
-
-    def _check_subset_size(self, set_subset_size, tag, validation=False):
-        key = "valid" if validation else "train"
-        subset_size = (
-            len(self.ensemble_manager.ensemble_mace_sets[tag][key])
-            if len(self.ensemble_manager.ensemble_mace_sets[tag][key])
-            < set_subset_size
-            else set_subset_size
-        )
-        return subset_size
-
-    def _create_training_subset(
-            self, 
-            mace_point, 
-            mace_sets: dict
-            ):
-        """
-        Creates a single batch of specified size. It includes the newly sampled
-        point and a random selection of points from the current training set.
-        """
-            
-        for tag in self.ensemble_manager.ensemble_ase_sets.keys():
-
-            if self.config.replay_strategy == "random_batch":
-                train_subset_size = self._check_subset_size(
-                    self.config.set_batch_size, tag
-                )
-                valid_subset_size = self._check_subset_size(
-                    self.config.set_valid_batch_size, tag, validation=True
-                )
-                train_batch_size = train_subset_size
-                valid_batch_size = valid_subset_size
-
-            elif self.config.replay_strategy == "random_subset":
-                train_subset_size = self._check_subset_size(
-                    self.config.train_subset_size, tag
-                )
-                valid_subset_size = self._check_subset_size(
-                    int(self.config.valid_ratio * train_subset_size),
-                    tag,
-                    validation=True,
-                )
-                train_batch_size = self._check_subset_size(
-                    self.config.set_batch_size, tag
-                )
-                valid_batch_size = self._check_subset_size(
-                    self.config.set_valid_batch_size, tag, validation=True
-                )
-                
-            random_sample_train = random.sample(
-                self.ensemble_manager.ensemble_mace_sets[tag]["train"],
-                train_subset_size - 1,
-            )
-
-            random_sample_valid = random.sample(
-                self.ensemble_manager.ensemble_mace_sets[tag]["valid"],
-                valid_subset_size,
-            )
-            train_set = random_sample_train + mace_point
-            valid_set = random_sample_valid
-            (
-                mace_sets[tag]["train_subset"],
-                mace_sets[tag]["valid_subset"],
-            ) = create_dataloader(
-                train_set,
-                valid_set,
-                train_batch_size,
-                valid_batch_size,
-            )
-        
-        logging.info(f'Training loader has {len(mace_sets[tag]["train_subset"])} batches.')
-        logging.info(f'Training set has {train_subset_size} points.')
-
-        return mace_sets
 
     def _add_to_validation_set(
         self, idx: int, received_point: np.ndarray, mace_point
@@ -356,16 +283,50 @@ class TrainingOrchestrator:
         self.restart_manager = restart_manager
         self.md_manager = md_manager
         self.train_loader_key = (
-            "train_subset" if self.config.replay_strategy == "random_batch"
+            "train_subset" if self.config.replay_strategy in [
+                "random_batch", "random_subset"
+            ]
             else "train_loader"
         )
         self.valid_loader_key = (
-            "valid_subset" if self.config.replay_strategy == "random_batch"
+            "valid_subset" if self.config.replay_strategy in [
+                "random_batch", "random_subset"
+            ]
             else "valid_loader"
         )
 
+    def _get_loaders(self, session: TrainingSession, tag: str, idx: int = None):
+
+        if self.train_loader_key == "train_subset" and not session.is_convergence:
+            self.train_loader = session.ensemble_mace_sets[
+                tag
+            ][
+                self.train_loader_key
+                ][idx]
+            self.valid_loader = session.ensemble_mace_sets[
+                tag
+            ][
+                self.valid_loader_key
+                ][idx]
+        else:
+            self.train_loader = session.ensemble_mace_sets[
+                tag
+            ][
+                self.train_loader_key
+            ]
+            self.valid_loader = session.ensemble_mace_sets[
+                tag
+            ][
+                self.valid_loader_key
+            ] 
+
     def train_single_epoch(
-        self, session: TrainingSession, tag: str, model, logger=None
+        self, 
+        session: TrainingSession, 
+        tag: str, 
+        model, 
+        idx: int = None, 
+        logger=None
     ):
         """
         Train a single epoch for a specific model in the ensemble.
@@ -404,12 +365,19 @@ class TrainingOrchestrator:
             # convergence is always done on the whole dataset
             self.train_loader_key = "train_loader"
             self.valid_loader_key = "valid_loader"
+
         elif hasattr(self, "use_scheduler") and self.use_scheduler:
             lr_scheduler = training_setup["lr_scheduler"]
 
+        self._get_loaders(
+            session,
+            tag,
+            idx
+        )
+        
         train_epoch(
             model=model,
-            train_loader=session.ensemble_mace_sets[tag][self.train_loader_key],
+            train_loader=self.train_loader,
             loss_fn=training_setup["loss_fn"],
             optimizer=training_setup["optimizer"],
             lr_scheduler=lr_scheduler,
@@ -465,7 +433,7 @@ class TrainingOrchestrator:
             logger=logger,
             log_errors=self.config.model_settings["MISC"]["error_table"],
             epoch=self._get_validation_epoch(session, trajectory_idx),
-            data_loader_key=self.valid_loader_key
+            valid_loader=self.valid_loader
         )
 
         # Update session state
@@ -742,7 +710,7 @@ class ALTrainingManager:
             logger = None
             for tag, model in self.ensemble_manager.ensemble.items():
                 logger = self.orchestrator.train_single_epoch(
-                    session, tag, model, logger
+                    session, tag, model, idx, logger
                 )
 
             self.orchestrator.validate_and_update_state(session, logger, idx)

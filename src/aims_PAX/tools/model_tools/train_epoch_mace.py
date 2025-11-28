@@ -82,6 +82,7 @@ def validate_epoch_ensemble(
     ensemble: dict,
     training_setups: dict,
     ensemble_set: dict,
+    valid_loader: DataLoader,
     # ema: Optional[ExponentialMovingAverage],
     # loss_fn: torch.nn.Module,
     # valid_loader: DataLoader,
@@ -90,7 +91,6 @@ def validate_epoch_ensemble(
     logger: MetricsLogger,
     log_errors: str,
     epoch: int,
-    data_loader_key: str = "valid_loader",
 ) -> tuple[dict, float, dict]:
     """
     Evaluates an ensemble of models on the validation set and returns
@@ -117,9 +117,6 @@ def validate_epoch_ensemble(
         loss_fn = training_setups[tag]["loss_fn"]
         device = training_setups[tag]["device"]
         output_args = training_setups[tag]["output_args"]
-
-        # can be different depending on replay strategy
-        valid_loader = ensemble_set[tag][data_loader_key]
 
         if ema is not None:
             with ema.average_parameters():
