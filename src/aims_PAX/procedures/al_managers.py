@@ -429,7 +429,6 @@ class TrainingOrchestrator:
         ensemble_valid_loss, valid_loss, metrics = validate_epoch_ensemble(
             ensemble=self.ensemble_manager.ensemble,
             training_setups=session.training_setups,
-            ensemble_set=session.ensemble_mace_sets,
             logger=logger,
             log_errors=self.config.model_settings["MISC"]["error_table"],
             epoch=self._get_validation_epoch(session, trajectory_idx),

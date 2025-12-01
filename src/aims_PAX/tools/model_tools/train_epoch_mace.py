@@ -81,7 +81,6 @@ def train_epoch(
 def validate_epoch_ensemble(
     ensemble: dict,
     training_setups: dict,
-    ensemble_set: dict,
     valid_loader: DataLoader,
     # ema: Optional[ExponentialMovingAverage],
     # loss_fn: torch.nn.Module,

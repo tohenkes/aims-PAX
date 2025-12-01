@@ -758,8 +758,10 @@ class PrepareInitialDatasetProcedure:
                     ensemble_valid_losses, valid_loss, _ = (
                         validate_epoch_ensemble(
                             ensemble=self.ensemble,
+                            valid_loaders=self.ensemble_mace_sets[tag][
+                                "valid_loader"
+                            ],
                             training_setups=self.training_setups_convergence,
-                            ensemble_set=self.ensemble_mace_sets,
                             logger=logger,
                             log_errors=self.model_settings["MISC"][
                                 "error_table"

@@ -50,8 +50,12 @@ SCHEME = {
         "foundational_model_settings": {
             "mace_model": "small",
             "r_max_lr": None,
-            "dispersion_lr_damping": None
-            },
+            "dispersion_lr_damping": None,
+            "dispersion": False,
+            "dispersion_xc": 'pbe',
+            'damping': 'bj',
+            'dispersion_cutoff': 12.0,
+        },
         "skip_step_initial": 25,
         "desired_acc": 0.0,
         "desired_acc_scale_idg": 10.0,
@@ -68,7 +72,11 @@ SCHEME = {
     "optional_foundational": {
         "mace_model": "small",
         "r_max_lr": None,
-        "dispersion_lr_damping": None
+        "dispersion_lr_damping": None,
+        "dispersion": False,
+        "dispersion_xc": 'pbe',
+        'damping': 'bj',
+        'dispersion_cutoff': 12.0,
     },
     "optional_al": {
         "freeze_threshold_dataset": np.inf,
@@ -101,7 +109,11 @@ SCHEME = {
         "foundational_model_settings": {
             "mace_model": "small",
             "r_max_lr": None,
-            "dispersion_lr_damping": None
+            "dispersion_lr_damping": None,
+            "dispersion": False,
+            "dispersion_xc": 'pbe',
+            'damping': 'bj',
+            'dispersion_cutoff': 12.0,
         },
         "replay_strategy": "full_dataset",
         "train_subset_size": None,
@@ -245,13 +257,16 @@ SCHEME_DTYPES = {
     "optional_strings": [  # Fields that can be None or string
         "seeds_tags_dict",
         "aims_lib_path",
+        "dispersion_xc",
+        "damping",
     ],
     "optional_ints": [
         "train_subset_size",
     ],
     "optional_floats": [
         "r_max_lr",
-        "dispersion_lr_damping"
+        "dispersion_lr_damping",
+        "dispersion_cutoff",
     ],
     "bools": [
         "analysis",
@@ -265,6 +280,7 @@ SCHEME_DTYPES = {
         "extend_existing_final_ds",
         "use_foundational",
         "distinct_model_sets",
+        "dispersion",
     ],
     "lists": ["mol_idxs"],
     "optional_lists": [],

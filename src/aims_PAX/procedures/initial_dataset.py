@@ -210,7 +210,9 @@ class InitialDatasetProcedure(PrepareInitialDatasetProcedure):
                     ) = validate_epoch_ensemble(
                         ensemble=self.ensemble,
                         training_setups=self.training_setups,
-                        ensemble_set=self.ensemble_mace_sets,
+                        valid_loader=self.ensemble_mace_sets[tag][
+                            "valid_loader"
+                            ],
                         logger=logger,
                         log_errors=self.model_settings["MISC"]["error_table"],
                         epoch=self.epoch,
@@ -466,12 +468,29 @@ class InitialDatasetFoundational(InitialDatasetProcedure):
 
         if model_choice == 'mace-mp':
             mace_model = foundational_model_settings['mace_model']
+            dispersion = foundational_model_settings['dispersion']
+            damping = foundational_model_settings['damping']
+            dispersion_xc = foundational_model_settings['dispersion_xc']
+            dispersion_cutoff = foundational_model_settings[
+                'dispersion_cutoff'
+            ]
+            if dispersion:
+                try:
+                    from torch_dftd.torch_dftd3_calculator import TorchDFTD3Calculator
+                except ImportError as exc:
+                    raise RuntimeError(
+                        "Please install torch-dftd to use dispersion corrections (see https://github.com/pfnet-research/torch-dftd)"
+                    ) from exc
+                logging.info("Using D3 dispersion corrections with foundational MACE model.")
             return mace_mp(
                 model=mace_model,
-                dispersion=False,
+                dispersion=dispersion,
                 default_dtype=self.dtype,
                 device=self.device,
-                enable_cueq=self.enable_cueq
+                enable_cueq=self.enable_cueq,
+                damping=damping,
+                dispersion_xc=dispersion_xc,
+                dispersion_cutoff=dispersion_cutoff,
             )
         elif model_choice == 'so3lr':
             r_max_lr = foundational_model_settings['r_max_lr']
