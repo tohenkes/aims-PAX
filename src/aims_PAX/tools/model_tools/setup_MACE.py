@@ -20,8 +20,6 @@ def setup_mace(
     z_table: tools.AtomicNumberTable,
     atomic_energies_dict: dict,
     avg_num_neighbors: Optional[np.ndarray] = 1.0,
-    atomic_inter_scale: Optional[float] = 0.0,
-    atomic_inter_shift: Optional[float] = 0.0,
 ):
     """
     Setup the MACE model according to the settings and return it.
@@ -40,7 +38,6 @@ def setup_mace(
     Returns:
         MACE model
     """
-
     general_settings = settings["GENERAL"]
     architecture_settings = settings["ARCHITECTURE"]
     misc_settings = settings["MISC"]
@@ -92,7 +89,7 @@ def setup_mace(
 
     MLP_irreps = o3.Irreps(architecture_settings["MLP_irreps"])
 
-    model = modules.ScaleShiftMACE(
+    model = modules.MACE(
         **model_config,
         correlation=architecture_settings["correlation"],
         gate=modules.gate_dict[architecture_settings["gate"]],
@@ -100,8 +97,6 @@ def setup_mace(
             architecture_settings["interaction_first"]
         ],
         MLP_irreps=MLP_irreps,
-        atomic_inter_scale=atomic_inter_scale,
-        atomic_inter_shift=atomic_inter_shift,
     )
     
     if misc_settings["enable_cueq_train"]:

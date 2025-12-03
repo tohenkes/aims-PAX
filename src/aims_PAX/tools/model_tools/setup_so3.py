@@ -19,17 +19,13 @@ def create_base_so3krates_settings(
     tools.set_default_dtype(general_settings["default_dtype"])
     tools.set_seeds(general_settings["seed"])
 
-    atomic_energies: np.ndarray = np.array(
-        [atomic_energies_dict[z] for z in z_table.zs]
-    )
-
     model_config = dict(
         r_max=architecture_settings["r_max"],
-        features_dim=architecture_settings["features_dim"],
-        num_radial_basis=architecture_settings["num_radial_basis"],
+        num_features=architecture_settings["num_features"],
+        num_radial_basis_fn=architecture_settings["num_radial_basis_fn"],
         degrees=architecture_settings["degrees"],
-        num_att_heads=architecture_settings["num_att_heads"],
-        num_interactions=architecture_settings["num_interactions"],
+        num_heads=architecture_settings["num_att_heads"],
+        num_layers=architecture_settings["num_layers"],
         num_elements=len(z_table),
         avg_num_neighbors=avg_num_neighbors,
         final_mlp_layers=architecture_settings["final_mlp_layers"],
@@ -38,9 +34,9 @@ def create_base_so3krates_settings(
         initialize_ev_to_zeros=architecture_settings["initialize_ev_to_zeros"],
         radial_basis_fn=architecture_settings["radial_basis_fn"],
         trainable_rbf=architecture_settings["trainable_rbf"],
-        atomic_type_shifts=atomic_energies,
-        learn_atomic_type_shifts=misc_settings["learn_atomic_type_shifts"],
-        learn_atomic_type_scales=misc_settings["learn_atomic_type_scales"],
+        atomic_type_shifts=atomic_energies_dict,
+        energy_learn_atomic_type_shifts=architecture_settings["energy_learn_atomic_type_shifts"],
+        energy_learn_atomic_type_scales=architecture_settings["energy_learn_atomic_type_scales"],
         layer_normalization_1=architecture_settings["layer_normalization_1"],
         layer_normalization_2=architecture_settings["layer_normalization_2"],
         residual_mlp_1=architecture_settings["residual_mlp_1"],
@@ -134,9 +130,9 @@ def setup_so3lr(
         electrostatic_energy_scale=architecture_settings["electrostatic_energy_scale"],
         dispersion_energy_bool=architecture_settings["dispersion_energy_bool"],
         dispersion_energy_scale=architecture_settings["dispersion_energy_scale"],
-        dispersion_damping_bool=architecture_settings["dispersion_damping_bool"],
+        dispersion_energy_cutoff_lr_damping=architecture_settings["dispersion_energy_cutoff_lr_damping"],
         r_max_lr=architecture_settings["r_max_lr"],
-        neighborlist_format=architecture_settings["neighborlist_format"],
+        neighborlist_format_lr=architecture_settings["neighborlist_format_lr"],
     )
 
     total_settings = {**model_config, **so3lr_settings}

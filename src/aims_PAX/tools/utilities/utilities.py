@@ -75,6 +75,13 @@ def apply_model_settings(
     
     architecture = model_settings["ARCHITECTURE"]
     target.r_max = architecture["r_max"]
+    if target.model_choice == "so3lr":
+        target.r_max_lr = architecture["r_max_lr"]
+    else:
+        assert architecture.get("r_max_lr") is None, (
+            "r_max_lr is only applicable for so3lr models."
+        )
+        target.r_max_lr = None
     target.atomic_energies_dict = architecture["atomic_energies"]
     if target.model_choice == "mace":
         target.scaling = architecture["scaling"]
@@ -445,6 +452,7 @@ def get_atomic_energies_from_pt(
     z: np.array,
     seeds_tags_dict: dict,
     dtype: str,
+    model_choice: str
 ) -> tuple:
     """
     Loads the atomic energies (energy shifts) from an existing MACE
@@ -472,10 +480,16 @@ def get_atomic_energies_from_pt(
         check_pt = torch.load(
             (path_to_checkpoints + "/" + tag + f"_epoch-{last_epoch}.pt")
         )
-
-        atomic_energies_array = check_pt["model"][
-            "atomic_energies_fn.atomic_energies"
-        ]
+        
+        if model_choice == "mace":
+            atomic_energies_array = check_pt["model"][
+                "atomic_energies_fn.atomic_energies"
+            ]
+        elif model_choice in ["so3krates", "so3lr"]:
+            atomic_energies_array = check_pt["model"][
+                "atomic_energy_output_block.energy_shifts"
+            ]
+            
         ensemble_atomic_energies[tag] = np.array(
             atomic_energies_array.cpu(), dtype=dtype
         )
@@ -491,8 +505,9 @@ def get_atomic_energies_from_pt(
 
 
 def update_model_auxiliaries(
-    model: modules.MACE,
-    mace_sets: dict,
+    model: Union[modules.MACE, So3krates, SO3LR],
+    model_choice: str,
+    model_sets: dict,
     scaling: str,
     atomic_energies_list: list,
     update_atomic_energies: bool = False,
@@ -503,11 +518,11 @@ def update_model_auxiliaries(
 ):
     """
     Update the average number of neighbors, scale and shift of
-    the MACE model with the given data
+    the model with the given data
 
     Args:
-        model (modules.MACE): The MACE model to be updated.
-        mace_sets (dict): Dictionary containing the training and validation
+        model (Union[modules.MACE, So3krates, SO3LR]): The model to be updated.
+        model_sets (dict): Dictionary containing the training and validation
                             sets.
         scaling (str): Scaling method to be used.
         atomic_energies_list (list): List of atomic energies.
@@ -520,124 +535,56 @@ def update_model_auxiliaries(
     Returns:
          None
     """
-    train_loader = mace_sets["train_loader"]
-
-    if update_atomic_energies:
-        assert z_table is not None
-        assert atomic_energies_dict is not None
-
-        energies_train = torch.stack(
-            [point.energy.reshape(1) for point in mace_sets["train"]]
-        )
-        zs_train = [
-            [
-                z_table.index_to_z(torch.nonzero(one_hot).item())
-                for one_hot in point.node_attrs
-            ]
-            for point in mace_sets["train"]
-        ]
-        new_atomic_energies_dict = compute_average_E0s(
-            energies_train, zs_train, z_table
-        )
-        atomic_energies_dict.update(new_atomic_energies_dict)
-        atomic_energies_list = [
-            atomic_energies_dict[z] for z in atomic_energies_dict.keys()
-        ]
-        atomic_energies_tensor = torch.tensor(
-            atomic_energies_list, dtype=dtype_mapping[dtype]
-        )
-
-        model.atomic_energies_fn.atomic_energies = atomic_energies_tensor.to(
-            device
-        )
+    train_loader = model_sets["train_loader"]
+    assert z_table is not None
+    assert atomic_energies_dict is not None
 
     average_neighbors = modules.compute_avg_num_neighbors(train_loader)
-    for interaction_idx in range(len(model.interactions)):
-        model.interactions[interaction_idx].avg_num_neighbors = (
-            average_neighbors
-        )
-    mean, std = modules.scaling_classes[scaling](
-        train_loader, atomic_energies_list
+    
+    energies_train = torch.stack(
+        [point.energy.reshape(1) for point in model_sets["train"]]
     )
-    mean, std = torch.from_numpy(mean).to(device), torch.from_numpy(std).to(
-        device
+    zs_train = [
+        [
+            z_table.index_to_z(torch.nonzero(one_hot).item())
+            for one_hot in point.node_attrs
+        ]
+        for point in model_sets["train"]
+    ]
+    new_atomic_energies_dict = compute_average_E0s(
+        energies_train, zs_train, z_table
     )
-    model.scale_shift = modules.blocks.ScaleShiftBlock(scale=std, shift=mean)
-
-
-def update_mace_auxiliaries(
-    model: modules.MACE,
-    mace_sets: dict,
-    scaling: str,
-    atomic_energies_list: list,
-    update_atomic_energies: bool = False,
-    atomic_energies_dict: dict = None,
-    z_table: tools.AtomicNumberTable = None,
-    dtype: str = "float64",
-    device: str = "cpu",
-):
-    """
-    Update the average number of neighbors, scale and shift of
-    the MACE model with the given data
-
-    Args:
-        model (modules.MACE): The MACE model to be updated.
-        mace_sets (dict): Dictionary containing the training and validation
-                            sets.
-        scaling (str): Scaling method to be used.
-        atomic_energies_list (list): List of atomic energies.
-        atomic_energies_dict (dict): Dictionary of atomic energies.
-        update_atomic_energies (bool): Whether to update the atomic energies.
-        z_table (tools.AtomicNumberTable): Table of elements.
-        dtype (str): Dtype of the model.
-        device (str): Device to be used for the model.
-
-    Returns:
-         None
-    """
-    train_loader = mace_sets["train_loader"]
-
-    if update_atomic_energies:
-        assert z_table is not None
-        assert atomic_energies_dict is not None
-
-        energies_train = torch.stack(
-            [point.energy.reshape(1) for point in mace_sets["train"]]
+    atomic_energies_dict.update(new_atomic_energies_dict)
+    
+    if model_choice == "mace":
+        if update_atomic_energies:
+            update_energy_shifts_mace(
+                model,
+                atomic_energies_dict,
+                device,
+                dtype,
+            )
+        mean, std = modules.scaling_classes[scaling](
+            train_loader, atomic_energies_list
         )
-        zs_train = [
-            [
-                z_table.index_to_z(torch.nonzero(one_hot).item())
-                for one_hot in point.node_attrs
-            ]
-            for point in mace_sets["train"]
-        ]
-        new_atomic_energies_dict = compute_average_E0s(
-            energies_train, zs_train, z_table
-        )
-        atomic_energies_dict.update(new_atomic_energies_dict)
-        atomic_energies_list = [
-            atomic_energies_dict[z] for z in atomic_energies_dict.keys()
-        ]
-        atomic_energies_tensor = torch.tensor(
-            atomic_energies_list, dtype=dtype_mapping[dtype]
-        )
-
-        model.atomic_energies_fn.atomic_energies = atomic_energies_tensor.to(
+        mean, std = torch.from_numpy(mean).to(device), torch.from_numpy(std).to(
             device
         )
-
-    average_neighbors = modules.compute_avg_num_neighbors(train_loader)
-    for interaction_idx in range(len(model.interactions)):
-        model.interactions[interaction_idx].avg_num_neighbors = (
-            average_neighbors
+        update_avg_num_neighbors_mace(
+            model,
+            average_neighbors,
         )
-    mean, std = modules.scaling_classes[scaling](
-        train_loader, atomic_energies_list
-    )
-    mean, std = torch.from_numpy(mean).to(device), torch.from_numpy(std).to(
-        device
-    )
-    model.scale_shift = modules.blocks.ScaleShiftBlock(scale=std, shift=mean)
+        
+    elif model_choice in ["so3krates", "so3lr"]:
+        update_avg_num_neighbors_so3(
+            model,
+            average_neighbors, 
+        )
+        if update_atomic_energies:
+            update_energy_shifts_so3(
+                model,
+                atomic_energies_dict,
+            )
 
 
 def update_energy_shifts_mace(
@@ -664,14 +611,6 @@ def update_avg_num_neighbors_mace(
 ):
     for interaction in model.interactions:
         interaction.avg_num_neighbors = avg_num_neighbors
-
-
-def update_scale_shift_block_mace(
-    model: modules.MACE,
-    mean: float,
-    std: float,
-):
-    model.scale_shift = modules.blocks.ScaleShiftBlock(scale=std, shift=mean)
 
 
 def update_energy_shifts_so3(

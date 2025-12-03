@@ -12,7 +12,7 @@ from aims_PAX.tools.uncertainty import (
 )
 from aims_PAX.tools.utilities.data_handling import (
     load_ensemble_sets_from_folder,
-    ase_to_mace_ensemble_sets,
+    ase_to_model_ensemble_sets,
     create_dataloader,
 )
 from aims_PAX.tools.utilities.utilities import (
@@ -29,7 +29,6 @@ from aims_PAX.tools.utilities.utilities import (
     setup_logger,
     update_model_auxiliaries,
     save_checkpoint,
-    save_checkpoint,
     create_keyspec,
     log_yaml_block,
     normalize_md_settings,
@@ -38,7 +37,7 @@ from aims_PAX.tools.utilities.utilities import (
     ModifyMD,
 )
 from aims_PAX.tools.utilities.input_utils import read_geometry
-from aims_PAX.tools.model_tools.train_epoch_mace import (
+from aims_PAX.tools.model_tools.train_epoch import (
     train_epoch,
     validate_epoch_ensemble,
 )
@@ -171,9 +170,13 @@ class PrepareInitialDatasetProcedure:
                 "Running Initial Dataset Procedure with "
                 f"{len(self.trajectories)} geometries."
             )
-        # TODO: adapt to so3lr, it always uses all 118
-        self.z = Z_from_geometry(self.trajectories)
-        self.z_table = create_ztable(self.z)
+            
+        if self.model_choice == "mace":
+            self.z = Z_from_geometry(self.trajectories)
+            self.z_table = create_ztable(self.z)
+        elif self.model_choice in ["so3lr", "so3krates"]:
+            self.z = np.array([i for i in range(1, 119)])
+            self.z_table = create_ztable(self.z)
 
         self.md_drivers = {idx: None for idx in self.trajectories.keys()}
 
@@ -230,16 +233,17 @@ class PrepareInitialDatasetProcedure:
                     ensemble=self.ensemble,
                     path_to_folder=self.dataset_dir / "initial",
                 )
-                self.ensemble_mace_sets = ase_to_mace_ensemble_sets(
+                self.ensemble_model_sets = ase_to_model_ensemble_sets(
                     ensemble_ase_sets=self.ensemble_ase_sets,
                     z_table=self.z_table,
                     r_max=self.r_max,
                     seed=self.seed,
-                    key_specification=self.key_specification
+                    key_specification=self.key_specification,
+                    r_max_lr=self.r_max_lr
                 )
 
             else:
-                self.ensemble_mace_sets, self.ensemble_ase_sets = (
+                self.ensemble_model_sets, self.ensemble_ase_sets = (
                     {
                         tag: {"train": [], "valid": []}
                         for tag in self.ensemble.keys()
@@ -305,6 +309,7 @@ class PrepareInitialDatasetProcedure:
             "n_points_per_sampling_step_idg"
         ]
         self.max_initial_epochs = self.idg_settings["max_initial_epochs"]
+        self.converge_initial = self.idg_settings["converge_initial"]
         self.max_convergence_epochs = self.idg_settings[
             "max_convergence_epochs"
         ]
@@ -543,7 +548,6 @@ class PrepareInitialDatasetProcedure:
         if self.rank == 0:
             if self.atomic_energies_dict is None:
                 if self.restart:
-                    #TODO: adapt to so3lr
                     logging.info("Loading atomic energies from checkpoint.")
                     (
                         self.ensemble_atomic_energies,
@@ -553,12 +557,13 @@ class PrepareInitialDatasetProcedure:
                         z=self.z,
                         seeds_tags_dict=self.seeds_tags_dict,
                         dtype=self.dtype,
+                        model_choice=self.model_choice
                     )
                 else:
 
                     logging.info(
-                        "No atomic energies specified. Initializing with 0 and"
-                        " fit to training data."
+                        "No atomic energies specified. "
+                        " Fitting to training data."
                     )
                     self.ensemble_atomic_energies_dict = {
                         tag: {z: 0 for z in np.sort(np.unique(self.z))}
@@ -670,18 +675,19 @@ class PrepareInitialDatasetProcedure:
             for _, (tag, model) in enumerate(self.ensemble.items()):
 
                 (
-                    self.ensemble_mace_sets[tag]["train_loader"],
-                    self.ensemble_mace_sets[tag]["valid_loader"],
+                    self.ensemble_model_sets[tag]["train_loader"],
+                    self.ensemble_model_sets[tag]["valid_loader"],
                 ) = create_dataloader(
-                    self.ensemble_mace_sets[tag]["train"],
-                    self.ensemble_mace_sets[tag]["valid"],
+                    self.ensemble_model_sets[tag]["train"],
+                    self.ensemble_model_sets[tag]["valid"],
                     self.set_batch_size,
                     self.set_valid_batch_size,
                 )
 
                 update_model_auxiliaries(
                     model=model,
-                    mace_sets=self.ensemble_mace_sets[tag],
+                    model_choice=self.model_choice,
+                    model_sets=self.ensemble_model_sets[tag],
                     atomic_energies_list=self.ensemble_atomic_energies[tag],
                     scaling=self.scaling,
                     update_atomic_energies=self.update_atomic_energies,
@@ -725,7 +731,7 @@ class PrepareInitialDatasetProcedure:
                     )
                     train_epoch(
                         model=model,
-                        train_loader=self.ensemble_mace_sets[tag][
+                        train_loader=self.ensemble_model_sets[tag][
                             "train_loader"
                         ],
                         loss_fn=self.training_setups_convergence[tag][
@@ -758,7 +764,7 @@ class PrepareInitialDatasetProcedure:
                     ensemble_valid_losses, valid_loss, _ = (
                         validate_epoch_ensemble(
                             ensemble=self.ensemble,
-                            valid_loaders=self.ensemble_mace_sets[tag][
+                            valid_loader=self.ensemble_model_sets[tag][
                                 "valid_loader"
                             ],
                             training_setups=self.training_setups_convergence,
@@ -1252,7 +1258,7 @@ class ALEnsemble:
             ),
         )
 
-        self.ensemble_mace_sets = ase_to_mace_ensemble_sets(
+        self.ensemble_mace_sets = ase_to_model_ensemble_sets(
             ensemble_ase_sets=self.ensemble_ase_sets,
             z_table=self.z_table,
             r_max=self.config.r_max,

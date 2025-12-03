@@ -11,6 +11,7 @@ from typing import (
 )
 from pathlib import Path
 from ase.io import write
+from so3krates_torch.data.atomic_data import AtomicData as so3_data
 from mace import data as mace_data
 from mace import tools
 from mace.tools import AtomicNumberTable, torch_geometric
@@ -345,12 +346,13 @@ def create_dataloader(
     return train_loader, valid_loader
 
 
-def create_mace_dataset(
+def create_model_dataset(
     data: list,
     seed: int,
     z_table: AtomicNumberTable,
     r_max: float,
-    key_specification: KeySpecification
+    key_specification: KeySpecification,
+    r_max_lr: Optional[float] = None,
 ) -> list:
     """
     Create a MACE style dataset from a list of ASE atoms objects.
@@ -374,20 +376,26 @@ def create_mace_dataset(
     )
 
     data_set = [
-        mace_data.AtomicData.from_config(config, z_table=z_table, cutoff=r_max)
+        so3_data.from_config(
+            config,
+            z_table=z_table, 
+            cutoff=r_max,
+            cutoff_lr=r_max_lr
+            )
         for config in collections.train
     ]
     return data_set
 
 
-def update_mace_set(
+def update_model_set(
     new_train_data,
     new_valid_data,
-    mace_set: dict,
+    model_set: dict,
     z_table: tools.AtomicNumberTable,
     seed: int,
     r_max: float,
-    key_specification: KeySpecification
+    key_specification: KeySpecification,
+    r_max_lr: Optional[float] = None,
 ) -> dict:
     """
     Update the MACE dataset with new data.
@@ -404,44 +412,46 @@ def update_mace_set(
     Returns:
         dict: Updated MACE dataset.
     """
-    new_train_set = create_mace_dataset(
+    new_train_set = create_model_dataset(
         data=new_train_data,
         z_table=z_table,
         seed=seed, 
         r_max=r_max,
+        r_max_lr=r_max_lr,
         key_specification=key_specification
     )
 
-    new_valid_set = create_mace_dataset(
+    new_valid_set = create_model_dataset(
         data=new_valid_data,
         z_table=z_table,
         seed=seed,
         r_max=r_max,
+        r_max_lr=r_max_lr,
         key_specification=key_specification
     )
-    mace_set["train"] += new_train_set
-    mace_set["valid"] += new_valid_set
+    model_set["train"] += new_train_set
+    model_set["valid"] += new_valid_set
 
-    return mace_set
-
+    return model_set
 
 def update_datasets(
     new_points: list,
-    mace_set: dict,
+    model_set: dict,
     ase_set: dict,
     valid_split: float,
     z_table: tools.AtomicNumberTable,
     seed: int,
     r_max: float,
-    key_specification: KeySpecification
+    key_specification: KeySpecification,
+    r_max_lr: Optional[float] = None,
 
 ) -> tuple:
     """
-    Update the ASE and MACE datasets with new data.
+    Update the ASE and MACE/SO3LR datasets with new data.
 
     Args:
         new_points (list): List of ASE atoms objects.
-        mace_set (dict): Dictionary of MACE style training and validation data.
+        model_set (dict): Dictionary of MACE/SO3LR style training and validation data.
         ase_set (dict): Dictionary of ASE style training and validation data.
         valid_split (float): Fraction of data to be used for validation.
         z_table (tools.AtomicNumberTable): Table of elements.
@@ -455,28 +465,30 @@ def update_datasets(
     ase_set["train"] += new_train_data
     ase_set["valid"] += new_valid_data
 
-    mace_set = update_mace_set(
-        new_train_data, 
-        new_valid_data,
-        mace_set,
-        z_table, 
-        seed, 
-        r_max,
+    model_set = update_model_set(
+        new_train_data=new_train_data, 
+        new_valid_data=new_valid_data,
+        model_set=model_set,
+        z_table=z_table, 
+        seed=seed, 
+        r_max=r_max,
+        r_max_lr=r_max_lr,
         key_specification=key_specification
     )
 
-    return ase_set, mace_set
+    return ase_set, model_set
 
 
-def ase_to_mace_ensemble_sets(
+def ase_to_model_ensemble_sets(
     ensemble_ase_sets: dict,
     z_table,
     seed: dict,
     r_max: float,
-    key_specification: KeySpecification
+    key_specification: KeySpecification,
+    r_max_lr: Optional[float] = None,
 ) -> dict:
     """
-    Convert ASE style ensemble datasets to MACE style ensemble datasets.
+    Convert ASE style ensemble datasets to model style ensemble datasets.
 
     Args:
         ensemble_ase_sets (dict): Dictionary of ASE style ensemble datasets.
@@ -485,27 +497,29 @@ def ase_to_mace_ensemble_sets(
         r_max (float): Cut-off radius.
 
     Returns:
-        dict: Dictionary of MACE style ensemble datasets.
+        dict: Dictionary of model style ensemble datasets.
     """
-    ensemble_mace_sets = {
+    ensemble_model_sets = {
         tag: {"train": [], "valid": []} for tag in ensemble_ase_sets.keys()
     }
     for tag in ensemble_ase_sets.keys():
-        ensemble_mace_sets[tag]["train"] = create_mace_dataset(
+        ensemble_model_sets[tag]["train"] = create_model_dataset(
             data=ensemble_ase_sets[tag]["train"],
             z_table=z_table,
             seed=seed,
             r_max=r_max,
+            r_max_lr=r_max_lr,
             key_specification=key_specification
         )
-        ensemble_mace_sets[tag]["valid"] = create_mace_dataset(
+        ensemble_model_sets[tag]["valid"] = create_model_dataset(
             data=ensemble_ase_sets[tag]["valid"],
             z_table=z_table,
             seed=seed,
             r_max=r_max,
+            r_max_lr=r_max_lr,
             key_specification=key_specification
         )
-    return ensemble_mace_sets
+    return ensemble_model_sets
 
 
 def save_datasets(

@@ -266,7 +266,9 @@ SCHEME_DTYPES = {
     "optional_floats": [
         "r_max_lr",
         "dispersion_lr_damping",
+        "dispersion_energy_cutoff_lr_damping",
         "dispersion_cutoff",
+        
     ],
     "bools": [
         "analysis",
@@ -380,7 +382,7 @@ SCHEME_MODEL_DTYPES = {
         "activation_fn",
         "energy_activation_fn",
         "input_convention",
-        "neighborlist_format",
+        "neighborlist_format_lr",
     ],
     "floats": [
         "r_max",
@@ -411,7 +413,8 @@ SCHEME_MODEL_DTYPES = {
         "valid_batch_size",
         "scheduler_patience",
         #SO3LR
-        "features_dim",
+        "num_radial_basis_fn",
+        "num_features",
         "num_att_heads",
         "num_layers",
         "final_mlp_layers",
@@ -467,7 +470,7 @@ SCHEME_MODEL_DTYPES = {
 SCHEME_MACE = {
     "required_architecture": [],
     "optional_architecture": {
-        "model": "ScaleShiftMACE",
+        "model": "MACE",
         "scaling": "rms_forces_scaling",
         "r_max": 5.0,
         "num_channels": 128,
@@ -497,8 +500,8 @@ SCHEME_SO3LR = {
     "optional_architecture": {
         "model": "SO3LR",
         "r_max": 4.5,
-        "features_dim": 128,
-        "num_radial_basis": 32,
+        "num_features": 128,
+        "num_radial_basis_fn": 32,
         "degrees": [1, 2, 3, 4],
         "num_att_heads": 4,
         "num_layers": 3,
@@ -530,9 +533,10 @@ SCHEME_SO3LR = {
         "electrostatic_energy_scale": 4.0,
         "dispersion_energy_bool": True,
         "dispersion_energy_scale": 1.2,
-        "dispersion_damping_bool": True,
+        "dispersion_energy_cutoff_lr_damping": 2.0,
         "r_max_lr": None,
-        "neighborlist_format": "sparse"
+        "neighborlist_format_lr": "sparse",
+        "atomic_energies": None,
     },
 }
 SCHEME_SO3LR.update(SCHEME_MODEL_TRAINING)
@@ -928,7 +932,7 @@ def check_model_settings(settings: dict) -> dict:
     
     if model_choice.lower() == 'mace':
         model_scheme_used = SCHEME_MACE
-    if model_choice.lower() == 'so3lr':
+    if model_choice.lower() in ['so3krates', 'so3lr']:
         model_scheme_used = SCHEME_SO3LR
         
     # Check top-level keys

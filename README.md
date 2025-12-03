@@ -311,7 +311,7 @@ We use exactly the same names as employed in the [MACE code](https://github.com/
 | max_ell         | `int`         | `3`           | Maximum degree of direction embeddings. |
 | max_L           | `int`         | `1`           | Maximum degree for equivariant features. |
 | MLP_irreps      | `str`         | `"16x0e"` | Irreps of the multi-layer perceptron in the last readout. Format is a `str` as defined in [`e3nn`](https://github.com/e3nn/e3nn/) |
-| model           | `str`         | `"ScaleShiftMACE"` | Type of MACE model architecture to use. |
+| model           | `str`         | `"MACE"` | Type of MACE model architecture to use. |
 | num_channels    | `int`         | `128`         | Number of channels (features). |
 | num_cutoff_basis| `int`         | `5`           | Number of cutoff basis functions. |
 | num_interactions| `int`         | `2`           | Number of interaction layers. |

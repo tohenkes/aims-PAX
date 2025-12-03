@@ -40,7 +40,7 @@ from aims_PAX.tools.model_tools.training_tools import (
     setup_model_training,
     reset_mace_optimizer,
 )
-from aims_PAX.tools.model_tools.train_epoch_mace import (
+from aims_PAX.tools.model_tools.train_epoch import (
     train_epoch,
     validate_epoch_ensemble,
 )

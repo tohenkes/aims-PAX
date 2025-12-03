@@ -22,7 +22,7 @@ from aims_PAX.tools.utilities.parsl_utils import (
     handle_parsl_logger,
     prepare_parsl,
 )
-from aims_PAX.tools.model_tools.train_epoch_mace import (
+from aims_PAX.tools.model_tools.train_epoch import (
     train_epoch,
     validate_epoch_ensemble,
 )
@@ -111,46 +111,46 @@ class InitialDatasetProcedure(PrepareInitialDatasetProcedure):
 
                 (
                     self.ensemble_ase_sets[tag],
-                    self.ensemble_mace_sets[tag],
+                    self.ensemble_model_sets[tag],
                 ) = update_datasets(
                     new_points=member_points,
-                    mace_set=self.ensemble_mace_sets[tag],
+                    model_set=self.ensemble_model_sets[tag],
                     ase_set=self.ensemble_ase_sets[tag],
                     valid_split=self.valid_ratio,
                     z_table=self.z_table,
                     seed=self.seed,
                     r_max=self.r_max,
+                    r_max_lr=self.r_max_lr,
                     key_specification=self.key_specification
                 )
 
                 batch_size = (
                     1
-                    if len(self.ensemble_mace_sets[tag]["train"])
+                    if len(self.ensemble_model_sets[tag]["train"])
                     < self.set_batch_size
                     else self.set_batch_size
                 )
                 valid_batch_size = (
                     1
-                    if len(self.ensemble_mace_sets[tag]["valid"])
+                    if len(self.ensemble_model_sets[tag]["valid"])
                     < self.set_valid_batch_size
                     else self.set_valid_batch_size
                 )
 
                 (
-                    self.ensemble_mace_sets[tag]["train_loader"],
-                    self.ensemble_mace_sets[tag]["valid_loader"],
+                    self.ensemble_model_sets[tag]["train_loader"],
+                    self.ensemble_model_sets[tag]["valid_loader"],
                 ) = create_dataloader(
-                    self.ensemble_mace_sets[tag]["train"],
-                    self.ensemble_mace_sets[tag]["valid"],
+                    self.ensemble_model_sets[tag]["train"],
+                    self.ensemble_model_sets[tag]["valid"],
                     batch_size,
                     valid_batch_size,
                 )
-                # because we are continously training the model we
-                # have to update the average number of neighbors, shifts
-                # and the scaling factor continously as well
+
                 update_model_auxiliaries(
                     model=model,
-                    mace_sets=self.ensemble_mace_sets[tag],
+                    model_choice=self.model_choice,
+                    model_sets=self.ensemble_model_sets[tag],
                     atomic_energies_list=self.ensemble_atomic_energies[tag],
                     scaling=self.scaling,
                     update_atomic_energies=self.update_atomic_energies,
@@ -163,8 +163,8 @@ class InitialDatasetProcedure(PrepareInitialDatasetProcedure):
                 )
                 logging.info(
                     f"Training set size for '{tag}': "
-                    f"{len(self.ensemble_mace_sets[tag]['train'])}; Validation"
-                    f" set size: {len(self.ensemble_mace_sets[tag]['valid'])}."
+                    f"{len(self.ensemble_model_sets[tag]['train'])}; Validation"
+                    f" set size: {len(self.ensemble_model_sets[tag]['valid'])}."
                 )
 
             logging.info("Training.")
@@ -181,7 +181,7 @@ class InitialDatasetProcedure(PrepareInitialDatasetProcedure):
                     )
                     train_epoch(
                         model=model,
-                        train_loader=self.ensemble_mace_sets[tag][
+                        train_loader=self.ensemble_model_sets[tag][
                             "train_loader"
                         ],
                         loss_fn=self.training_setups[tag]["loss_fn"],
@@ -210,7 +210,7 @@ class InitialDatasetProcedure(PrepareInitialDatasetProcedure):
                     ) = validate_epoch_ensemble(
                         ensemble=self.ensemble,
                         training_setups=self.training_setups,
-                        valid_loader=self.ensemble_mace_sets[tag][
+                        valid_loader=self.ensemble_model_sets[tag][
                             "valid_loader"
                             ],
                         logger=logger,
@@ -365,8 +365,12 @@ class InitialDatasetProcedure(PrepareInitialDatasetProcedure):
             )
             self.epoch = self.comm_handler.bcast(self.epoch, root=0)
             self.comm_handler.barrier()
-
+        
         if self.rank == 0:
+            
+            if self.converge_initial:
+                logging.info("Converging initial dataset models.")
+                self.converge()
 
             save_ensemble(
                 ensemble=self.ensemble,
@@ -1088,16 +1092,16 @@ class InitialDatasetPARSL(InitialDatasetFoundational):
                                 current_point.info["REF_dipole"] = temp["dipole"]
                             recalculated_points.append(current_point)
 
-                            if (
-                                len(recalculated_points)
-                                % self.idg_progress_dft_update
-                            ) == 0 or (
-                                len(recalculated_points)
-                                == len(self.sampled_points)
-                            ):
-                                logging.info(
-                                    f"Recalculated {len(recalculated_points)} points."
-                                )
+                            #if (
+                            #    len(recalculated_points)
+                            #    % self.idg_progress_dft_update
+                            #) == 0 or (
+                            #    len(recalculated_points)
+                            #    == len(self.sampled_points)
+                            #):
+                            logging.info(
+                                f"Recalculated {len(recalculated_points)} points."
+                            )
                             del job_results[idx][i]
                             calc_launched -= 1
                     time.sleep(0.5)
