@@ -12,7 +12,7 @@ from mace.cli.convert_cueq_e3nn import run as convert_cueq_e3nn
 from mace.tools import AtomicNumberTable
 from so3krates_torch.modules.models import So3krates, SO3LR
 from aims_PAX.tools.model_tools.setup_MACE import setup_mace
-from aims_PAX.tools.model_tools.setup_so3 import setup_so3krates, setup_so3lr
+from aims_PAX.tools.model_tools.setup_so3 import setup_so3krates, setup_so3lr, setup_multihead_so3lr
 from aims_PAX.tools.model_tools.training_tools import setup_model_training
 import ase.data
 from ase.io import read
@@ -75,6 +75,7 @@ def apply_model_settings(
     
     architecture = model_settings["ARCHITECTURE"]
     target.r_max = architecture["r_max"]
+    
     if target.model_choice == "so3lr":
         target.r_max_lr = architecture["r_max_lr"]
     else:
@@ -82,6 +83,12 @@ def apply_model_settings(
             "r_max_lr is only applicable for so3lr models."
         )
         target.r_max_lr = None
+        
+    if target.model_choice in ["so3lr", "so3krates"]:
+        target.dispersion_energy_cutoff_lr_damping = architecture[
+                "dispersion_energy_cutoff_lr_damping"
+            ]
+    
     target.atomic_energies_dict = architecture["atomic_energies"]
     if target.model_choice == "mace":
         target.scaling = architecture["scaling"]
@@ -104,6 +111,16 @@ def apply_model_settings(
         target.properties.append("dipole")
     target.enable_cueq = misc["enable_cueq"]
     target.enable_cueq_train = misc["enable_cueq_train"]
+
+    # Multihead attributes
+    target.use_multihead_model = architecture["use_multihead_model"]
+    target.num_multihead_heads = architecture["num_multihead_heads"]
+    if target.use_multihead_model and target.num_multihead_heads is not None:
+        target.all_heads = [
+            f"head_{i}" for i in range(target.num_multihead_heads) 
+        ]
+    else:
+        target.all_heads = None
 
 
 def is_multi_trajectory_md(
@@ -333,7 +350,7 @@ def create_seeds_tags_dict(
     save_seeds_tags_dict: str = "seeds_tags_dict.npz",
 ) -> dict:
     """
-    Creates a dict where the keys (tags) are the names of the MACE
+    Creates a dict where the keys (tags) are the names of the model
     models in the ensemble and the values are the respective seeds.
 
     Args:
@@ -407,24 +424,42 @@ def setup_ensemble_dicts(
                 atomic_energies_dict=ensemble_atomic_energies_dict[tag],
             )
         elif model_choice == "so3lr":
-            ensemble[tag] = setup_so3lr(
-                settings=model_settings,
-                z_table=z_table,
-                atomic_energies_dict=ensemble_atomic_energies_dict[tag],
-            )
+            if model_settings["ARCHITECTURE"]["use_multihead_model"]:
+                assert model_settings["ARCHITECTURE"][
+                    "num_multihead_heads"
+                ] is not None, (
+                    "num_multihead_heads must be specified when using "
+                    "a multihead SO3LR model."
+                )
+                assert len(seeds_tags_dict) == 1, (
+                    "When using a multihead model ('use_multihead_model: True'), "
+                    "'ensemble_size' must be 1."
+                )
+                ensemble[tag] = setup_multihead_so3lr(
+                    settings=model_settings,
+                    z_table=z_table,
+                    atomic_energies_dict=ensemble_atomic_energies_dict[tag],
+                )
+            else:
+                ensemble[tag] = setup_so3lr(
+                    settings=model_settings,
+                    z_table=z_table,
+                    atomic_energies_dict=ensemble_atomic_energies_dict[tag],
+                )
     return ensemble
 
 
 def get_atomic_energies_from_ensemble(
     ensemble: dict,
     z,
+    model_choice: str,
     dtype: str,
 ):
     """
     Loads the atomic energies from existing ensemble members.
 
     Args:
-        ensemble (dict): Dictionary of MACE models.
+        ensemble (dict): Dictionary of model models.
         z (np.array): Array of atomic numbers for which the atomic energies
                         are needed.
         dtype (str): Data type for the atomic energies.
@@ -433,9 +468,18 @@ def get_atomic_energies_from_ensemble(
     ensemble_atomic_energies_dict = {}
     ensemble_atomic_energies = {}
     for tag, model in ensemble.items():
-        ensemble_atomic_energies[tag] = np.array(
-            model.atomic_energies_fn.atomic_energies.cpu(), dtype=dtype
-        )
+        if model_choice == "mace":
+            ensemble_atomic_energies[tag] = np.array(
+                model.atomic_energies_fn.atomic_energies.cpu(), dtype=dtype
+            )
+        else:
+            energy_shifts_so3 = model.atomic_energy_output_block.energy_shifts
+            if energy_shifts_so3.requires_grad:
+                energy_shifts_so3 = energy_shifts_so3.detach()
+            ensemble_atomic_energies[tag] = np.array(
+                energy_shifts_so3.cpu(),
+                dtype=dtype
+            )
         ensemble_atomic_energies_dict[tag] = {}
         for i, atomic_energy in enumerate(ensemble_atomic_energies[tag]):
             # TH: i don't know if the atomic energies are really sorted
@@ -455,7 +499,7 @@ def get_atomic_energies_from_pt(
     model_choice: str
 ) -> tuple:
     """
-    Loads the atomic energies (energy shifts) from an existing MACE
+    Loads the atomic energies (energy shifts) from an existing model
     training checkpoint. Returns a list and dictionary containing the
     atomic energies for each ensemble member.
 
@@ -635,7 +679,7 @@ def update_avg_num_neighbors_so3(
 def save_checkpoint(
     checkpoint_handler: tools.CheckpointHandler,
     training_setup: dict,
-    model: modules.MACE,
+    model,
     epoch: int,
     keep_last: bool = False,
 ):
@@ -643,10 +687,10 @@ def save_checkpoint(
     Save a checkpoint of the training setup and model.
 
     Args:
-        checkpoint_handler (tools.CheckpointHandler): MACE handler for saving
+        checkpoint_handler (tools.CheckpointHandler): model handler for saving
                                                         checkpoints.
         training_setup (dict): Training settings.
-        model (modules.MACE): MACE model to be saved.
+        model: model model to be saved.
         epoch (int): Current epoch.
         keep_last (bool, optional): Keep the last checkpoint.
                                         Defaults to False.
@@ -833,7 +877,7 @@ def save_ensemble(
     Args:
         ensemble (dict): Dictionary of models.
         training_setups (dict): Dictionary of training setups for each model.
-        model_settings (dict): Dictionary of MACE settings, specificied by the
+        model_settings (dict): Dictionary of model settings, specificied by the
                                      user in the config file.
     """
     for tag, model in ensemble.items():

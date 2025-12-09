@@ -295,12 +295,16 @@ def create_mace_optimizer(
     return optimizer
 
 
-def reset_mace_optimizer(
-    model: modules.MACE,
+def reset_model_optimizer(
+    model: torch.nn.Module,
     training_setup: dict,
     training_settings: dict,
+    model_choice: str,
 ):
-    optimizer = create_mace_optimizer(model, training_settings)
+    if model_choice.lower() == "mace":
+        optimizer = create_mace_optimizer(model, training_settings)
+    else:
+        optimizer = create_standard_optimizer(model, training_settings)
     training_setup["optimizer"] = optimizer
     return training_setup
 

@@ -1,6 +1,6 @@
 from typing import Optional
 import numpy as np
-from so3krates_torch.modules.models import So3krates, SO3LR
+from so3krates_torch.modules.models import So3krates, SO3LR, MultiHeadSO3LR
 from mace import tools
 from mace.tools import AtomicNumberTable
 import torch
@@ -58,6 +58,39 @@ def create_base_so3krates_settings(
 
     return model_config
 
+def create_base_so3lr_settings(
+    settings: dict,
+    z_table: tools.AtomicNumberTable,
+    atomic_energies_dict: dict,
+    avg_num_neighbors: Optional[np.ndarray] = 1.0
+):
+    
+    model_config = create_base_so3krates_settings(
+        settings,
+        z_table,
+        atomic_energies_dict,
+        avg_num_neighbors
+    )
+
+    general_settings = settings["GENERAL"]
+    architecture_settings = settings["ARCHITECTURE"]
+
+    tools.set_default_dtype(general_settings["default_dtype"])
+    tools.set_seeds(general_settings["seed"])
+
+    so3lr_settings = dict(
+        zbl_repulsion_bool=architecture_settings["zbl_repulsion_bool"],
+        electrostatic_energy_bool=architecture_settings["electrostatic_energy_bool"],
+        electrostatic_energy_scale=architecture_settings["electrostatic_energy_scale"],
+        dispersion_energy_bool=architecture_settings["dispersion_energy_bool"],
+        dispersion_energy_scale=architecture_settings["dispersion_energy_scale"],
+        dispersion_energy_cutoff_lr_damping=architecture_settings["dispersion_energy_cutoff_lr_damping"],
+        r_max_lr=architecture_settings["r_max_lr"],
+        neighborlist_format_lr=architecture_settings["neighborlist_format_lr"],
+    )
+
+    total_settings = {**model_config, **so3lr_settings}
+    return total_settings
 
 def setup_so3krates(
     settings: dict,
@@ -91,7 +124,6 @@ def setup_so3krates(
 
     return model
 
-
 def setup_so3lr(
     settings: dict,
     z_table: tools.AtomicNumberTable,
@@ -111,30 +143,45 @@ def setup_so3lr(
         SO3LR: SO3LR model
     """
 
-    model_config = create_base_so3krates_settings(
+    model_config = create_base_so3lr_settings(
         settings,
         z_table,
         atomic_energies_dict,
         avg_num_neighbors
     )
+    
+    model = SO3LR(**model_config).to(settings["MISC"]["device"])
+    return model
 
-    general_settings = settings["GENERAL"]
-    architecture_settings = settings["ARCHITECTURE"]
+def setup_multihead_so3lr(
+    settings: dict,
+    z_table: tools.AtomicNumberTable,
+    atomic_energies_dict: dict,
+    avg_num_neighbors: Optional[np.ndarray] = 1.0
+) -> MultiHeadSO3LR:
+    """
+    Setup the MultiHeadSO3LR model according to the settings and return it.
 
-    tools.set_default_dtype(general_settings["default_dtype"])
-    tools.set_seeds(general_settings["seed"])
+    Args:
+        settings (dict): Model settings
+        z_table (tools.AtomicNumberTable): Table of atomic numbers
+        atomic_energies_dict (dict): Dictionary of atomic energies
+        avg_num_neighbors (Optional[np.ndarray], optional): Average number of neighbors. Defaults to 1.0.
 
-    so3lr_settings = dict(
-        zbl_repulsion_bool=architecture_settings["zbl_repulsion_bool"],
-        electrostatic_energy_bool=architecture_settings["electrostatic_energy_bool"],
-        electrostatic_energy_scale=architecture_settings["electrostatic_energy_scale"],
-        dispersion_energy_bool=architecture_settings["dispersion_energy_bool"],
-        dispersion_energy_scale=architecture_settings["dispersion_energy_scale"],
-        dispersion_energy_cutoff_lr_damping=architecture_settings["dispersion_energy_cutoff_lr_damping"],
-        r_max_lr=architecture_settings["r_max_lr"],
-        neighborlist_format_lr=architecture_settings["neighborlist_format_lr"],
+    Returns:
+        MultiHeadSO3LR: MultiHeadSO3LR model
+    """
+    
+    model_config = create_base_so3lr_settings(
+        settings,
+        z_table,
+        atomic_energies_dict,
+        avg_num_neighbors
     )
-
-    total_settings = {**model_config, **so3lr_settings}
-    model = SO3LR(**total_settings).to(settings["MISC"]["device"])
+    model_config[
+        "num_output_heads"
+    ] = settings["ARCHITECTURE"]["num_multihead_heads"]
+    
+    model = MultiHeadSO3LR(**model_config).to(settings["MISC"]["device"])
+    model.select_heads = True
     return model

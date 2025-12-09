@@ -24,7 +24,7 @@ from aims_PAX.tools.utilities.parsl_utils import (
 )
 from aims_PAX.tools.model_tools.train_epoch import (
     train_epoch,
-    validate_epoch_ensemble,
+    validate_epoch,
 )
 import ase
 import logging
@@ -121,6 +121,7 @@ class InitialDatasetProcedure(PrepareInitialDatasetProcedure):
                     seed=self.seed,
                     r_max=self.r_max,
                     r_max_lr=self.r_max_lr,
+                    all_heads=self.all_heads,
                     key_specification=self.key_specification
                 )
 
@@ -130,13 +131,24 @@ class InitialDatasetProcedure(PrepareInitialDatasetProcedure):
                     < self.set_batch_size
                     else self.set_batch_size
                 )
+                
+                
+                smallest_valid_set = 0
+                for valid_set in self.ensemble_model_sets[tag][
+                    "valid"].values():
+                    if (
+                        smallest_valid_set == 0
+                        or len(valid_set) < smallest_valid_set
+                    ):
+                        smallest_valid_set = len(valid_set)
+                        
                 valid_batch_size = (
                     1
-                    if len(self.ensemble_model_sets[tag]["valid"])
+                    if smallest_valid_set
                     < self.set_valid_batch_size
                     else self.set_valid_batch_size
                 )
-
+                
                 (
                     self.ensemble_model_sets[tag]["train_loader"],
                     self.ensemble_model_sets[tag]["valid_loader"],
@@ -146,7 +158,7 @@ class InitialDatasetProcedure(PrepareInitialDatasetProcedure):
                     batch_size,
                     valid_batch_size,
                 )
-
+                
                 update_model_auxiliaries(
                     model=model,
                     model_choice=self.model_choice,
@@ -207,15 +219,16 @@ class InitialDatasetProcedure(PrepareInitialDatasetProcedure):
                         ensemble_valid_losses,
                         valid_loss,
                         metrics,
-                    ) = validate_epoch_ensemble(
+                    ) = validate_epoch(
                         ensemble=self.ensemble,
                         training_setups=self.training_setups,
-                        valid_loader=self.ensemble_model_sets[tag][
+                        valid_loaders=self.ensemble_model_sets[tag][
                             "valid_loader"
                             ],
                         logger=logger,
                         log_errors=self.model_settings["MISC"]["error_table"],
                         epoch=self.epoch,
+                        multihead=self.use_multihead_model,
                     )
                     self.current_valid = metrics["mae_f"]
 

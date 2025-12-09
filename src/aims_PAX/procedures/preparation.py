@@ -6,6 +6,7 @@ from typing import Union, List
 import numpy as np
 from mace import tools
 from mace.calculators import MACECalculator
+from so3krates_torch.calculator.so3 import TorchkratesCalculator
 from aims_PAX.tools.uncertainty import (
     HandleUncertainty,
     MolForceUncertainty,
@@ -173,18 +174,14 @@ class PrepareInitialDatasetProcedure:
             
         if self.model_choice == "mace":
             self.z = Z_from_geometry(self.trajectories)
-            self.z_table = create_ztable(self.z)
         elif self.model_choice in ["so3lr", "so3krates"]:
             self.z = np.array([i for i in range(1, 119)])
-            self.z_table = create_ztable(self.z)
+        self.z_table = create_ztable(self.z)
 
         self.md_drivers = {idx: None for idx in self.trajectories.keys()}
 
-        np.random.seed(self.seed)
-        random.seed(self.seed)
-        self.ensemble_seeds = np.random.randint(
-            0, 1000, size=self.ensemble_size
-        )
+        self._setup_seeds()
+        
         self.seeds_tags_dict = create_seeds_tags_dict(
             seeds=self.ensemble_seeds,
             model_settings=self.model_settings,
@@ -225,7 +222,7 @@ class PrepareInitialDatasetProcedure:
         self.comm_handler.barrier()
 
         # each ensemble member has their own initial dataset.
-        # we create a ASE and MACE dataset because it makes
+        # we create a ASE and model dataset because it makes
         # conversion and saving easier
         if self.rank == 0:
             if self.restart:
@@ -239,21 +236,36 @@ class PrepareInitialDatasetProcedure:
                     r_max=self.r_max,
                     seed=self.seed,
                     key_specification=self.key_specification,
-                    r_max_lr=self.r_max_lr
+                    r_max_lr=self.r_max_lr,
+                    all_heads=self.all_heads,
                 )
 
             else:
-                self.ensemble_model_sets, self.ensemble_ase_sets = (
-                    {
+                self.ensemble_ase_sets = {
                         tag: {"train": [], "valid": []}
                         for tag in self.ensemble.keys()
-                    },
-                    {
-                        tag: {"train": [], "valid": []}
-                        for tag in self.ensemble.keys()
-                    },
-                )
+                    }
 
+                if self.use_multihead_model:
+                    self.ensemble_model_sets = {
+                            tag: {"train": [], "valid": {}}
+                            for tag in self.ensemble.keys()
+                        }
+                    for head in self.all_heads:
+                        for tag in self.ensemble.keys():
+                            self.ensemble_model_sets[tag]["valid"][
+                                head
+                            ] = []
+                else:
+                    self.ensemble_model_sets = {
+                            tag: {"train": [], "valid": {
+                                "Default": []
+                            }}
+                            for tag in self.ensemble.keys()
+                        }
+                
+
+                        
         if self.analysis:
             if self.restart:
                 self.collect_losses = self.init_ds_restart_dict[
@@ -266,13 +278,23 @@ class PrepareInitialDatasetProcedure:
                     "ensemble_losses": [],
                 }
 
+    def _setup_seeds(self):
+        """
+        Sets up the random seeds for reproducibility.
+        """
+        np.random.seed(self.seed)
+        random.seed(self.seed)
+        self.ensemble_seeds = np.random.randint(
+            0, 1000, size=self.ensemble_size
+        )
+
     def _handle_model_settings(self, model_settings: dict) -> None:
         """
         Saves the model settings to class attributes.
         and fall back to defaults if not.
 
         Args:
-            model_settings (dict): Dictionary containing the MACE settings.
+            model_settings (dict): Dictionary containing the model settings.
         """
 
         apply_model_settings(
@@ -284,7 +306,6 @@ class PrepareInitialDatasetProcedure:
         # are changing all the time; not possible to modify with CuEQ)
         self.enable_cueq_train = False
         model_settings["MISC"]["enable_cueq_train"] = False
-
 
     def _handle_settings(self, aimsPAX_settings: dict) -> None:
         """
@@ -632,21 +653,21 @@ class PrepareInitialDatasetProcedure:
     def _run_MD(self, atoms: ase.Atoms, dyn) -> ase.Atoms:
         """
         Runs molecular dynamics simulation for the atoms object. Saves
-        energy and forces in a MACE readable format.
+        energy and forces in a model readable format.
 
         Args:
             atoms (ase.Atoms): Atoms object to be propagated.
             dyn (ase.md.MolecularDynamics): ASE MD engine.
         Returns:
             ase.Atoms: Atoms object with the energy and forces saved in the
-                        MACE readable format.
+                        model readable format.
         """
 
         dyn.run(self.skip_step)
         current_energy = np.array(atoms.get_potential_energy())
         current_forces = np.array(atoms.get_forces())
         current_point = atoms.copy()
-        # MACE reads energies and forces from the info & arrays dictionary
+        # model reads energies and forces from the info & arrays dictionary
         current_point.info["REF_energy"] = current_energy
         current_point.arrays["REF_forces"] = current_forces
         return current_point
@@ -864,7 +885,6 @@ class ALConfiguration:
         )
         self.checkpoints_dir += "/al"
         
-
     def _setup_aimsPAX_configuration(self):
         """Setup active learning configuration."""
         # Training parameters
@@ -1177,7 +1197,7 @@ class ALEnsemble:
         self.ensemble = None
         self.training_setups = None
         self.ensemble_ase_sets = None
-        self.ensemble_mace_sets = None
+        self.ensemble_model_sets = None
         self.train_dataset_len = None
 
         # Setup system properties
@@ -1189,7 +1209,11 @@ class ALEnsemble:
     def _setup_system_properties(self, path_to_geometry: str):
         """Setup system-specific properties."""
         atoms = read_geometry(path_to_geometry)
-        self.z = Z_from_geometry(atoms)
+        if self.config.model_choice == "mace":
+            self.z = Z_from_geometry(atoms)
+        elif self.config.model_choice in ["so3lr", "so3krates"]:
+            self.z = np.array([i for i in range(1, 119)])
+            
         self.z_table = create_ztable(self.z)
 
     def _load_seeds_tags_dict(self):
@@ -1222,6 +1246,13 @@ class ALEnsemble:
 
     def _setup_ensemble(self):
         """Setup the ensemble (rank 0 only)."""
+        if self.config.enable_cueq_train:
+            assert self.config.model_choice not in [
+                "so3lr",
+                "so3krates",
+            ], (
+                "CuEQ is not supported for So3krates/SO3LR."
+            )
         self.ensemble = ensemble_from_folder(
             path_to_models=self.config.model_dir,
             device=self.config.device,
@@ -1258,10 +1289,11 @@ class ALEnsemble:
             ),
         )
 
-        self.ensemble_mace_sets = ase_to_model_ensemble_sets(
+        self.ensemble_model_sets = ase_to_model_ensemble_sets(
             ensemble_ase_sets=self.ensemble_ase_sets,
             z_table=self.z_table,
             r_max=self.config.r_max,
+            r_max_lr=self.config.r_max_lr,
             seed=self.config.seed,
             key_specification=self.config.key_specification
         )
@@ -1284,8 +1316,8 @@ class ALEnsemble:
     def _check_subset_size(self, set_subset_size, tag, validation=False):
         key = "valid" if validation else "train"
         subset_size = (
-            len(self.ensemble_mace_sets[tag][key])
-            if len(self.ensemble_mace_sets[tag][key])
+            len(self.ensemble_model_sets[tag][key])
+            if len(self.ensemble_model_sets[tag][key])
             < set_subset_size
             else set_subset_size
         )
@@ -1293,7 +1325,7 @@ class ALEnsemble:
 
     def create_training_subset(
             self, 
-            mace_point,
+            model_point,
             idx: int, 
             ):
         """
@@ -1302,8 +1334,8 @@ class ALEnsemble:
         """
             
         for tag in self.ensemble_ase_sets.keys():
-            self.ensemble_mace_sets[tag]["train_subset"] = {}
-            self.ensemble_mace_sets[tag]["valid_subset"] = {}
+            self.ensemble_model_sets[tag]["train_subset"] = {}
+            self.ensemble_model_sets[tag]["valid_subset"] = {}
 
             if self.config.replay_strategy == "random_batch":
                 train_subset_size = self._check_subset_size(
@@ -1332,19 +1364,19 @@ class ALEnsemble:
                 )
                 
             random_sample_train = random.sample(
-                self.ensemble_mace_sets[tag]["train"],
+                self.ensemble_model_sets[tag]["train"],
                 train_subset_size - 1,
             )
 
             random_sample_valid = random.sample(
-                self.ensemble_mace_sets[tag]["valid"],
+                self.ensemble_model_sets[tag]["valid"],
                 valid_subset_size,
             )
-            train_set = random_sample_train + mace_point
+            train_set = random_sample_train + model_point
             valid_set = random_sample_valid
             (
-                self.ensemble_mace_sets[tag]["train_subset"][idx],
-                self.ensemble_mace_sets[tag]["valid_subset"][idx],
+                self.ensemble_model_sets[tag]["train_subset"][idx],
+                self.ensemble_model_sets[tag]["valid_subset"][idx],
             ) = create_dataloader(
                 train_set,
                 valid_set,
@@ -1352,9 +1384,8 @@ class ALEnsemble:
                 valid_batch_size,
             )
         
-        logging.info(f'Training loader has {len(self.ensemble_mace_sets[tag]["train_subset"][idx])} batches.')
+        logging.info(f'Training loader has {len(self.ensemble_model_sets[tag]["train_subset"][idx])} batches.')
         logging.info(f'Training set has {train_subset_size} points.')
-
 
 
 class ALCalculatorMLFF:
@@ -1371,9 +1402,9 @@ class ALCalculatorMLFF:
         self.comm_handler = comm_handler
         self.rank = comm_handler.get_rank()
 
-        # MACE calculator
+        # model calculator
         self.models = None
-        self.mace_calc = None
+        self.mlff_calc = None
 
         # Atomic energies handling
         self.update_atomic_energies = False
@@ -1386,7 +1417,7 @@ class ALCalculatorMLFF:
         """Setup all required calculators."""
         self.handle_atomic_energies()
         if self.rank == 0:
-            self._setup_mace_calculator()
+            self._setup_mlff_calculator()
 
     def handle_atomic_energies(self):
         """Handle atomic energies initialization."""
@@ -1421,6 +1452,7 @@ class ALCalculatorMLFF:
             z=self.ensemble_manager.z,
             seeds_tags_dict=self.config.seeds_tags_dict,
             dtype=self.config.dtype,
+            model_choice=self.config.model_choice,
         )
 
     def _load_from_ensemble(self):
@@ -1431,6 +1463,7 @@ class ALCalculatorMLFF:
         ) = get_atomic_energies_from_ensemble(
             ensemble=self.ensemble_manager.ensemble,
             z=self.ensemble_manager.z,
+            model_choice=self.config.model_choice,
             dtype=self.config.dtype,
         )
 
@@ -1462,15 +1495,15 @@ class ALCalculatorMLFF:
         first_energies = self.ensemble_atomic_energies_dict[first_tag]
         logging.info(f"Atomic energies: {first_energies}")
 
-    def _setup_mace_calculator(self):
-        """Setup MACE calculator with ensemble models."""
+    def _setup_mlff_calculator(self):
+        """Setup model calculator with ensemble models."""
 
         if self.config.use_foundational:
             logging.info("Using foundational model for MD.")
             foundational_model_settings = self.config.foundational_model_settings
             mace_model = foundational_model_settings['mace_model']
             # for propagation
-            self.mace_calc = mace_mp(
+            self.mlff_calc = mace_mp(
                 model=mace_model,
                 dispersion=False,
                 default_dtype=self.config.dtype,
@@ -1487,7 +1520,7 @@ class ALCalculatorMLFF:
                 )
                 for model_path in model_paths
             ]
-            self.mace_calc_ensemble = MACECalculator(
+            self.mlff_calc_ensemble = MACECalculator(
                 models=self.models,
                 device=self.config.device,
                 default_dtype=self.config.dtype,
@@ -1505,13 +1538,23 @@ class ALCalculatorMLFF:
                 )
                 for model_path in model_paths
             ]
+            if self.config.model_choice == "mace":
+                self.mlff_calc = MACECalculator(
+                    models=self.models,
+                    device=self.config.device,
+                    default_dtype=self.config.dtype,
+                    enable_cueq=self.config.enable_cueq,
+                )
+            elif self.config.model_choice in ["so3lr", "so3krates"]:
+                self.mlff_calc = TorchkratesCalculator(
+                    models=self.models,
+                    device=self.config.device,
+                    default_dtype=self.config.dtype,
+                    r_max_lr=self.config.r_max_lr,
+                    dispersion_energy_cutoff_lr_damping=self.config.dispersion_energy_cutoff_lr_damping,
+                    
+                )
 
-            self.mace_calc = MACECalculator(
-                models=self.models,
-                device=self.config.device,
-                default_dtype=self.config.dtype,
-                enable_cueq=self.config.enable_cueq,
-            )
 
 class ALMD:
     """Manages molecular dynamics setup and execution for active learning."""
@@ -1548,13 +1591,13 @@ class ALMD:
 
         self._setup_uncertainty()
 
-    def setup_md_drivers(self, trajectories: dict, mace_calculator):
+    def setup_md_drivers(self, trajectories: dict, mlff_calculator):
         """Setup MD drivers for all trajectories."""
         if self.rank != 0:
             return
 
         for trajectory in trajectories.values():
-            trajectory.calc = mace_calculator
+            trajectory.calc = mlff_calculator
 
         self.md_drivers = {
             trajectory_idx: self._setup_md_dynamics(
@@ -1857,7 +1900,7 @@ class ALRestart:
             ]:
             for idx in range(self.config.num_trajectories):
                 self.ensemble_manager.create_training_subset(
-                    mace_point=self.state_manager.last_point_added[idx],
+                    model_point=self.state_manager.last_point_added[idx],
                     idx=idx,
                 )
 
@@ -2025,8 +2068,8 @@ class PrepareALProcedure:
             log_yaml_block(
                 "ACTIVE_LEARNING", aimsPAX_settings["ACTIVE_LEARNING"]
             )
-            logging.info("Using following settings for MACE:")
-            log_yaml_block("MACE", model_settings)
+            logging.info(f"Using following settings for {self.config.model_choice}:")
+            log_yaml_block(self.config.model_choice, model_settings)
         # Initialize all managers
         self.state_manager = ALStateManager(self.config, self.comm_handler)
         self.ensemble_manager = ALEnsemble(
@@ -2067,7 +2110,7 @@ class PrepareALProcedure:
         # assign mlff to checkpoints
         if self.rank == 0:
             for ckpt in self.state_manager.MD_checkpoints.values():
-                ckpt.calc = self.mlff_manager.mace_calc
+                ckpt.calc = self.mlff_manager.mlff_calc
                 # compute forces for checkpoint
                 ckpt.calc.calculate(ckpt)
 
@@ -2078,7 +2121,7 @@ class PrepareALProcedure:
         }
         if self.rank == 0:
             self.md_manager.setup_md_drivers(
-                self.state_manager.trajectories, self.mlff_manager.mace_calc
+                self.state_manager.trajectories, self.mlff_manager.mlff_calc
             )
 
         # TODO: Remove hardcode
@@ -2146,8 +2189,8 @@ class PrepareALProcedure:
         return self.state_manager.trajectories
 
     @property
-    def mace_calc(self):
-        return self.mlff_manager.mace_calc
+    def mlff_calc(self):
+        return self.mlff_manager.mlff_calc
 
     @property
     def ensemble(self):

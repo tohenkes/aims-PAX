@@ -96,6 +96,7 @@ def train_epoch(
     total_loss /= batches
     return total_loss
 
+
 def train_one_epoch(
     model: torch.nn.Module,
     loss_fn: torch.nn.Module,
@@ -253,22 +254,17 @@ def take_step_lbfgs(
     return loss, loss_dict
 
 
-def validate_epoch_ensemble(
-    ensemble: dict,
+def validate_epoch_multihead(
+    model_dict: dict,
     training_setups: dict,
-    valid_loader: DataLoader,
-    # ema: Optional[ExponentialMovingAverage],
-    # loss_fn: torch.nn.Module,
-    # valid_loader: DataLoader,
-    # output_args: Dict[str, bool],
-    # device: torch.device,
+    valid_loaders: dict,
     logger: MetricsLogger,
     log_errors: str,
     epoch: int,
 ) -> tuple[dict, float, dict]:
     """
-    Evaluates an ensemble of models on the validation set and returns
-    average loss and metrics.
+    Evaluates an multihead model on the validation set and returns
+    average loss and metrics (over heads).
 
     Args:
         ensemble (dict): Ensemble of MACE models.
@@ -284,14 +280,17 @@ def validate_epoch_ensemble(
     Returns:
         tuple[dict, float, dict]: Ensemble validation loss, average loss, and metrics.
     """
-    ensemble_valid_loss, ensemble_eval_metrics = {}, []
-    for tag, model in ensemble.items():
+    tag = list(model_dict.keys())[0]
+    model = model_dict[tag]
+    
+    mh_valid_loss, mh_eval_metrics = {}, []
 
-        ema = training_setups[tag]["ema"]
-        loss_fn = training_setups[tag]["loss_fn"]
-        device = training_setups[tag]["device"]
-        output_args = training_setups[tag]["output_args"]
+    ema = training_setups[tag]["ema"]
+    loss_fn = training_setups[tag]["loss_fn"]
+    device = training_setups[tag]["device"]
+    output_args = training_setups[tag]["output_args"]
 
+    for valid_loader_name, valid_loader in valid_loaders.items():
         if ema is not None:
             with ema.average_parameters():
                 valid_loss, eval_metrics = evaluate(
@@ -309,13 +308,91 @@ def validate_epoch_ensemble(
                 output_args=output_args,
                 device=device,
             )
+        
+        mh_valid_loss[valid_loader_name] = valid_loss
+        mh_eval_metrics.append(eval_metrics)
+        if logger is not None:
+            valid_err_log(
+                valid_loss=valid_loss,
+                eval_metrics=eval_metrics,
+                logger=logger,
+                log_errors=log_errors,
+                epoch=epoch,
+                valid_loader_name=valid_loader_name,
+            )
+
+    valid_loss = np.mean(list(mh_valid_loss.values()))
+    eval_metrics = {}
+    for key in mh_eval_metrics[0]:
+        if key not in ["mode", "epoch", "head"]:
+            eval_metrics[key] = np.mean(
+                [m[key] for m in mh_eval_metrics]
+            )
+        eval_metrics["mode"] = "eval"
+        eval_metrics["epoch"] = epoch
+
+    return {tag: valid_loss}, valid_loss, eval_metrics
+
+
+def validate_epoch_ensemble(
+    ensemble: dict,
+    training_setups: dict,
+    valid_loaders: dict,
+    logger: MetricsLogger,
+    log_errors: str,
+    epoch: int,
+) -> tuple[dict, float, dict]:
+    """
+    Evaluates an ensemble of models on the validation set and returns
+    average loss and metrics (over members).
+
+    Args:
+        ensemble (dict): Ensemble of MACE models.
+        ema (Optional[ExponentialMovingAverage]): Exponential moving average.
+        loss_fn (torch.nn.Module): Loss function.
+        valid_loader (DataLoader): Validation data loader.
+        output_args (Dict[str, bool]): Output arguments.
+        device (torch.device): Device to use. CPU or GPU.
+        logger (MetricsLogger): Logger for metrics.
+        log_errors (str): Logging errors.
+        epoch (int): Current epoch.
+
+    Returns:
+        tuple[dict, float, dict]: Ensemble validation loss, average loss, and metrics.
+    """
+    
+    ensemble_valid_loss, ensemble_eval_metrics = {}, []
+    for tag, model in ensemble.items():
+
+        ema = training_setups[tag]["ema"]
+        loss_fn = training_setups[tag]["loss_fn"]
+        device = training_setups[tag]["device"]
+        output_args = training_setups[tag]["output_args"]
+
+        if ema is not None:
+            with ema.average_parameters():
+                valid_loss, eval_metrics = evaluate(
+                    model=model,
+                    loss_fn=loss_fn,
+                    data_loader=valid_loaders["Default"],
+                    output_args=output_args,
+                    device=device,
+                )
+        else:
+            valid_loss, eval_metrics = evaluate(
+                model=model,
+                loss_fn=loss_fn,
+                data_loader=valid_loaders["Default"],
+                output_args=output_args,
+                device=device,
+            )
         ensemble_valid_loss[tag] = valid_loss
         ensemble_eval_metrics.append(eval_metrics)
 
     valid_loss = np.mean(list(ensemble_valid_loss.values()))
     eval_metrics = {}
     for key in ensemble_eval_metrics[0]:
-        if key not in ["mode", "epoch"]:
+        if key not in ["mode", "epoch", "head"]:
             eval_metrics[key] = np.mean(
                 [m[key] for m in ensemble_eval_metrics]
             )
@@ -333,6 +410,36 @@ def validate_epoch_ensemble(
         )
 
     return ensemble_valid_loss, valid_loss, eval_metrics
+
+
+def validate_epoch(
+    ensemble: dict,
+    training_setups: dict,
+    valid_loaders: dict,
+    logger: MetricsLogger,
+    log_errors: str,
+    epoch: int,
+    multihead: bool = False,
+) -> tuple[dict, float, dict]:
+    if multihead:
+        return validate_epoch_multihead(
+            model_dict=ensemble,
+            training_setups=training_setups,
+            valid_loaders=valid_loaders,
+            logger=logger,
+            log_errors=log_errors,
+            epoch=epoch,
+        )
+    else:
+        return validate_epoch_ensemble(
+            ensemble=ensemble,
+            training_setups=training_setups,
+            valid_loaders=valid_loaders,
+            logger=logger,
+            log_errors=log_errors,
+            epoch=epoch,
+        )
+
 
 def evaluate(
     model: torch.nn.Module,

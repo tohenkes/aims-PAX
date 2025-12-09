@@ -450,6 +450,7 @@ SCHEME_MODEL_DTYPES = {
         "electrostatic_energy_bool",
         "dispersion_energy_bool",
         "dispersion_damping_bool",
+        "use_multihead_model",
     ],
     "lists": [
         "radial_MLP",
@@ -464,7 +465,9 @@ SCHEME_MODEL_DTYPES = {
     "optional_floats": [
         "r_max_lr",
     ],
-    "optional_ints": []
+    "optional_ints": [
+        "num_multihead_heads",
+    ]
 }
 
 SCHEME_MACE = {
@@ -537,6 +540,8 @@ SCHEME_SO3LR = {
         "r_max_lr": None,
         "neighborlist_format_lr": "sparse",
         "atomic_energies": None,
+        "use_multihead_model": False,
+        "num_multihead_heads": None,
     },
 }
 SCHEME_SO3LR.update(SCHEME_MODEL_TRAINING)

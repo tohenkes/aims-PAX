@@ -167,9 +167,9 @@ class ALProcedure(PrepareALProcedure):
             idx (int): Index of the trajectory worker.
         """
         if self.rank == 0:
-            self.ensemble_manager.ensemble_mace_sets = (
+            self.ensemble_manager.ensemble_model_sets = (
                 self.train_manager.prepare_training(
-                    mace_sets=self.ensemble_manager.ensemble_mace_sets
+                    model_sets=self.ensemble_manager.ensemble_model_sets
                 )
             )
 
@@ -211,7 +211,7 @@ class ALProcedure(PrepareALProcedure):
         if self.config.use_foundational:
             # updating only the ensemble calculator which is used for 
             # uncertainty estimation
-            self.mlff_manager.mace_calc_ensemble.models = [
+            self.mlff_manager.model_calc_ensemble.models = [
                 self.ensemble[tag] for tag in self.ensemble.keys()
             ]
         else:
@@ -1112,7 +1112,7 @@ class ALProcedurePARSL(ALProcedure):
                     self.state_manager.MD_checkpoints[idx]
                 )
                 self.trajectories[idx].calc = (
-                    self.mlff_manager.mace_calc
+                    self.mlff_manager.mlff_calc
                 )
                 self.md_manager.md_drivers[idx].atoms = (
                     self.trajectories[idx]

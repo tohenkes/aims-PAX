@@ -14,12 +14,11 @@ from ase.io import write
 from so3krates_torch.data.atomic_data import AtomicData as so3_data
 from mace import data as mace_data
 from mace import tools
-from mace.tools import AtomicNumberTable, torch_geometric
+from mace.tools import AtomicNumberTable, torch_geometric, DefaultKeys
 from mace.data.utils import (
     config_from_atoms_list,
-    KeySpecification,
 )
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from ase.io import read
 import dataclasses
 
@@ -35,6 +34,57 @@ Pbc = tuple  # (3,)
 
 DEFAULT_CONFIG_TYPE = "Default"
 DEFAULT_CONFIG_TYPE_WEIGHTS = {DEFAULT_CONFIG_TYPE: 1.0}
+
+
+@dataclass
+class KeySpecification:
+    info_keys: Dict[str, str] = field(default_factory=dict)
+    arrays_keys: Dict[str, str] = field(default_factory=dict)
+
+    def update(
+        self,
+        info_keys: Optional[Dict[str, str]] = None,
+        arrays_keys: Optional[Dict[str, str]] = None,
+    ):
+        if info_keys is not None:
+            self.info_keys.update(info_keys)
+        if arrays_keys is not None:
+            self.arrays_keys.update(arrays_keys)
+        return self
+
+    @classmethod
+    def from_defaults(cls):
+        instance = cls()
+        return update_keyspec_from_kwargs(instance, DefaultKeys.keydict())
+
+
+def update_keyspec_from_kwargs(
+    keyspec: KeySpecification, keydict: Dict[str, str]
+) -> KeySpecification:
+    # convert command line style property_key arguments into a keyspec
+    infos = [
+        "energy_key",
+        "stress_key",
+        "virials_key",
+        "dipole_key",
+        "head_key",
+        "elec_temp_key",
+        "total_charge_key",
+        "polarizability_key",
+        "total_spin_key",
+    ]
+    arrays = ["forces_key", "charges_key"]
+    info_keys = {}
+    arrays_keys = {}
+    for key in infos:
+        if key in keydict:
+            info_keys[key[:-4]] = keydict[key]
+    for key in arrays:
+        if key in keydict:
+            arrays_keys[key[:-4]] = keydict[key]
+    keyspec.update(info_keys=info_keys, arrays_keys=arrays_keys)
+    return keyspec
+
 
 
 @dataclasses.dataclass
@@ -54,6 +104,7 @@ def get_dataset_from_atoms(
     keep_isolated_atoms: bool = False,
     key_specification: KeySpecification = None,
     head_name: str = "Default",
+    return_ase_list: bool = False,
 ) -> Tuple[SubsetCollection, Optional[Dict[int, float]]]:
     """Load training and test dataset from xyz file"""
 
@@ -100,11 +151,24 @@ def get_dataset_from_atoms(
         # create list of tuples (config_type, list(Atoms))
         test_configs = mace_data.test_config_types(all_test_configs)
 
-    return (
-        SubsetCollection(
-            train=train_configs, valid=valid_configs, tests=test_configs
-        ),
-        atomic_energies_dict,
+    if return_ase_list:
+        return (
+            SubsetCollection(
+                train=train_configs, valid=valid_configs, tests=test_configs
+            ),
+            atomic_energies_dict,
+            {
+                "train": train_list,
+                "valid": valid_list,
+                "tests": test_list,
+            }
+        )
+    else:
+        return (
+            SubsetCollection(
+                train=train_configs, valid=valid_configs, tests=test_configs
+            ),
+            atomic_energies_dict,
     )
 
 
@@ -311,7 +375,7 @@ def split_data(
 
 def create_dataloader(
     train_set,
-    valid_set,
+    valid_set: dict,
     train_batch_size: int,
     valid_batch_size: int,
 ) -> tuple:
@@ -337,13 +401,17 @@ def create_dataloader(
         drop_last=True,
     )
 
-    valid_loader = torch_geometric.dataloader.DataLoader(
-        dataset=valid_set,
-        batch_size=valid_batch_size,
-        shuffle=False,
-        drop_last=False,
-    )
-    return train_loader, valid_loader
+    valid_loaders = {}
+    for head, valid_subset in valid_set.items():
+        valid_loader = torch_geometric.dataloader.DataLoader(
+            dataset=valid_subset,
+            batch_size=valid_batch_size,
+            shuffle=False,
+            drop_last=False,
+        )
+        valid_loaders[head] = valid_loader
+        
+    return train_loader, valid_loaders
 
 
 def create_model_dataset(
@@ -353,6 +421,7 @@ def create_model_dataset(
     r_max: float,
     key_specification: KeySpecification,
     r_max_lr: Optional[float] = None,
+    all_heads: Optional[List[str]] = None,
 ) -> list:
     """
     Create a MACE style dataset from a list of ASE atoms objects.
@@ -380,7 +449,8 @@ def create_model_dataset(
             config,
             z_table=z_table, 
             cutoff=r_max,
-            cutoff_lr=r_max_lr
+            cutoff_lr=r_max_lr,
+            heads=all_heads
             )
         for config in collections.train
     ]
@@ -430,9 +500,43 @@ def update_model_set(
         key_specification=key_specification
     )
     model_set["train"] += new_train_set
-    model_set["valid"] += new_valid_set
+    model_set["valid"]["Default"] += new_valid_set
 
     return model_set
+
+
+def split_data_heads_evenly(
+    data: list,
+    num_heads: int,
+) -> Dict[int, list]:
+    """
+    Split data evenly between heads. If there are not enough
+    points, so that each head doesn't get at least one point,
+    it re-iterates across the dataset until each head has at
+    least one point.
+
+    Args:
+        data (list): List of data points to be split.
+        num_heads (int): Number of heads to split the data into.
+
+    Returns:
+        Dict[int, list]: Dictionary mapping head index to list of data points.
+    """
+    head_data = {head: [] for head in range(num_heads)}
+    n_points = len(data)
+    if n_points >= num_heads:
+        for idx, point in enumerate(data):
+            head = idx % num_heads
+            head_data[head].append(point)
+    else:
+        idx = 0
+        while any(len(points) == 0 for points in head_data.values()):
+            head = idx % num_heads
+            head_data[head].append(data[idx % n_points])
+            idx += 1
+        
+    return head_data
+
 
 def update_datasets(
     new_points: list,
@@ -444,7 +548,7 @@ def update_datasets(
     r_max: float,
     key_specification: KeySpecification,
     r_max_lr: Optional[float] = None,
-
+    all_heads: Optional[List[str]] = None,
 ) -> tuple:
     """
     Update the ASE and MACE/SO3LR datasets with new data.
@@ -461,22 +565,91 @@ def update_datasets(
     Returns:
         tuple: _description_
     """
-    new_train_data, new_valid_data = split_data(new_points, valid_split)
-    ase_set["train"] += new_train_data
-    ase_set["valid"] += new_valid_data
+    
+    new_train_data_ase, new_valid_data_ase = split_data(new_points, valid_split)
+    
+    if all_heads is not None:
+        new_train_data_head_ase = split_data_heads_evenly(new_train_data_ase, len(all_heads))
+        new_valid_data_head_ase = split_data_heads_evenly(new_valid_data_ase, len(all_heads))
+    
+        train_collections = []
+        valid_collections = {}
+        new_train_data_ase_temp = []
+        new_valid_data_ase_temp = []
+        for head_idx, head_name in enumerate(all_heads):
+            collections, _, ase_sets = get_dataset_from_atoms(
+                train_list=new_train_data_head_ase[head_idx],
+                valid_list=new_valid_data_head_ase[head_idx],
+                seed=seed,
+                config_type_weights=None,
+                key_specification=key_specification,
+                head_name=head_name,
+                return_ase_list=True,
+            )
+            
+            train_collections += collections.train
+            valid_collections[head_name] = collections.valid
+            
+            new_train_data_ase_temp += ase_sets["train"]
+            new_valid_data_ase_temp += ase_sets["valid"]
+            
+        new_train_data_ase = new_train_data_ase_temp
+        new_valid_data_ase = new_valid_data_ase_temp
+        
+        collections.train = train_collections
+            
+        new_train_data_ase_head = [
+            so3_data.from_config(
+                config,
+                z_table=z_table, 
+                cutoff=r_max,
+                cutoff_lr=r_max_lr,
+                heads=all_heads
+                )
+            for config in collections.train
+        ]
+        model_set["train"] += new_train_data_ase_head
 
-    model_set = update_model_set(
-        new_train_data=new_train_data, 
-        new_valid_data=new_valid_data,
-        model_set=model_set,
-        z_table=z_table, 
-        seed=seed, 
-        r_max=r_max,
-        r_max_lr=r_max_lr,
-        key_specification=key_specification
-    )
+        for head in all_heads:
+            new_valid_data_head = [
+                so3_data.from_config(
+                    config,
+                    z_table=z_table,
+                    cutoff=r_max,
+                    cutoff_lr=r_max_lr,
+                    heads=all_heads
+                    ) 
+                for config in valid_collections[head]
+            ]
+            model_set["valid"][head] += new_valid_data_head
 
+    else:
+        model_set = update_model_set(
+            new_train_data=new_train_data_ase, 
+            new_valid_data=new_valid_data_ase,
+            model_set=model_set,
+            z_table=z_table, 
+            seed=seed, 
+            r_max=r_max,
+            r_max_lr=r_max_lr,
+            key_specification=key_specification
+        )
+
+    ase_set["train"] += new_train_data_ase
+    ase_set["valid"] += new_valid_data_ase
     return ase_set, model_set
+
+
+def sort_ase_dataset_to_heads(
+    ase_set: dict,
+):
+    head_data = {}
+    for atoms in ase_set:
+        head_name = atoms.info.get("head", "Default")
+        if head_name not in head_data:
+            head_data[head_name] = []
+        head_data[head_name].append(atoms)
+    return head_data
 
 
 def ase_to_model_ensemble_sets(
@@ -486,6 +659,7 @@ def ase_to_model_ensemble_sets(
     r_max: float,
     key_specification: KeySpecification,
     r_max_lr: Optional[float] = None,
+    all_heads: Optional[List[str]] = None,
 ) -> dict:
     """
     Convert ASE style ensemble datasets to model style ensemble datasets.
@@ -500,25 +674,75 @@ def ase_to_model_ensemble_sets(
         dict: Dictionary of model style ensemble datasets.
     """
     ensemble_model_sets = {
-        tag: {"train": [], "valid": []} for tag in ensemble_ase_sets.keys()
+        tag: {"train": [], "valid": {}} for tag in ensemble_ase_sets.keys()
     }
-    for tag in ensemble_ase_sets.keys():
-        ensemble_model_sets[tag]["train"] = create_model_dataset(
-            data=ensemble_ase_sets[tag]["train"],
-            z_table=z_table,
-            seed=seed,
-            r_max=r_max,
-            r_max_lr=r_max_lr,
-            key_specification=key_specification
-        )
-        ensemble_model_sets[tag]["valid"] = create_model_dataset(
-            data=ensemble_ase_sets[tag]["valid"],
-            z_table=z_table,
-            seed=seed,
-            r_max=r_max,
-            r_max_lr=r_max_lr,
-            key_specification=key_specification
-        )
+    
+    if all_heads is not None:
+        for tag in ensemble_ase_sets.keys():
+            head_data_train = sort_ase_dataset_to_heads(
+                ensemble_ase_sets[tag]["train"]
+            )
+            head_data_valid = sort_ase_dataset_to_heads(
+                ensemble_ase_sets[tag]["valid"]
+            )
+            train_collections = []
+            valid_collections = {}
+            for head_name in head_data_train.keys():
+                collections, _, ase_sets = get_dataset_from_atoms(
+                    train_list=head_data_train[head_name],
+                    valid_list=head_data_valid.get(head_name, []),
+                    seed=seed,
+                    config_type_weights=None,
+                    key_specification=key_specification,
+                    head_name=head_name,
+                    return_ase_list=True,
+                )
+                train_collections += collections.train
+                valid_collections[head_name] = collections.valid
+            
+            ensemble_model_sets[tag]["train"] = [
+                so3_data.from_config(
+                    config,
+                    z_table=z_table, 
+                    cutoff=r_max,
+                    cutoff_lr=r_max_lr,
+                    heads=all_heads
+                    )
+                for config in train_collections
+            ]
+            for head in all_heads:
+                ensemble_model_sets[tag]["valid"][head] = [
+                    so3_data.from_config(
+                        config,
+                        z_table=z_table,
+                        cutoff=r_max,
+                        cutoff_lr=r_max_lr,
+                        heads=all_heads
+                        ) 
+                    for config in valid_collections[head]
+                ]
+        
+    else:
+        for tag in ensemble_ase_sets.keys():
+            ensemble_model_sets[tag]["train"] = create_model_dataset(
+                data=ensemble_ase_sets[tag]["train"],
+                z_table=z_table,
+                seed=seed,
+                r_max=r_max,
+                r_max_lr=r_max_lr,
+                key_specification=key_specification
+            )
+            ensemble_model_sets[tag]["valid"] = {
+                "Default":
+                    create_model_dataset(
+                        data=ensemble_ase_sets[tag]["valid"],
+                        z_table=z_table,
+                        seed=seed,
+                        r_max=r_max,
+                        r_max_lr=r_max_lr,
+                        key_specification=key_specification
+                )
+            }
     return ensemble_model_sets
 
 

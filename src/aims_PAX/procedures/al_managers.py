@@ -9,7 +9,6 @@ import numpy as np
 import threading
 import queue
 import shutil
-import random
 from mace import tools
 from .preparation import (
     ALCalculatorMLFF,
@@ -22,7 +21,7 @@ from .preparation import (
 from aims_PAX.tools.utilities.data_handling import (
     create_dataloader,
     save_datasets,
-    create_mace_dataset,
+    create_model_dataset,
 )
 from aims_PAX.tools.utilities.utilities import (
     update_model_auxiliaries,
@@ -38,7 +37,7 @@ from aims_PAX.tools.utilities.mpi_utils import (
 )
 from aims_PAX.tools.model_tools.training_tools import (
     setup_model_training,
-    reset_mace_optimizer,
+    reset_model_optimizer,
 )
 from aims_PAX.tools.model_tools.train_epoch import (
     train_epoch,
@@ -70,7 +69,7 @@ class ALDataManager:
     """
     Tasked with handling all data relevant tasks i.e.
     putting points into training or validation sets
-    and transforming them into MACE format.
+    and transforming them into the model format.
     """
 
     def __init__(
@@ -102,14 +101,15 @@ class ALDataManager:
         Returns:
             True if max dataset size is reached, False otherwise
         """
-        mace_point = create_mace_dataset(
+        model_point = create_model_dataset(
             data=[received_point],
             z_table=self.ensemble_manager.z_table,
             seed=None,
             r_max=self.config.r_max,
             key_specification=self.config.key_specification,
+            r_max_lr=self.config.r_max_lr
         )
-        self.state_manager.last_point_added[idx] = mace_point
+        self.state_manager.last_point_added[idx] = model_point
 
         # Determines if a point should go to validation or training set
         validation_quota = (
@@ -120,15 +120,15 @@ class ALDataManager:
         )
 
         if needs_validation_data:
-            self._add_to_validation_set(idx, received_point, mace_point)
+            self._add_to_validation_set(idx, received_point, model_point)
         else:
 
             max_size_reached = self._add_to_training_set(
-                idx, received_point, mace_point
+                idx, received_point, model_point
             )
             if self.config.replay_strategy in ["random_batch", "random_subset"]:
                 self.ensemble_manager.create_training_subset(
-                    mace_point,
+                    model_point,
                     idx,
                 )
             
@@ -140,7 +140,7 @@ class ALDataManager:
         return False
 
     def _add_to_validation_set(
-        self, idx: int, received_point: np.ndarray, mace_point
+        self, idx: int, received_point: np.ndarray, model_point
     ) -> None:
         """
         Simply adds a point to the validation set and
@@ -150,7 +150,7 @@ class ALDataManager:
             idx (int): Index of the trajectory worker
             received_point (np.ndarray): The data point received from DFT
                                             calculation
-            mace_point: The MACE formatted data point
+            model_point: The model formatted data point
         """
 
         self.state_manager.trajectory_status[idx] = "running"
@@ -166,16 +166,16 @@ class ALDataManager:
                 self.ensemble_manager.ensemble_ase_sets[tag]["valid"].append(
                     received_point
                 )
-                self.ensemble_manager.ensemble_mace_sets[tag][
+                self.ensemble_manager.ensemble_model_sets[tag][
                     "valid"
-                ] += mace_point
+                ] += model_point
 
         if self.rank == 0:
             self._log_dataset_sizes(tag)
         self.state_manager.valid_points_added += 1
 
     def _add_to_training_set(
-        self, idx: int, received_point: np.ndarray, mace_point
+        self, idx: int, received_point: np.ndarray, model_point
     ) -> bool:
         """
         Add point to training set and check if max size is reached.
@@ -198,9 +198,9 @@ class ALDataManager:
                 self.ensemble_manager.ensemble_ase_sets[tag]["train"].append(
                     received_point
                 )
-                self.ensemble_manager.ensemble_mace_sets[tag][
+                self.ensemble_manager.ensemble_model_sets[tag][
                     "train"
-                ] += mace_point
+                ] += model_point
 
             self.ensemble_manager.train_dataset_len = len(
                 self.ensemble_manager.ensemble_ase_sets[tag]["train"]
@@ -247,13 +247,13 @@ class TrainingSession:
     def __init__(
         self,
         training_setups: dict,
-        ensemble_mace_sets: dict,
+        ensemble_model_sets: dict,
         max_epochs: int,
         is_convergence: bool = False,
         initial_epoch: int = 0,
     ):
         self.training_setups = training_setups
-        self.ensemble_mace_sets = ensemble_mace_sets
+        self.ensemble_model_sets = ensemble_model_sets
         self.max_epochs = max_epochs
         self.is_convergence = is_convergence
         self.current_epoch = initial_epoch
@@ -298,23 +298,23 @@ class TrainingOrchestrator:
     def _get_loaders(self, session: TrainingSession, tag: str, idx: int = None):
 
         if self.train_loader_key == "train_subset" and not session.is_convergence:
-            self.train_loader = session.ensemble_mace_sets[
+            self.train_loader = session.ensemble_model_sets[
                 tag
             ][
                 self.train_loader_key
                 ][idx]
-            self.valid_loader = session.ensemble_mace_sets[
+            self.valid_loader = session.ensemble_model_sets[
                 tag
             ][
                 self.valid_loader_key
                 ][idx]
         else:
-            self.train_loader = session.ensemble_mace_sets[
+            self.train_loader = session.ensemble_model_sets[
                 tag
             ][
                 self.train_loader_key
             ]
-            self.valid_loader = session.ensemble_mace_sets[
+            self.valid_loader = session.ensemble_model_sets[
                 tag
             ][
                 self.valid_loader_key
@@ -347,8 +347,11 @@ class TrainingOrchestrator:
             and self.state_manager.ensemble_reset_opt.get(tag, False)
         ):
             logging.info(f"Resetting optimizer for model {tag}.")
-            session.training_setups[tag] = reset_mace_optimizer(
-                model, training_setup, self.config.model_settings["TRAINING"]
+            session.training_setups[tag] = reset_model_optimizer(
+                model,
+                training_setup, 
+                self.config.model_settings["TRAINING"],
+                model_choice=self.config.model_choice,
             )
             self.state_manager.ensemble_reset_opt[tag] = False
             training_setup = session.training_setups[tag]
@@ -696,7 +699,7 @@ class ALTrainingManager:
         """Perform intermediate training during active learning."""
         session = TrainingSession(
             training_setups=self.ensemble_manager.training_setups,
-            ensemble_mace_sets=self.ensemble_manager.ensemble_mace_sets,
+            ensemble_model_sets=self.ensemble_manager.ensemble_model_sets,
             max_epochs=self.config.intermediate_epochs_al,
             is_convergence=False,
         )
@@ -734,7 +737,7 @@ class ALTrainingManager:
         # Create training session for convergence
         session = TrainingSession(
             training_setups=self.training_setups_convergence,
-            ensemble_mace_sets=self.ensemble_manager.ensemble_mace_sets,
+            ensemble_model_sets=self.ensemble_manager.ensemble_model_sets,
             max_epochs=self.config.max_convergence_epochs,
             is_convergence=True,
             initial_epoch=self._get_initial_epoch(),
@@ -792,9 +795,9 @@ class ALTrainingManager:
         else:
             logging.info("Converging ensemble on acquired dataset.")
 
-        temp_mace_sets = self._create_convergence_datasets()
-        self.ensemble_manager.ensemble_mace_sets = self.prepare_training(
-            temp_mace_sets
+        temp_model_sets = self._create_convergence_datasets()
+        self.ensemble_manager.ensemble_model_sets = self.prepare_training(
+            temp_model_sets
         )
 
         # Reset training configurations
@@ -813,24 +816,26 @@ class ALTrainingManager:
 
     def _create_convergence_datasets(self):
         """Create datasets for convergence training."""
-        temp_mace_sets = {}
+        temp_model_sets = {}
         for tag, _ in self.ensemble_manager.ensemble.items():
-            train_set = create_mace_dataset(
+            train_set = create_model_dataset(
                 data=self.ensemble_manager.ensemble_ase_sets[tag]["train"],
                 z_table=self.ensemble_manager.z_table,
                 seed=self.config.seeds_tags_dict[tag],
                 r_max=self.config.r_max,
-                key_specification=self.config.key_specification
+                key_specification=self.config.key_specification,
+                r_max_lr=self.config.r_max_lr
             )
-            valid_set = create_mace_dataset(
+            valid_set = create_model_dataset(
                 data=self.ensemble_manager.ensemble_ase_sets[tag]["valid"],
                 z_table=self.ensemble_manager.z_table,
                 seed=self.config.seeds_tags_dict[tag],
                 r_max=self.config.r_max,
-                key_specification=self.config.key_specification
+                key_specification=self.config.key_specification,
+                r_max_lr=self.config.r_max_lr
             )
-            temp_mace_sets[tag] = {"train": train_set, "valid": valid_set}
-        return temp_mace_sets
+            temp_model_sets[tag] = {"train": train_set, "valid": valid_set}
+        return temp_model_sets
 
     def _get_initial_epoch(self):
         """Get initial epoch for convergence training."""
@@ -864,13 +869,13 @@ class ALTrainingManager:
     def _check_batch_size(self, set_batch_size, tag):
         batch_size = (
             1
-            if len(self.ensemble_manager.ensemble_mace_sets[tag]["train"])
+            if len(self.ensemble_manager.ensemble_model_sets[tag]["train"])
             < set_batch_size
             else set_batch_size
         )
         return batch_size
 
-    def prepare_training(self, mace_sets: dict):
+    def prepare_training(self, model_sets: dict):
         for _, (tag, model) in enumerate(
             self.ensemble_manager.ensemble.items()
         ):
@@ -882,18 +887,19 @@ class ALTrainingManager:
             )
 
             (
-                mace_sets[tag]["train_loader"],
-                mace_sets[tag]["valid_loader"],
+                model_sets[tag]["train_loader"],
+                model_sets[tag]["valid_loader"],
             ) = create_dataloader(
-                mace_sets[tag]["train"],
-                mace_sets[tag]["valid"],
+                model_sets[tag]["train"],
+                model_sets[tag]["valid"],
                 train_batch_size,
                 valid_batch_size,
             )
             if not self.config.enable_cueq_train:
                 update_model_auxiliaries(
                     model,
-                    mace_sets[tag],
+                    self.config.model_choice,
+                    model_sets[tag],
                     self.config.scaling,
                     self.mlff_manager.ensemble_atomic_energies[tag],
                     self.mlff_manager.update_atomic_energies,
@@ -902,7 +908,7 @@ class ALTrainingManager:
                     self.config.dtype,
                     self.config.device,
                 )
-        return mace_sets
+        return model_sets
 
     def _final_save(self, session: TrainingSession):
         save_models(
@@ -1559,10 +1565,10 @@ class ALRunningManager:
 
             point = trajectories[idx].copy()
             if self.config.use_foundational:
-                self.mlff_manager.mace_calc_ensemble.calculate(
+                self.mlff_manager.model_calc_ensemble.calculate(
                     atoms=point,
                 )
-                prediction = self.mlff_manager.mace_calc_ensemble.results[
+                prediction = self.mlff_manager.model_calc_ensemble.results[
                     "forces_comm"
                 ]
             else:    
