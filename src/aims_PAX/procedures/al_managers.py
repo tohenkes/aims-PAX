@@ -22,6 +22,7 @@ from aims_PAX.tools.utilities.data_handling import (
     create_dataloader,
     save_datasets,
     create_model_dataset,
+    ase_to_model_ensemble_sets
 )
 from aims_PAX.tools.utilities.utilities import (
     update_model_auxiliaries,
@@ -29,6 +30,7 @@ from aims_PAX.tools.utilities.utilities import (
     save_models,
     select_best_member,
     atoms_full_copy,
+    mh_to_sh_model,
     AIMSControlParser,
 )
 from aims_PAX.tools.utilities.mpi_utils import (
@@ -41,7 +43,7 @@ from aims_PAX.tools.model_tools.training_tools import (
 )
 from aims_PAX.tools.model_tools.train_epoch import (
     train_epoch,
-    validate_epoch_ensemble,
+    validate_epoch,
 )
 from aims_PAX.tools.utilities.eval_utils import (
     ensemble_prediction,
@@ -101,13 +103,30 @@ class ALDataManager:
         Returns:
             True if max dataset size is reached, False otherwise
         """
+        if self.config.use_multihead_model:
+            self.current_head_name = self.config.all_heads[
+                self.state_manager.head_data_counter
+            ]
+            
+            self.state_manager.head_data_counter = (
+                self.state_manager.head_data_counter + 1
+            ) % len(self.config.all_heads)
+            logging.info(f"Adding to head: {self.current_head_name}.")
+            
+        else:
+            self.current_head_name = "Default"
+        
+        received_point.info['head_name'] = self.current_head_name
+        
         model_point = create_model_dataset(
             data=[received_point],
             z_table=self.ensemble_manager.z_table,
             seed=None,
             r_max=self.config.r_max,
             key_specification=self.config.key_specification,
-            r_max_lr=self.config.r_max_lr
+            r_max_lr=self.config.r_max_lr,
+            all_heads=self.config.all_heads,
+            head_name=self.current_head_name,
         )
         self.state_manager.last_point_added[idx] = model_point
 
@@ -166,9 +185,11 @@ class ALDataManager:
                 self.ensemble_manager.ensemble_ase_sets[tag]["valid"].append(
                     received_point
                 )
-                self.ensemble_manager.ensemble_model_sets[tag][
+                self.ensemble_manager.ensemble_model_sets[
+                    tag
+                ][
                     "valid"
-                ] += model_point
+                ][self.current_head_name] += model_point
 
         if self.rank == 0:
             self._log_dataset_sizes(tag)
@@ -229,13 +250,17 @@ class ALDataManager:
 
     def _log_dataset_sizes(self, tag: str) -> None:
         """Log current training and validation set sizes."""
-        valid_length = len(
-            self.ensemble_manager.ensemble_ase_sets[tag]["valid"]
-        )
         logging.info(
-            f"Size of the training and validation set: "
-            f"{self.ensemble_manager.train_dataset_len}, {valid_length}."
+            f"Size of the training set: "
+            f"{self.ensemble_manager.train_dataset_len}."
         )
+        for head_name, valid_set in self.ensemble_manager.ensemble_model_sets[
+            tag
+        ]["valid"].items():
+            logging.info(
+                f"Size of the validation set ({head_name}): "
+                f"{len(valid_set)}."
+            )
 
 
 class TrainingSession:
@@ -429,13 +454,14 @@ class TrainingOrchestrator:
             return False
 
         # Perform validation
-        ensemble_valid_loss, valid_loss, metrics = validate_epoch_ensemble(
+        ensemble_valid_loss, valid_loss, metrics, mh_valid_loss = validate_epoch(
             ensemble=self.ensemble_manager.ensemble,
             training_setups=session.training_setups,
             logger=logger,
             log_errors=self.config.model_settings["MISC"]["error_table"],
             epoch=self._get_validation_epoch(session, trajectory_idx),
-            valid_loader=self.valid_loader
+            valid_loaders=self.valid_loader,
+            multihead=self.config.use_multihead_model,
         )
 
         # Update session state
@@ -456,6 +482,7 @@ class TrainingOrchestrator:
                 ensemble_valid_loss,
                 metrics,
                 trajectory_idx,
+                mh_valid_loss
             )
 
     def _should_validate(
@@ -548,6 +575,7 @@ class TrainingOrchestrator:
         ensemble_valid_loss: dict,
         metrics: dict,
         trajectory_idx: int,
+        mh_valid_loss: Union[float, None] = None,
     ) -> bool:
         """
         Uses the validation results to update which ensemble member is the best
@@ -567,8 +595,12 @@ class TrainingOrchestrator:
             bool: False, as intermediate training does not stop based on
                     validation performance but on number of epochs.
         """
-        # Update best member
-        best_member = select_best_member(ensemble_valid_loss)
+        # Update best member/head
+        if self.config.use_multihead_model:
+            assert mh_valid_loss is not None
+            best_member = select_best_member(mh_valid_loss)
+        else:
+            best_member = select_best_member(ensemble_valid_loss)
         if hasattr(self, "best_member"):
             self.best_member = best_member
 
@@ -780,18 +812,63 @@ class ALTrainingManager:
                 )
                 self._final_save(session)
 
+    def _setup_mh_to_sh_convergence(self):
+        """Setup convergence training configuration for MH to SH conversion."""
+        logging.info(
+            "Converging single-head model from multi-head model."
+        )
+        
+        # get best idx using name
+        best_head_idx = int(self.best_member.split("_")[-1])
+        
+        atomic_energies_dict = list(
+            self.mlff_manager.ensemble_atomic_energies_dict
+            .values()
+            )[0]
+        tag = list(self.ensemble_manager.ensemble.keys())[0]
+        mh_model = list(self.ensemble_manager.ensemble.values())[0]
+        avg_num_neighbors = mh_model.avg_num_neighbors
+        settings = self.config.model_settings["ARCHITECTURE"].copy()
+        # removing aims-PAX specific kwargs
+        settings.pop("use_multihead_model", None)
+        settings.pop("num_multihead_heads", None)
+        settings.pop("model", None)
+        settings.pop("atomic_energies", None)
+        
+        # convert mh model to sh model
+        sh_model = mh_to_sh_model(
+            mh_model_state_dict=mh_model.state_dict(),
+            settings=settings,
+            z_table=self.ensemble_manager.z_table,
+            atomic_energies_dict=atomic_energies_dict,
+            avg_num_neighbors=avg_num_neighbors,
+            head_idx=best_head_idx,
+            device=self.config.device,
+            dtype=self.config.dtype
+        )
+        # replace ensemble with single head model
+        self.ensemble_manager.ensemble = {
+            tag: sh_model
+        }
+    
+    def _setup_sh_convergence(self):
+        logging.info(
+            f"Converging best model ({self.best_member}) on "
+            f"acquired dataset."
+        )
+        self.ensemble_manager.ensemble = {
+            self.best_member: self.ensemble_manager.ensemble[
+                self.best_member
+            ]
+        }
+        
     def _setup_convergence(self):
         """Setup convergence training configuration."""
         if self.config.converge_best:
-            logging.info(
-                f"Converging best model ({self.best_member}) on "
-                f"acquired dataset."
-            )
-            self.ensemble_manager.ensemble = {
-                self.best_member: self.ensemble_manager.ensemble[
-                    self.best_member
-                ]
-            }
+            if self.config.use_multihead_model:
+                self._setup_mh_to_sh_convergence()
+            else:
+                self._setup_sh_convergence()
         else:
             logging.info("Converging ensemble on acquired dataset.")
 
@@ -816,27 +893,15 @@ class ALTrainingManager:
 
     def _create_convergence_datasets(self):
         """Create datasets for convergence training."""
-        temp_model_sets = {}
-        for tag, _ in self.ensemble_manager.ensemble.items():
-            train_set = create_model_dataset(
-                data=self.ensemble_manager.ensemble_ase_sets[tag]["train"],
-                z_table=self.ensemble_manager.z_table,
-                seed=self.config.seeds_tags_dict[tag],
-                r_max=self.config.r_max,
-                key_specification=self.config.key_specification,
-                r_max_lr=self.config.r_max_lr
-            )
-            valid_set = create_model_dataset(
-                data=self.ensemble_manager.ensemble_ase_sets[tag]["valid"],
-                z_table=self.ensemble_manager.z_table,
-                seed=self.config.seeds_tags_dict[tag],
-                r_max=self.config.r_max,
-                key_specification=self.config.key_specification,
-                r_max_lr=self.config.r_max_lr
-            )
-            temp_model_sets[tag] = {"train": train_set, "valid": valid_set}
-        return temp_model_sets
-
+        return ase_to_model_ensemble_sets(
+            ensemble_ase_sets=self.ensemble_manager.ensemble_ase_sets,
+            z_table=self.ensemble_manager.z_table,
+            r_max=self.config.r_max,
+            key_specification=self.config.key_specification,
+            r_max_lr=self.config.r_max_lr,
+            all_heads=self.config.all_heads,
+        )
+        
     def _get_initial_epoch(self):
         """Get initial epoch for convergence training."""
         if self.config.restart:
@@ -865,6 +930,10 @@ class ALTrainingManager:
             for tag in self.ensemble_manager.ensemble.keys()
         ]
         self.state_manager.trajectory_intermediate_epochs[idx] = 0
+        
+        if self.config.use_multihead_model:
+            for model in self.models:
+                model.select_heads = False
 
     def _check_batch_size(self, set_batch_size, tag):
         batch_size = (
@@ -882,8 +951,17 @@ class ALTrainingManager:
             train_batch_size = self._check_batch_size(
                 self.config.set_batch_size, tag
             )
+            smallest_valid_set = 0
+            for valid_set in self.ensemble_manager.ensemble_model_sets[tag][
+                "valid"].values():
+                if (
+                    smallest_valid_set == 0
+                    or len(valid_set) < smallest_valid_set
+                ):
+                    smallest_valid_set = len(valid_set)
+                    
             valid_batch_size = self._check_batch_size(
-                self.config.set_valid_batch_size, tag
+                min(self.config.set_batch_size, smallest_valid_set), tag
             )
 
             (
@@ -896,7 +974,7 @@ class ALTrainingManager:
                 valid_batch_size,
             )
             if not self.config.enable_cueq_train:
-                update_model_auxiliaries(
+                average_num_neighbors, atomic_energies_dict = update_model_auxiliaries(
                     model,
                     self.config.model_choice,
                     model_sets[tag],
@@ -908,6 +986,11 @@ class ALTrainingManager:
                     self.config.dtype,
                     self.config.device,
                 )
+                self.mlff_manager.ensemble_atomic_energies_dict[tag] = atomic_energies_dict
+        if self.config.use_multihead_model:
+            for model in self.ensemble_manager.ensemble.values():
+                model.select_heads = True        
+        
         return model_sets
 
     def _final_save(self, session: TrainingSession):
@@ -916,7 +999,9 @@ class ALTrainingManager:
             training_setups=session.training_setups,
             model_dir=self.config.model_settings["GENERAL"]["model_dir"],
             current_epoch=session.current_epoch,
-            convert_cueq_to_e3nn=self.config.enable_cueq_train
+            convert_cueq_to_e3nn=self.config.enable_cueq_train,
+            model_settings=self.config.model_settings["ARCHITECTURE"],
+            model_choice=self.config.model_choice
         )
         # save model(s) and datasets in final results directory
         os.makedirs("results", exist_ok=True)
@@ -930,7 +1015,9 @@ class ALTrainingManager:
             training_setups=self.ensemble_manager.training_setups,
             model_dir=Path("results"),
             current_epoch=self.state_manager.total_epoch,
-            convert_cueq_to_e3nn=self.config.enable_cueq_train
+            convert_cueq_to_e3nn=self.config.enable_cueq_train,
+            model_settings=self.config.model_settings["ARCHITECTURE"],
+            model_choice=self.config.model_choice
         )
 
 
@@ -1386,7 +1473,7 @@ class ALDFTManagerPARSL(ALDFTManager):
     def finalize_dft(self):
         with threading.Lock():
             self.kill_thread = True
-        time.sleep(5)
+        time.sleep(10)
         # clean up done in analysis class if
         # self.config.create_restart is True
         if not self.config.analysis:

@@ -14,7 +14,7 @@ from aims_PAX.tools.utilities.data_handling import (
 from aims_PAX.tools.utilities.utilities import (
     update_model_auxiliaries,
     save_checkpoint,
-    save_ensemble,
+    save_models,
     log_yaml_block,
 )
 from aims_PAX.tools.utilities.parsl_utils import (
@@ -219,6 +219,7 @@ class InitialDatasetProcedure(PrepareInitialDatasetProcedure):
                         ensemble_valid_losses,
                         valid_loss,
                         metrics,
+                        _
                     ) = validate_epoch(
                         ensemble=self.ensemble,
                         training_setups=self.training_setups,
@@ -385,10 +386,13 @@ class InitialDatasetProcedure(PrepareInitialDatasetProcedure):
                 logging.info("Converging initial dataset models.")
                 self.converge()
 
-            save_ensemble(
+            save_models(
                 ensemble=self.ensemble,
                 training_setups=self.training_setups,
-                model_settings=self.model_settings,
+                model_dir=self.model_settings["GENERAL"]["model_dir"],
+                current_epoch=self.epoch,
+                model_settings=self.model_settings["ARCHITECTURE"],
+                model_choice=self.model_choice
             )
 
             if self.create_restart:

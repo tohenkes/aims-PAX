@@ -331,7 +331,7 @@ def validate_epoch_multihead(
         eval_metrics["mode"] = "eval"
         eval_metrics["epoch"] = epoch
 
-    return {tag: valid_loss}, valid_loss, eval_metrics
+    return {tag: valid_loss}, valid_loss, eval_metrics, mh_valid_loss
 
 
 def validate_epoch_ensemble(
@@ -409,7 +409,7 @@ def validate_epoch_ensemble(
             epoch=epoch,
         )
 
-    return ensemble_valid_loss, valid_loss, eval_metrics
+    return ensemble_valid_loss, valid_loss, eval_metrics, None
 
 
 def validate_epoch(

@@ -11,6 +11,7 @@ from mace.cli.convert_e3nn_cueq import run as convert_e3nn_cueq
 from mace.cli.convert_cueq_e3nn import run as convert_cueq_e3nn
 from mace.tools import AtomicNumberTable
 from so3krates_torch.modules.models import So3krates, SO3LR
+from so3krates_torch.tools.multihead_utils import reduce_mh_model_to_sh
 from aims_PAX.tools.model_tools.setup_MACE import setup_mace
 from aims_PAX.tools.model_tools.setup_so3 import setup_so3krates, setup_so3lr, setup_multihead_so3lr
 from aims_PAX.tools.model_tools.training_tools import setup_model_training
@@ -43,6 +44,33 @@ Pbc = tuple  # (3,)
 
 DEFAULT_CONFIG_TYPE = "Default"
 DEFAULT_CONFIG_TYPE_WEIGHTS = {DEFAULT_CONFIG_TYPE: 1.0}
+
+
+def mh_to_sh_model(
+    mh_model_state_dict,
+    settings: dict,
+    z_table: tools.AtomicNumberTable,
+    atomic_energies_dict: dict,
+    avg_num_neighbors: float,
+    head_idx: int,
+    model_choice: str = "so3lr",
+    device: str = "cpu",
+    dtype: str = "float32"
+):
+    settings["num_elements"] = len(z_table)
+    settings["avg_num_neighbors"] = avg_num_neighbors
+    settings["atomic_type_shifts"] = atomic_energies_dict
+    
+    sh_model = reduce_mh_model_to_sh(
+        mh_model_state_dict,
+        settings,
+        head_idx,
+        model_choice,
+        device,
+        dtype
+    )
+    return sh_model
+
 
 def get_free_vols(lines):
     active = False
@@ -114,6 +142,11 @@ def apply_model_settings(
 
     # Multihead attributes
     target.use_multihead_model = architecture["use_multihead_model"]
+    if target.use_multihead_model:
+        assert target.model_choice != "mace", (
+            "Multihead models are only supported for so3krates and so3lr "
+            " at the moment."
+        )
     target.num_multihead_heads = architecture["num_multihead_heads"]
     if target.use_multihead_model and target.num_multihead_heads is not None:
         target.all_heads = [
@@ -237,21 +270,23 @@ def ensemble_from_folder(
 
     ensemble = {}
     for filename in os.listdir(path_to_models):
-        if os.path.isfile(os.path.join(path_to_models, filename)):
-            complete_path = os.path.join(path_to_models, filename)
-            model = torch.load(
-                complete_path, map_location=device, weights_only=False
-            ).to(dtype)
-            
-            if convert_to_cueq:
-                model = convert_e3nn_cueq(
-                    input_model=model,
-                    device=device,
-                    return_model=True
-                )
+        # check if filename is for model
+        if filename.endswith(".model") or filename.endswith(".pt"):
+            if os.path.isfile(os.path.join(path_to_models, filename)):
+                complete_path = os.path.join(path_to_models, filename)
+                model = torch.load(
+                    complete_path, map_location=device, weights_only=False
+                ).to(dtype)
+                
+                if convert_to_cueq:
+                    model = convert_e3nn_cueq(
+                        input_model=model,
+                        device=device,
+                        return_model=True
+                    )
 
-            filename_without_suffix = os.path.splitext(filename)[0]
-            ensemble[filename_without_suffix] = model
+                filename_without_suffix = os.path.splitext(filename)[0]
+                ensemble[filename_without_suffix] = model
     return ensemble
 
 
@@ -629,6 +664,7 @@ def update_model_auxiliaries(
                 model,
                 atomic_energies_dict,
             )
+    return average_neighbors, atomic_energies_dict
 
 
 def update_energy_shifts_mace(
@@ -727,6 +763,9 @@ def save_models(
     training_setups: dict, 
     model_dir: str, 
     current_epoch: int,
+    model_settings: dict,
+    model_choice: str,
+    save_state_dict: bool = True,
     convert_cueq_to_e3nn: bool = False
 ):
     for tag, model in ensemble.items():
@@ -750,6 +789,11 @@ def save_models(
                 model,
                 Path(model_dir) / (tag + ".model"),
             )
+            if save_state_dict:
+                torch.save(
+                    model.state_dict(),
+                    Path(model_dir) / (tag + ".pth"),
+                )
 
         save_checkpoint(
             checkpoint_handler=training_setup["checkpoint_handler"],
@@ -758,6 +802,25 @@ def save_models(
             epoch=current_epoch,
             keep_last=False,
         )
+        
+        # save hyperparams
+        settings = {"ARCHITECTURE": None}
+        settings["ARCHITECTURE"] = model_settings.copy()
+        settings.pop("use_multihead_model", None)
+        settings.pop("num_multihead_heads", None)
+        settings.pop("model", None)
+        settings.pop("atomic_energies", None)
+        if model_choice == "mace":
+            settings["ARCHITECTURE"]["avg_num_neighbors"] = model.interactions[0].avg_num_neighbors
+        else:
+            settings["ARCHITECTURE"]["avg_num_neighbors"] = model.avg_num_neighbors
+        
+        
+        
+        with open(
+            Path(model_dir) / (tag + "_hyperparams.yaml"), "w"
+        ) as file:
+            yaml.dump(settings, file)
 
 
 def Z_from_geometry(

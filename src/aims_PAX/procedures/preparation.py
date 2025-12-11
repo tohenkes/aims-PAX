@@ -6,7 +6,7 @@ from typing import Union, List
 import numpy as np
 from mace import tools
 from mace.calculators import MACECalculator
-from so3krates_torch.calculator.so3 import TorchkratesCalculator
+from so3krates_torch.calculator.so3 import TorchkratesCalculator, MultiHeadSO3LRCalculator
 from aims_PAX.tools.uncertainty import (
     HandleUncertainty,
     MolForceUncertainty,
@@ -1033,6 +1033,9 @@ class ALStateManager:
         self.check = 0
         self.uncertainties = []
 
+        # Multihead states
+        self.head_data_counter = 0
+
         # Analysis state
         if self.config.analysis:
             self._initialize_analysis_state()
@@ -1295,7 +1298,8 @@ class ALEnsemble:
             r_max=self.config.r_max,
             r_max_lr=self.config.r_max_lr,
             seed=self.config.seed,
-            key_specification=self.config.key_specification
+            key_specification=self.config.key_specification,
+            all_heads=self.config.all_heads,
         )
 
         self.train_dataset_len = len(
@@ -1314,13 +1318,30 @@ class ALEnsemble:
         self.comm_handler.barrier()
 
     def _check_subset_size(self, set_subset_size, tag, validation=False):
-        key = "valid" if validation else "train"
-        subset_size = (
-            len(self.ensemble_model_sets[tag][key])
-            if len(self.ensemble_model_sets[tag][key])
-            < set_subset_size
-            else set_subset_size
-        )
+        
+        if validation:
+            smallest_valid_set = 0
+            for valid_set in self.ensemble_model_sets[tag][
+                "valid"].values():
+                if (
+                    smallest_valid_set == 0
+                    or len(valid_set) < smallest_valid_set
+                ):
+                    smallest_valid_set = len(valid_set)
+            subset_size = (
+                smallest_valid_set
+                if smallest_valid_set < set_subset_size
+                else set_subset_size
+            )
+        
+        else:
+            subset_size = (
+                len(self.ensemble_model_sets[tag]["train"])
+                if len(self.ensemble_model_sets[tag]["train"])
+                < set_subset_size
+                else set_subset_size
+            )
+        
         return subset_size
 
     def create_training_subset(
@@ -1332,7 +1353,7 @@ class ALEnsemble:
         Creates a single batch of specified size. It includes the newly sampled
         point and a random selection of points from the current training set.
         """
-            
+        
         for tag in self.ensemble_ase_sets.keys():
             self.ensemble_model_sets[tag]["train_subset"] = {}
             self.ensemble_model_sets[tag]["valid_subset"] = {}
@@ -1367,13 +1388,19 @@ class ALEnsemble:
                 self.ensemble_model_sets[tag]["train"],
                 train_subset_size - 1,
             )
-
-            random_sample_valid = random.sample(
-                self.ensemble_model_sets[tag]["valid"],
-                valid_subset_size,
-            )
+            
+            random_samples_valid = {}
+            for head_name, head_data in self.ensemble_model_sets[
+                tag
+            ]["valid"].items():
+                random_sample_valid = random.sample(
+                    head_data,
+                    valid_subset_size,
+                )
+                random_samples_valid[head_name] = random_sample_valid
+                
             train_set = random_sample_train + model_point
-            valid_set = random_sample_valid
+            valid_set = random_samples_valid
             (
                 self.ensemble_model_sets[tag]["train_subset"][idx],
                 self.ensemble_model_sets[tag]["valid_subset"][idx],
@@ -1536,7 +1563,7 @@ class ALCalculatorMLFF:
                     map_location=self.config.device,
                     weights_only=False,
                 )
-                for model_path in model_paths
+                for model_path in model_paths if model_path.endswith('.model')
             ]
             if self.config.model_choice == "mace":
                 self.mlff_calc = MACECalculator(
@@ -1546,14 +1573,24 @@ class ALCalculatorMLFF:
                     enable_cueq=self.config.enable_cueq,
                 )
             elif self.config.model_choice in ["so3lr", "so3krates"]:
-                self.mlff_calc = TorchkratesCalculator(
-                    models=self.models,
-                    device=self.config.device,
-                    default_dtype=self.config.dtype,
-                    r_max_lr=self.config.r_max_lr,
-                    dispersion_energy_cutoff_lr_damping=self.config.dispersion_energy_cutoff_lr_damping,
-                    
-                )
+                if self.config.use_multihead_model:
+                    self.mlff_calc = MultiHeadSO3LRCalculator(
+                        model=self.models,
+                        device=self.config.device,
+                        default_dtype=self.config.dtype,
+                        r_max_lr=self.config.r_max_lr,
+                        dispersion_energy_cutoff_lr_damping=self.config.dispersion_energy_cutoff_lr_damping
+                        
+                    )
+                else:
+                    self.mlff_calc = TorchkratesCalculator(
+                        models=self.models,
+                        device=self.config.device,
+                        default_dtype=self.config.dtype,
+                        r_max_lr=self.config.r_max_lr,
+                        dispersion_energy_cutoff_lr_damping=self.config.dispersion_energy_cutoff_lr_damping,
+                        
+                    )
 
 
 class ALMD:

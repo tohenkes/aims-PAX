@@ -24,7 +24,7 @@ def create_base_so3krates_settings(
         num_features=architecture_settings["num_features"],
         num_radial_basis_fn=architecture_settings["num_radial_basis_fn"],
         degrees=architecture_settings["degrees"],
-        num_heads=architecture_settings["num_att_heads"],
+        num_heads=architecture_settings["num_heads"],
         num_layers=architecture_settings["num_layers"],
         num_elements=len(z_table),
         avg_num_neighbors=avg_num_neighbors,

@@ -422,6 +422,7 @@ def create_model_dataset(
     key_specification: KeySpecification,
     r_max_lr: Optional[float] = None,
     all_heads: Optional[List[str]] = None,
+    head_name: Optional[str] = "Default",
 ) -> list:
     """
     Create a MACE style dataset from a list of ASE atoms objects.
@@ -441,7 +442,8 @@ def create_model_dataset(
         valid_list=None,
         seed=seed,
         config_type_weights=None,
-        key_specification=key_specification
+        key_specification=key_specification,
+        head_name=head_name,
     )
 
     data_set = [
@@ -455,7 +457,7 @@ def create_model_dataset(
         for config in collections.train
     ]
     return data_set
-
+ 
 
 def update_model_set(
     new_train_data,
@@ -527,12 +529,12 @@ def split_data_heads_evenly(
     if n_points >= num_heads:
         for idx, point in enumerate(data):
             head = idx % num_heads
-            head_data[head].append(point)
+            head_data[head].append(point.copy())
     else:
         idx = 0
         while any(len(points) == 0 for points in head_data.values()):
             head = idx % num_heads
-            head_data[head].append(data[idx % n_points])
+            head_data[head].append(data[idx % n_points].copy())
             idx += 1
         
     return head_data
@@ -650,16 +652,16 @@ def sort_ase_dataset_to_heads(
             head_data[head_name] = []
         head_data[head_name].append(atoms)
     return head_data
-
+      
 
 def ase_to_model_ensemble_sets(
     ensemble_ase_sets: dict,
     z_table,
-    seed: dict,
     r_max: float,
     key_specification: KeySpecification,
     r_max_lr: Optional[float] = None,
     all_heads: Optional[List[str]] = None,
+    seed: int = 1234,
 ) -> dict:
     """
     Convert ASE style ensemble datasets to model style ensemble datasets.
@@ -743,6 +745,7 @@ def ase_to_model_ensemble_sets(
                         key_specification=key_specification
                 )
             }
+    
     return ensemble_model_sets
 
 

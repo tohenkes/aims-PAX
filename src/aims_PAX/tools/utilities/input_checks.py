@@ -415,7 +415,7 @@ SCHEME_MODEL_DTYPES = {
         #SO3LR
         "num_radial_basis_fn",
         "num_features",
-        "num_att_heads",
+        "num_heads",
         "num_layers",
         "final_mlp_layers",
         "energy_regression_dim",
@@ -491,6 +491,8 @@ SCHEME_MACE = {
         "interaction_first": "RealAgnosticResidualInteractionBlock",
         "compute_avg_num_neighbors": True,
         "atomic_energies": None,
+        "use_multihead_model": False,
+        "num_multihead_heads": None,
     },
 }
 SCHEME_MACE.update(SCHEME_MODEL_TRAINING)
@@ -506,12 +508,12 @@ SCHEME_SO3LR = {
         "num_features": 128,
         "num_radial_basis_fn": 32,
         "degrees": [1, 2, 3, 4],
-        "num_att_heads": 4,
+        "num_heads": 4,
         "num_layers": 3,
         "final_mlp_layers": 2,
         "energy_regression_dim": 128,
         "message_normalization": 'avg_num_neighbors',
-        "initialize_ev_to_zeros": False,
+        "initialize_ev_to_zeros": True,
         "radial_basis_fn": "bernstein",
         "trainable_rbf": False,
         "energy_learn_atomic_type_shifts": True,
