@@ -141,6 +141,20 @@ def apply_model_settings(
     target.enable_cueq_train = misc["enable_cueq_train"]
 
     # Multihead attributes
+    target.use_pretrained_model = (
+            isinstance(
+                       training["pretrained_model"], str
+            ) or isinstance(
+                training["pretrained_weights"], str
+            )
+        )
+    target.update_avg_num_neighbors = training["update_avg_num_neighbors"]
+    if target.use_pretrained_model and target.update_avg_num_neighbors:
+        logging.warning(
+            "Using a pretrained model/weights with "
+            "update_avg_num_neighbors=True is not recommended."
+            "This can lead to high errors in the beginning of training!"
+        )
     target.use_multihead_model = architecture["use_multihead_model"]
     if target.use_multihead_model:
         assert target.model_choice != "mace", (
@@ -423,6 +437,7 @@ def setup_ensemble_dicts(
     z_table: tools.AtomicNumberTable,
     model_settings: dict,
     ensemble_atomic_energies_dict: dict,
+    device: str = "cpu",
 ) -> tuple:
     """
     Creates dictionaries for the ensemble members i.e. a dictionary of models.
@@ -470,11 +485,21 @@ def setup_ensemble_dicts(
                     "When using a multihead model ('use_multihead_model: True'), "
                     "'ensemble_size' must be 1."
                 )
-                ensemble[tag] = setup_multihead_so3lr(
-                    settings=model_settings,
+
+                pretrained_model = setup_pretrained(
+                    model_settings=model_settings,
                     z_table=z_table,
                     atomic_energies_dict=ensemble_atomic_energies_dict[tag],
                 )
+                if pretrained_model is not None:
+                    ensemble[tag] = pretrained_model
+                    
+                else:
+                    ensemble[tag] = setup_multihead_so3lr(
+                        settings=model_settings,
+                        z_table=z_table,
+                        atomic_energies_dict=ensemble_atomic_energies_dict[tag],
+                    )
             else:
                 ensemble[tag] = setup_so3lr(
                     settings=model_settings,
@@ -482,6 +507,73 @@ def setup_ensemble_dicts(
                     atomic_energies_dict=ensemble_atomic_energies_dict[tag],
                 )
     return ensemble
+
+
+def setup_pretrained(
+    model_settings: dict,
+    z_table: tools.AtomicNumberTable,
+    atomic_energies_dict: dict,
+):
+    pretrained_model = model_settings["TRAINING"]["pretrained_model"]
+    pretrained_weights = model_settings["TRAINING"]["pretrained_weights"]
+    num_output_heads = model_settings["ARCHITECTURE"]["num_multihead_heads"]
+    device = model_settings["MISC"]["device"]
+    dtype = model_settings["GENERAL"]["default_dtype"]
+    
+    if not pretrained_model and not pretrained_weights:
+        return None
+    
+    if pretrained_model or pretrained_weights:
+        assert model_settings["ARCHITECTURE"]["use_multihead_model"], (
+            "Pretrained model or weights can only be used with multihead SO3LR."
+        )
+        logging.info("Using pretrained model or weights for multihead SO3LR.")
+        #TODO: Find a better way to do this. Extract settings from model (weights)?
+        logging.warning(
+            "Make sure that the architecture settings corresponding "
+            "to the pretrained model have been set correctly in the config file."
+            " Otherwise, non-matching hyperparameters will be saved!"
+        )
+        
+    if pretrained_model:
+        model = torch.load(
+            pretrained_model,
+            map_location=device,
+            weights_only=False
+        )
+        model.device = device
+        model.atomic_energy_output_block.device = device
+        model.to(dtype_mapping[dtype])
+        
+        assert num_output_heads == model.num_output_heads, (
+            "Number of output heads in the pretrained model does not match "
+            "the number of output heads specified in the settings."
+        )
+    elif pretrained_weights:
+        weights = torch.load(
+            pretrained_weights,
+            map_location=device,
+            weights_only=True
+        )
+        
+        assert num_output_heads == weights[
+            "atomic_energy_output_block.num_output_heads"
+        ], (
+            "Number of output heads in the pretrained weights does not match "
+            "the number of output heads specified in the settings."
+        )
+        
+        model = setup_multihead_so3lr(
+            settings=model_settings,
+            z_table=z_table,
+            atomic_energies_dict=atomic_energies_dict,
+        )
+        
+        model.load_state_dict(weights)
+    
+    
+    
+    return model
 
 
 def get_atomic_energies_from_ensemble(
@@ -589,6 +681,7 @@ def update_model_auxiliaries(
     model_sets: dict,
     scaling: str,
     atomic_energies_list: list,
+    update_avg_num_neighbors: bool = True,
     update_atomic_energies: bool = False,
     atomic_energies_dict: dict = None,
     z_table: tools.AtomicNumberTable = None,
@@ -649,16 +742,18 @@ def update_model_auxiliaries(
         mean, std = torch.from_numpy(mean).to(device), torch.from_numpy(std).to(
             device
         )
-        update_avg_num_neighbors_mace(
-            model,
-            average_neighbors,
-        )
+        if update_avg_num_neighbors:
+            update_avg_num_neighbors_mace(
+                model,
+                average_neighbors,
+            )
         
     elif model_choice in ["so3krates", "so3lr"]:
-        update_avg_num_neighbors_so3(
-            model,
-            average_neighbors, 
-        )
+        if update_avg_num_neighbors:
+            update_avg_num_neighbors_so3(
+                model,
+                average_neighbors, 
+            )
         if update_atomic_energies:
             update_energy_shifts_so3(
                 model,

@@ -850,7 +850,8 @@ class ALTrainingManager:
         self.ensemble_manager.ensemble = {
             tag: sh_model
         }
-    
+        self.config.use_multihead_model = False
+        self.config.all_heads = None
     def _setup_sh_convergence(self):
         logging.info(
             f"Converging best model ({self.best_member}) on "
@@ -980,6 +981,7 @@ class ALTrainingManager:
                     model_sets[tag],
                     self.config.scaling,
                     self.mlff_manager.ensemble_atomic_energies[tag],
+                    self.config.update_avg_num_neighbors,
                     self.mlff_manager.update_atomic_energies,
                     self.mlff_manager.ensemble_atomic_energies_dict[tag],
                     self.ensemble_manager.z_table,
@@ -1404,7 +1406,7 @@ class ALDFTManagerPARSL(ALDFTManager):
         while True:
             if self.kill_thread:
                 logging.info("Ab initio manager thread is stopping.")
-                break
+                return
             try:
                 idx, data = self.ab_initio_queue.get(timeout=1)
                 with self.results_lock:
@@ -1477,8 +1479,8 @@ class ALDFTManagerPARSL(ALDFTManager):
         # clean up done in analysis class if
         # self.config.create_restart is True
         if not self.config.analysis:
+            # delete all futures
             parsl.dfk().cleanup()
-
 
 class ALRunningManager:
     """

@@ -316,6 +316,9 @@ SCHEME_MODEL_TRAINING = {
         "stress_weight": 1.0,
         "config_type_weights": {"Default": 1.0},
         "clip_grad": 10.0,
+        "pretrained_model": None,
+        "pretrained_weights": None,
+        "update_avg_num_neighbors": True
     },
 }
 
@@ -432,6 +435,7 @@ SCHEME_MODEL_DTYPES = {
         "restart_latest",
         "enable_cueq",
         "enable_cueq_train",
+        "update_avg_num_neighbors",
         #SO3LR
         "initialize_ev_to_zeros",
         "trainable_rbf",
@@ -459,7 +463,10 @@ SCHEME_MODEL_DTYPES = {
     ],
     "dicts": ["config_type_weights"],
     "optional_lists": [],
-    "optional_strings": [],
+    "optional_strings": [
+        "pretrained_model",
+        "pretrained_weights"
+        ],
     "optional_dicts": ["atomic_energies"],
     "optional_dicts_strings": [],
     "optional_floats": [

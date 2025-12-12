@@ -170,6 +170,7 @@ class InitialDatasetProcedure(PrepareInitialDatasetProcedure):
                     atomic_energies_dict=self.ensemble_atomic_energies_dict[
                         tag
                     ],
+                    update_avg_num_neighbors=self.update_avg_num_neighbors,
                     dtype=self.dtype,
                     device=self.device,
                 )

@@ -201,6 +201,7 @@ class PrepareInitialDatasetProcedure:
                 model_settings=self.model_settings,
                 z_table=self.z_table,
                 ensemble_atomic_energies_dict=self.ensemble_atomic_energies_dict,
+                device=self.device,
             )
             self.training_setups = get_ensemble_training_setups(
                 ensemble=self.ensemble,
@@ -716,6 +717,7 @@ class PrepareInitialDatasetProcedure:
                     atomic_energies_dict=self.ensemble_atomic_energies_dict[
                         tag
                     ],
+                    update_avg_num_neighbors=self.config.update_avg_num_neighbors,
                     dtype=self.dtype,
                     device=self.device,
                 )
