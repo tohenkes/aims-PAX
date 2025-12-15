@@ -287,7 +287,7 @@ def ensemble_from_folder(
     ensemble = {}
     for filename in os.listdir(path_to_models):
         # check if filename is for model
-        if filename.endswith(".model") or filename.endswith(".pt"):
+        if filename.endswith(".model"):
             if os.path.isfile(os.path.join(path_to_models, filename)):
                 complete_path = os.path.join(path_to_models, filename)
                 model = torch.load(
@@ -549,6 +549,7 @@ def setup_pretrained(
         model.device = device
         model.atomic_energy_output_block.device = device
         model.to(dtype_mapping[dtype])
+        model.select_heads = True
         
         assert num_output_heads == model.num_output_heads, (
             "Number of output heads in the pretrained model does not match "

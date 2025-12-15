@@ -177,8 +177,12 @@ class InitialDatasetProcedure(PrepareInitialDatasetProcedure):
                 logging.info(
                     f"Training set size for '{tag}': "
                     f"{len(self.ensemble_model_sets[tag]['train'])}; Validation"
-                    f" set size: {len(self.ensemble_model_sets[tag]['valid'])}."
+                    f" set size: "
                 )
+                for head, valid_set in self.ensemble_model_sets[tag][
+                    "valid"
+                ].items():
+                    logging.info(f"  Head '{head}': {len(valid_set)}")
 
             logging.info("Training.")
             ensemble_valid_losses = {
