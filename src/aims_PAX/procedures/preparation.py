@@ -34,6 +34,7 @@ from aims_PAX.tools.utilities.utilities import (
     log_yaml_block,
     normalize_md_settings,
     apply_model_settings,
+    apply_finetuning_settings,
     AIMSControlParser,
     ModifyMD,
 )
@@ -1264,6 +1265,12 @@ class ALEnsemble:
             dtype=dtype_mapping[self.config.dtype],
             convert_to_cueq=self.config.enable_cueq_train,
         )
+        if self.config.model_settings["TRAINING"]["perform_finetuning"]:
+            for tag, model in self.ensemble.items():
+                self.ensemble[tag] = apply_finetuning_settings(
+                    model=model,
+                    model_settings=self.config.model_settings,
+                )
 
         self.training_setups = get_ensemble_training_setups(
             ensemble=self.ensemble,

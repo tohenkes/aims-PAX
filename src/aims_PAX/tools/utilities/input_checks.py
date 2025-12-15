@@ -318,7 +318,21 @@ SCHEME_MODEL_TRAINING = {
         "clip_grad": 10.0,
         "pretrained_model": None,
         "pretrained_weights": None,
-        "update_avg_num_neighbors": True
+        "update_avg_num_neighbors": True,
+        # Fine-tuning options
+        "perform_finetuning": False,
+        "finetuning_choice": "naive",
+        "freeze_embedding": False,
+        "freeze_zbl": False,
+        "freeze_hirshfeld": False,
+        "freeze_partial_charges": False,
+        "freeze_shifts": False,
+        "freeze_scales": False,
+        "convert_to_lora": False,
+        "lora_rank": 8,
+        "lora_alpha": 16,
+        "lora_freeze_A": False,
+        "convert_to_multihead": False,
     },
 }
 

@@ -12,6 +12,7 @@ from mace.cli.convert_cueq_e3nn import run as convert_cueq_e3nn
 from mace.tools import AtomicNumberTable
 from so3krates_torch.modules.models import So3krates, SO3LR
 from so3krates_torch.tools.multihead_utils import reduce_mh_model_to_sh
+from so3krates_torch.tools.finetune import setup_finetuning
 from aims_PAX.tools.model_tools.setup_MACE import setup_mace
 from aims_PAX.tools.model_tools.setup_so3 import setup_so3krates, setup_so3lr, setup_multihead_so3lr
 from aims_PAX.tools.model_tools.training_tools import setup_model_training
@@ -45,6 +46,7 @@ Pbc = tuple  # (3,)
 DEFAULT_CONFIG_TYPE = "Default"
 DEFAULT_CONFIG_TYPE_WEIGHTS = {DEFAULT_CONFIG_TYPE: 1.0}
 
+#TODO: Refactor all model setup to a separate file
 
 def mh_to_sh_model(
     mh_model_state_dict,
@@ -437,6 +439,7 @@ def setup_ensemble_dicts(
     z_table: tools.AtomicNumberTable,
     model_settings: dict,
     ensemble_atomic_energies_dict: dict,
+    num_elements: int = 118,
     device: str = "cpu",
 ) -> tuple:
     """
@@ -490,6 +493,7 @@ def setup_ensemble_dicts(
                     model_settings=model_settings,
                     z_table=z_table,
                     atomic_energies_dict=ensemble_atomic_energies_dict[tag],
+                    num_elements=num_elements
                 )
                 if pretrained_model is not None:
                     ensemble[tag] = pretrained_model
@@ -513,6 +517,7 @@ def setup_pretrained(
     model_settings: dict,
     z_table: tools.AtomicNumberTable,
     atomic_energies_dict: dict,
+    num_elements: int = 118
 ):
     pretrained_model = model_settings["TRAINING"]["pretrained_model"]
     pretrained_weights = model_settings["TRAINING"]["pretrained_weights"]
@@ -571,10 +576,67 @@ def setup_pretrained(
         
         model.load_state_dict(weights)
     
-    
-    
+    if model_settings["TRAINING"]["perform_finetuning"]:
+        model = apply_finetuning_settings(
+            model=model,
+            model_settings=model_settings,
+            num_elements=num_elements
+        )
     return model
 
+
+def apply_finetuning_settings(
+    model: torch.nn.Module,
+    model_settings: dict,
+    num_elements: int = 118
+) -> torch.nn.Module:
+    
+    logging.info("Applying fine-tuning settings to pretrained model.")
+    training_settings = model_settings["TRAINING"]
+    architecture_settings = model_settings["ARCHITECTURE"]
+    misc_settings = model_settings["MISC"]
+    general_settings = model_settings["GENERAL"]
+    
+    finetune_choice = training_settings["finetuning_choice"].lower()
+    device_name = misc_settings["device"]
+    freeze_embedding = training_settings["freeze_embedding"]
+    freeze_zbl = training_settings["freeze_zbl"]
+    freeze_hirshfeld = training_settings["freeze_hirshfeld"]
+    freeze_partial_charges = training_settings["freeze_partial_charges"]
+    freeze_shifts = training_settings["freeze_shifts"]
+    freeze_scales = training_settings["freeze_scales"]
+    convert_to_lora = training_settings["convert_to_lora"]
+    lora_rank = training_settings["lora_rank"]
+    lora_alpha = training_settings["lora_alpha"]
+    lora_freeze_A = training_settings["lora_freeze_A"]
+    
+    dora_scaling_to_one = True # TODO: remove dora
+    
+    convert_to_multihead = training_settings["convert_to_multihead"]
+    seed = general_settings["seed"]    
+    
+    return setup_finetuning(
+        model=model,
+        finetune_choice=finetune_choice,
+        device_name=device_name,
+        num_elements=num_elements,
+        freeze_embedding=freeze_embedding,
+        freeze_zbl=freeze_zbl,
+        freeze_hirshfeld=freeze_hirshfeld,
+        freeze_partial_charges=freeze_partial_charges,
+        freeze_shifts=freeze_shifts,
+        freeze_scales=freeze_scales,
+        convert_to_lora=convert_to_lora,
+        lora_rank=lora_rank,
+        lora_alpha=lora_alpha,
+        lora_freeze_A=lora_freeze_A,
+        dora_scaling_to_one=dora_scaling_to_one,
+        convert_to_multihead=convert_to_multihead,
+        architecture_settings=architecture_settings,
+        seed=seed,
+        log=True
+    )
+    
 
 def get_atomic_energies_from_ensemble(
     ensemble: dict,
