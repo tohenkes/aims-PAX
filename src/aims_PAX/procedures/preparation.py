@@ -1382,7 +1382,7 @@ class ALEnsemble:
                     self.config.train_subset_size, tag
                 )
                 valid_subset_size = self._check_subset_size(
-                    int(self.config.valid_ratio * train_subset_size),
+                    max(1, int(self.config.valid_ratio * train_subset_size)),
                     tag,
                     validation=True,
                 )
@@ -1419,9 +1419,12 @@ class ALEnsemble:
                 train_batch_size,
                 valid_batch_size,
             )
+            
+        logging.info(f"Using replay strategy: {self.config.replay_strategy}. Sample sizes:")
+        logging.info(f'Training set has {train_subset_size} points with {len(self.ensemble_model_sets[tag]["train_subset"][idx])} batches.')
         
-        logging.info(f'Training loader has {len(self.ensemble_model_sets[tag]["train_subset"][idx])} batches.')
-        logging.info(f'Training set has {train_subset_size} points.')
+        for head_name, head_data in self.ensemble_model_sets[tag]["valid_subset"][idx].items():
+            logging.info(f'Validation set for head "{head_name}" has {valid_subset_size} point(s) with {len(head_data)} batch(es).')
 
 
 class ALCalculatorMLFF:

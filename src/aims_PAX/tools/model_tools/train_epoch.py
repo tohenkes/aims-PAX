@@ -331,7 +331,7 @@ def validate_epoch_multihead(
         eval_metrics["mode"] = "eval"
         eval_metrics["epoch"] = epoch
     average_mh_mae_f = eval_metrics['mae_f'] * 1000
-    logging.info(f"Average multi-head MAE_F: {average_mh_mae_f:.2f}  meV / Å")
+    logging.info(f"Average multi-head MAE_F: {average_mh_mae_f:.2f}  meV / A")
     return {tag: valid_loss}, valid_loss, eval_metrics, mh_valid_loss
 
 
