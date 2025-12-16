@@ -145,7 +145,7 @@ class ALDataManager:
             max_size_reached = self._add_to_training_set(
                 idx, received_point, model_point
             )
-            if self.config.replay_strategy in ["random_batch", "random_subset"]:
+            if self.config.replay_strategy in ["random_subset"]:
                 self.ensemble_manager.create_training_subset(
                     model_point,
                     idx,
@@ -309,13 +309,13 @@ class TrainingOrchestrator:
         self.md_manager = md_manager
         self.train_loader_key = (
             "train_subset" if self.config.replay_strategy in [
-                "random_batch", "random_subset"
+                "random_subset"
             ]
             else "train_loader"
         )
         self.valid_loader_key = (
             "valid_subset" if self.config.replay_strategy in [
-                "random_batch", "random_subset"
+                "random_subset"
             ]
             else "valid_loader"
         )

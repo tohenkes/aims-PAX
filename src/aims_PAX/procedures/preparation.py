@@ -1327,31 +1327,14 @@ class ALEnsemble:
         )
         self.comm_handler.barrier()
 
-    def _check_subset_size(self, set_subset_size, tag, validation=False):
+    def _check_subset_size(self, data_set, set_subset_size):
         
-        if validation:
-            smallest_valid_set = 0
-            for valid_set in self.ensemble_model_sets[tag][
-                "valid"].values():
-                if (
-                    smallest_valid_set == 0
-                    or len(valid_set) < smallest_valid_set
-                ):
-                    smallest_valid_set = len(valid_set)
-            subset_size = (
-                smallest_valid_set
-                if smallest_valid_set < set_subset_size
-                else set_subset_size
-            )
-        
-        else:
-            subset_size = (
-                len(self.ensemble_model_sets[tag]["train"])
-                if len(self.ensemble_model_sets[tag]["train"])
+        subset_size = (
+                len(data_set)
+                if len(data_set)
                 < set_subset_size
                 else set_subset_size
             )
-        
         return subset_size
 
     def create_training_subset(
@@ -1368,40 +1351,39 @@ class ALEnsemble:
             f"train_subset_size must be specified when using replay strategy "
             f"{self.config.replay_strategy}."
         )
-        assert self.config.valid_subset_size is not None, (
-            f"valid_subset_size must be specified when using replay strategy "
-            f"{self.config.replay_strategy}."
+        set_valid_size = (
+            self.config.valid_subset_size if self.config.valid_subset_size is not None else np.inf
         )
 
         for tag in self.ensemble_ase_sets.keys():
             self.ensemble_model_sets[tag]["train_subset"] = {}
             self.ensemble_model_sets[tag]["valid_subset"] = {}
 
-            if self.config.replay_strategy == "random_batch":
+            if self.config.replay_strategy == "random_subset":
                 train_subset_size = self._check_subset_size(
-                    self.config.set_batch_size, tag
+                    data_set=self.ensemble_model_sets[tag]["train"],
+                    set_subset_size=self.config.train_subset_size
                 )
-                valid_subset_size = self._check_subset_size(
-                    self.config.set_valid_batch_size, tag, validation=True
+                valid_subset_sizes = {}
+                for head_name, head_data in self.ensemble_model_sets[
+                    tag
+                ]["valid"].items():
+                    valid_subset_sizes[head_name] = self._check_subset_size(
+                        data_set=head_data,
+                        set_subset_size=set_valid_size
+                        )
+                   
+                train_batch_size = min(
+                    self.config.set_batch_size, train_subset_size
                 )
-                train_batch_size = train_subset_size
-                valid_batch_size = valid_subset_size
-
-            elif self.config.replay_strategy == "random_subset":
-                train_subset_size = self._check_subset_size(
-                    self.config.train_subset_size, tag
-                )
-                valid_subset_size = self._check_subset_size(
-                    self.config.valid_subset_size,
-                    tag,
-                    validation=True,
-                )
-                train_batch_size = self._check_subset_size(
-                    self.config.set_batch_size, tag
-                )
-                valid_batch_size = self._check_subset_size(
-                    self.config.set_valid_batch_size, tag, validation=True
-                )
+                valid_batch_sizes = [
+                    min(
+                        self.config.set_valid_batch_size,
+                        valid_subset_sizes[head_name],
+                    )
+                    for head_name in valid_subset_sizes.keys()
+                ]
+                valid_batch_size = min(valid_batch_sizes)
                 
             random_sample_train = random.sample(
                 self.ensemble_model_sets[tag]["train"],
@@ -1412,11 +1394,10 @@ class ALEnsemble:
             for head_name, head_data in self.ensemble_model_sets[
                 tag
             ]["valid"].items():
-                random_sample_valid = random.sample(
+                random_samples_valid[head_name] = random.sample(
                     head_data,
-                    valid_subset_size,
+                    valid_subset_sizes[head_name],
                 )
-                random_samples_valid[head_name] = random_sample_valid
                 
             train_set = random_sample_train + model_point
             valid_set = random_samples_valid
@@ -1430,11 +1411,11 @@ class ALEnsemble:
                 valid_batch_size,
             )
             
-        logging.info(f"Using replay strategy: {self.config.replay_strategy}. Sample sizes:")
-        logging.info(f'Training set has {train_subset_size} points with {len(self.ensemble_model_sets[tag]["train_subset"][idx])} batches.')
+        logging.info(f"Using replay strategy: \"{self.config.replay_strategy}\". Sample sizes:")
+        logging.info(f'Training set has {train_subset_size} point(s) with {len(self.ensemble_model_sets[tag]["train_subset"][idx])} batch(es).')
         
         for head_name, head_data in self.ensemble_model_sets[tag]["valid_subset"][idx].items():
-            logging.info(f'Validation set for head "{head_name}" has {valid_subset_size} point(s) with {len(head_data)} batch(es).')
+            logging.info(f'Validation set for head "{head_name}" has {valid_subset_sizes[head_name]} point(s) with {len(head_data)} batch(es).')
 
 
 class ALCalculatorMLFF:
@@ -1955,7 +1936,6 @@ class ALRestart:
             
         # Special handling for subset data sets if applies
         if self.config.replay_strategy in [
-            "random_batch",
             "random_subset"
             ]:
             for idx in range(self.config.num_trajectories):
