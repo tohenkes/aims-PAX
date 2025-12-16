@@ -920,6 +920,7 @@ class ALConfiguration:
         # Training procedures (TODO: Move training methods from model file here)
         self.replay_strategy = self.al_settings["replay_strategy"]
         self.train_subset_size = self.al_settings["train_subset_size"]
+        self.valid_subset_size = self.al_settings["valid_subset_size"]
         if self.replay_strategy == "random_subset":
             assert self.train_subset_size is not None, (
                 "train_subset_size must be specified for random_subset "
@@ -1363,6 +1364,15 @@ class ALEnsemble:
         point and a random selection of points from the current training set.
         """
         
+        assert self.config.train_subset_size is not None, (
+            f"train_subset_size must be specified when using replay strategy "
+            f"{self.config.replay_strategy}."
+        )
+        assert self.config.valid_subset_size is not None, (
+            f"valid_subset_size must be specified when using replay strategy "
+            f"{self.config.replay_strategy}."
+        )
+
         for tag in self.ensemble_ase_sets.keys():
             self.ensemble_model_sets[tag]["train_subset"] = {}
             self.ensemble_model_sets[tag]["valid_subset"] = {}
@@ -1382,7 +1392,7 @@ class ALEnsemble:
                     self.config.train_subset_size, tag
                 )
                 valid_subset_size = self._check_subset_size(
-                    max(1, int(self.config.valid_ratio * train_subset_size)),
+                    self.config.valid_subset_size,
                     tag,
                     validation=True,
                 )

@@ -117,6 +117,7 @@ SCHEME = {
         },
         "replay_strategy": "full_dataset",
         "train_subset_size": None,
+        "valid_subset_size": None,
     },
     "optional_cluster": {
         "type": "slurm",
@@ -262,6 +263,7 @@ SCHEME_DTYPES = {
     ],
     "optional_ints": [
         "train_subset_size",
+        "valid_subset_size",
     ],
     "optional_floats": [
         "r_max_lr",
