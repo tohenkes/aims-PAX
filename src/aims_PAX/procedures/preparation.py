@@ -1588,7 +1588,8 @@ class ALCalculatorMLFF:
                         device=self.config.device,
                         default_dtype=self.config.dtype,
                         r_max_lr=self.config.r_max_lr,
-                        dispersion_energy_cutoff_lr_damping=self.config.dispersion_energy_cutoff_lr_damping
+                        dispersion_energy_cutoff_lr_damping=self.config.dispersion_energy_cutoff_lr_damping,
+                        compute_stress=self.config.compute_stress,
                         
                     )
                 else:
@@ -1598,7 +1599,7 @@ class ALCalculatorMLFF:
                         default_dtype=self.config.dtype,
                         r_max_lr=self.config.r_max_lr,
                         dispersion_energy_cutoff_lr_damping=self.config.dispersion_energy_cutoff_lr_damping,
-                        
+                        compute_stress=self.config.compute_stress,
                     )
 
 
