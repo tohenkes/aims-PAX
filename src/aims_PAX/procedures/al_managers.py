@@ -56,6 +56,7 @@ from aims_PAX.tools.utilities.parsl_utils import (
 from aims_PAX.tools.uncertainty import (
     get_threshold,
 )
+import random
 
 try:
     import parsl
@@ -104,13 +105,9 @@ class ALDataManager:
             True if max dataset size is reached, False otherwise
         """
         if self.config.use_multihead_model:
-            self.current_head_name = self.config.all_heads[
-                self.state_manager.head_data_counter
-            ]
-            
-            self.state_manager.head_data_counter = (
-                self.state_manager.head_data_counter + 1
-            ) % len(self.config.all_heads)
+            self.current_head_name = random.choice(
+                self.config.all_heads
+            )
             logging.info(f"Adding to head: {self.current_head_name}.")
             
         else:
