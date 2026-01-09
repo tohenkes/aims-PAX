@@ -114,7 +114,6 @@ class ALDataManager:
             self.current_head_name = "Default"
         
         received_point.info['head_name'] = self.current_head_name
-        
         model_point = create_model_dataset(
             data=[received_point],
             z_table=self.ensemble_manager.z_table,
@@ -849,6 +848,7 @@ class ALTrainingManager:
         }
         self.config.use_multihead_model = False
         self.config.all_heads = None
+    
     def _setup_sh_convergence(self):
         logging.info(
             f"Converging best model ({self.best_member}) on "
@@ -1064,7 +1064,6 @@ class ALDFTManager:
 
         self.comm_handler.barrier()
         self.point = self.recalc_dft(point)
-
         if not self.aims_calculator.asi.is_scf_converged:
             if self.rank == 0:
                 logging.info(
@@ -1204,6 +1203,7 @@ class ALDFTManagerSerial(ALDFTManager):
         ensemble_manager: ALEnsemble,
         state_manager: ALStateManager,
         comm_handler: CommHandler,
+        data_manager: ALDataManager,
         path_to_geometry: str = "geometry.in",
     ):
         super().__init__(
@@ -1216,6 +1216,7 @@ class ALDFTManagerSerial(ALDFTManager):
         self.aims_calculator = self._setup_aims_calculator(
             atoms=read(path_to_geometry)
         )
+        self.data_manager = data_manager
 
     def _setup_aims_calculator(self, atoms: ase.Atoms):
         aims_settings = self.aims_settings.copy()
@@ -1226,7 +1227,7 @@ class ALDFTManagerSerial(ALDFTManager):
             aims_settings["profile"] = AimsProfile(
                 command="asi-doesnt-need-command"
             )
-            calc = Aims(**aims_settings)
+            calc = Aims(**aims_settings[0])
             calc.write_inputfiles(asi.atoms, properties=self.config.properties)
 
         if asi4py is None:
@@ -1239,6 +1240,13 @@ class ALDFTManagerSerial(ALDFTManager):
             self.config.ASI_path, init_via_ase, self.comm_handler.comm, atoms
         )
         return calc
+    
+    def handle_dft_call(self, point, idx):
+        super().handle_dft_call(point, idx)
+        self.data_manager.handle_received_point(
+            idx,
+            self.point
+        )
 
 
 class ALDFTManagerParallel(ALDFTManager):

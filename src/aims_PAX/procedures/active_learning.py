@@ -262,7 +262,6 @@ class ALProcedure(PrepareALProcedure):
                 point, prediction, uncertainty, current_MD_step
             )
         )
-
         self.run_manager.process_uncertainty_decision(
             idx, uncertainty, self.point
         )
@@ -384,6 +383,7 @@ class ALProcedureSerial(ALProcedure):
             ensemble_manager=self.ensemble_manager,
             state_manager=self.state_manager,
             comm_handler=self.comm_handler,
+            data_manager=self.data_manager,
             path_to_geometry=path_to_geometry,
         )
 
@@ -406,6 +406,9 @@ class ALProcedureSerial(ALProcedure):
             rank=self.rank,
             dft_manager=self.dft_manager,
         )
+    
+    def _waiting_task(self, idx):
+        pass
 
 
 class ALProcedureParallel(ALProcedure):
