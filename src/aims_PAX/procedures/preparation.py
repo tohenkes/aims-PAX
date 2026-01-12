@@ -1964,6 +1964,7 @@ class ALRestart:
             "check",
             "uncertainties",
             "uncert_not_crossed",
+            "last_point_added",
         ]
 
         if self.config.analysis:

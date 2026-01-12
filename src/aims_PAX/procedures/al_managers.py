@@ -1172,8 +1172,10 @@ class ALDFTManager:
                 True  # this is necesssary to check for convergence in ASI
             )
             self.aims_settings = {
-                idx: aims_settings for idx in self.state_manager.trajectories.keys()
-                }
+                idx: aims_settings for idx in range(
+                    self.config.num_trajectories
+                )
+            }
         elif isinstance(control_source, dict):
             self.aims_settings = {}
             for key, value in control_source.items():
@@ -1486,6 +1488,7 @@ class ALDFTManagerPARSL(ALDFTManager):
         if not self.config.analysis:
             # delete all futures
             parsl.dfk().cleanup()
+
 
 class ALRunningManager:
     """
