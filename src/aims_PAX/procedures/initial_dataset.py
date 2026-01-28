@@ -1031,9 +1031,6 @@ class InitialDatasetPARSL(InitialDatasetFoundational):
 
         if self.rank == 0:
             logging.info("Setting up PARSL for initial dataset generation.")
-            # TODO: create function to check if all
-            # necessary settings are provided and fall back to
-            # defaults if not
             parsl_setup_dict = prepare_parsl(
                 cluster_settings=self.cluster_settings
             )
@@ -1042,6 +1039,30 @@ class InitialDatasetPARSL(InitialDatasetFoundational):
             self.clean_dirs = parsl_setup_dict["clean_dirs"]
             self.launch_str = parsl_setup_dict["launch_str"]
             self.calc_idx = parsl_setup_dict["calc_idx"]
+            
+            self.parsl_func_input = {
+                "ase_aims_command": self.launch_str,
+                "properties": self.properties,
+            }
+            
+            if self.cluster_settings["executor"] == "mpi":
+            
+                num_nodes = self.cluster_settings["parsl_options"].get(
+                    "nodes_per_block", 1
+                )
+                rank_per_nodes = self.cluster_settings.get(
+                    "tasks_per_node", 1
+                )
+                num_ranks = num_nodes * rank_per_nodes
+                self.parsl_resource_specification = {
+                    "num_nodes": num_nodes,
+                    "ranks_per_node": rank_per_nodes,
+                    "num_ranks": num_ranks,
+                }
+                self.parsl_func_input["parsl_resource_specification"] = (
+                    self.parsl_resource_specification
+                )
+                
             handle_parsl_logger(
                 log_dir=self.log_dir / "parsl_initial_dataset.log",
             )
@@ -1075,15 +1096,20 @@ class InitialDatasetPARSL(InitialDatasetFoundational):
                     # if there is only one entry in aims_settings the same
                     # settings are used for all systems
                     settings_idx = idx if len(self.aims_settings) > 1 else 0
+                    
+                    self.parsl_func_input.update(
+                        {
+                            "positions": atoms.get_positions(),
+                            "species": atoms.get_chemical_symbols(),
+                            "cell": atoms.get_cell(),
+                            "pbc": atoms.pbc,
+                            "aims_settings": self.aims_settings[settings_idx],
+                            "directory": directory,
+                        }
+                    )
+                    
                     temp_result = recalc_dft_parsl(
-                        positions=atoms.get_positions(),
-                        species=atoms.get_chemical_symbols(),
-                        cell=atoms.get_cell(),
-                        pbc=atoms.pbc,
-                        aims_settings=self.aims_settings[settings_idx],
-                        directory=directory,
-                        properties=self.properties,
-                        ase_aims_command=self.launch_str,
+                        **self.parsl_func_input
                     )
                     job_results[idx][i] = temp_result
                     calc_launched += 1

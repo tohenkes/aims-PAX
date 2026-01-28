@@ -1369,6 +1369,30 @@ class ALDFTManagerPARSL(ALDFTManager):
         self.calc_dir = parsl_setup_dict["calc_dir"]
         self.clean_dirs = parsl_setup_dict["clean_dirs"]
         self.launch_str = parsl_setup_dict["launch_str"]
+            
+        self.parsl_func_input = {
+            "ase_aims_command": self.launch_str,
+            "properties": self.properties,
+        }
+        
+        if self.config.cluster_settings["executor"] == "mpi":
+        
+            num_nodes = self.config.cluster_settings["parsl_options"].get(
+                "nodes_per_block", 1
+            )
+            rank_per_nodes = self.config.cluster_settings.get(
+                "tasks_per_node", 1
+            )
+            num_ranks = num_nodes * rank_per_nodes
+            self.parsl_resource_specification = {
+                "num_nodes": num_nodes,
+                "ranks_per_node": rank_per_nodes,
+                "num_ranks": num_ranks,
+            }
+            self.parsl_func_input["parsl_resource_specification"] = (
+                self.parsl_resource_specification
+            )
+            
         try:
             parsl.dfk()
             logging.info(
@@ -1418,15 +1442,20 @@ class ALDFTManagerPARSL(ALDFTManager):
                 idx, data = self.ab_initio_queue.get(timeout=1)
                 with self.results_lock:
                     curr_job_no = self.ab_initio_counter[idx]
+                    
+                self.parsl_func_input.update(
+                    {
+                        "positions": data.get_positions(),
+                        "species": data.get_chemical_symbols(),
+                        "cell": data.get_cell(),
+                        "pbc": data.pbc,
+                        "aims_settings": self.aims_settings[idx],
+                        "directory": self.calc_dir / f"worker_{idx}_no_{curr_job_no}",
+                    }
+                )
+                
                 futures[idx][curr_job_no] = recalc_dft_parsl(
-                    positions=data.get_positions(),
-                    species=data.get_chemical_symbols(),
-                    cell=data.get_cell(),
-                    pbc=data.pbc,
-                    aims_settings=self.aims_settings[idx],
-                    directory=self.calc_dir / f"worker_{idx}_no_{curr_job_no}",
-                    properties=self.config.properties,
-                    ase_aims_command=self.launch_str,
+                    **self.parsl_func_input
                 )
                 with self.results_lock:
                     self.ab_initio_counter[idx] += 1
@@ -1469,7 +1498,7 @@ class ALDFTManagerPARSL(ALDFTManager):
                             )
                         except FileNotFoundError:
                             logging.warning(
-                                f"Directory {self.calc_dir / f'worker_{job_idx}_{job_no}'}"
+                                f"Directory {self.calc_dir / f'worker_{job_idx}_no_{job_no}'}"
                                 "not found. Skipping removal."
                             )
 

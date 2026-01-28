@@ -122,6 +122,8 @@ SCHEME = {
     "optional_cluster": {
         "type": "slurm",
         "clean_dirs": True,
+        "executor": "workqueue",
+        "tasks_per_node": 1
     },
     "required_md": [
         "stat_ensemble",
@@ -225,7 +227,8 @@ SCHEME_DTYPES = {
         "tchain",
         "pchain",
         "tloop",
-        "ploop"
+        "ploop",
+        "tasks_per_node",
     ],
     "strings": [
         "species_dir",
@@ -238,6 +241,7 @@ SCHEME_DTYPES = {
         "foundational_model",
         "uncertainty_type",
         "type",
+        "executor",
         "stat_ensemble",
         "thermostat",
         "dataset_dir",

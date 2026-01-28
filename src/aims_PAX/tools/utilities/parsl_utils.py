@@ -1,13 +1,15 @@
 import os
 from parsl.config import Config
-from parsl.executors import WorkQueueExecutor
+from parsl.executors import WorkQueueExecutor, MPIExecutor
 from parsl.providers import SlurmProvider
+from parsl.launchers import SimpleLauncher
 from parsl import python_app
 import numpy as np
 import re
 import logging
 from ase.io import ParseError
 from pathlib import Path
+from typing import Optional
 
 
 def prepare_parsl(cluster_settings: dict = None) -> dict:
@@ -148,30 +150,55 @@ def create_parsl_config(cluster_settings: dict) -> Config:
         logging.error("Partition not found. Closing.")
         raise KeyError("Partition not found in slurm options string.")
 
-    config = Config(
-        executors=[
-            WorkQueueExecutor(
-                label=label,
-                port=0,
-                shared_fs=True,  # assumes shared file system
-                function_dir=str(function_dir),
-                autocategory=False,
-                provider=SlurmProvider(
-                    partition=partition,
-                    nodes_per_block=nodes_per_block,
-                    init_blocks=init_blocks,
-                    min_blocks=min_blocks,
-                    max_blocks=max_blocks,
-                    scheduler_options=slurm_options_str,
-                    worker_init=worker_init_str,
-                ),
-            )
-        ],
-        run_dir=str(run_dir),
-        app_cache=False,
-        initialize_logging=False,
-        retries=3
-    )
+    if cluster_settings["executor"] == "workqueue":
+        config = Config(
+            executors=[
+                WorkQueueExecutor(
+                    label=label,
+                    port=0,
+                    shared_fs=True,  # assumes shared file system
+                    function_dir=str(function_dir),
+                    autocategory=False,
+                    provider=SlurmProvider(
+                        partition=partition,
+                        nodes_per_block=nodes_per_block,
+                        init_blocks=init_blocks,
+                        min_blocks=min_blocks,
+                        max_blocks=max_blocks,
+                        scheduler_options=slurm_options_str,
+                        worker_init=worker_init_str,
+                    ),
+                )
+            ],
+            run_dir=str(run_dir),
+            app_cache=False,
+            initialize_logging=False,
+            retries=3
+        )
+    elif cluster_settings["executor"] == "mpi":
+        config = Config(
+            executors=[
+                MPIExecutor(
+                    label=label,
+                    mpi_launcher="srun",
+                    max_workers_per_block=1,
+                    provider=SlurmProvider(
+                        partition=partition,
+                        nodes_per_block=nodes_per_block,
+                        init_blocks=init_blocks,
+                        min_blocks=min_blocks,
+                        max_blocks=max_blocks,
+                        scheduler_options=slurm_options_str,
+                        worker_init=worker_init_str,
+                        launcher=SimpleLauncher(),
+                    ),
+                )
+            ],
+            run_dir=str(run_dir),
+            app_cache=False,
+            initialize_logging=False,
+            retries=3
+        )
     return config
 
 
@@ -197,6 +224,7 @@ def recalc_dft_parsl(
     directory: str = "./",
     properties: list = ["energy", "forces"],
     aims_output_file: str = "aims.out",
+    **kwargs
 ):
     """
     PARSL app that runs the DFT calculations using ASE AIMS calculator.
@@ -235,7 +263,14 @@ def recalc_dft_parsl(
     if not os.path.exists(directory):
         os.makedirs(directory)
 
-    os.environ["ASE_AIMS_COMMAND"] = ase_aims_command
+    prefix = os.environ.get("PARSL_MPI_PREFIX")
+
+    if prefix is not None:
+        command = prefix + " " + ase_aims_command
+    else:
+        command = ase_aims_command
+
+    os.environ["ASE_AIMS_COMMAND"] = command
 
     calc = Aims(
         profile=AimsProfile(command=os.environ["ASE_AIMS_COMMAND"]),
