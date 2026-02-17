@@ -738,6 +738,23 @@ def get_atomic_energies_from_pt(
     return (ensemble_atomic_energies, ensemble_atomic_energies_dict)
 
 
+def to_numpy(t: torch.Tensor) -> np.ndarray:
+    return t.cpu().detach().numpy()
+
+
+def compute_avg_num_neighbors(data_loader: torch.utils.data.DataLoader) -> float:
+    num_neighbors = []
+    for batch in data_loader:
+        _, receivers = batch.edge_index
+        _, counts = torch.unique(receivers, return_counts=True)
+        num_neighbors.append(counts)
+
+    avg_num_neighbors = torch.mean(
+        torch.cat(num_neighbors, dim=0).type(torch.get_default_dtype())
+    )
+    return to_numpy(avg_num_neighbors).item()
+
+
 def update_model_auxiliaries(
     model: Union[modules.MACE, So3krates, SO3LR],
     model_choice: str,
@@ -774,7 +791,7 @@ def update_model_auxiliaries(
     assert z_table is not None
     assert atomic_energies_dict is not None
 
-    average_neighbors = modules.compute_avg_num_neighbors(train_loader)
+    average_neighbors = compute_avg_num_neighbors(train_loader)
     
     energies_train = torch.stack(
         [point.energy.reshape(1) for point in model_sets["train"]]

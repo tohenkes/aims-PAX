@@ -1372,7 +1372,7 @@ class ALDFTManagerPARSL(ALDFTManager):
             
         self.parsl_func_input = {
             "ase_aims_command": self.launch_str,
-            "properties": self.properties,
+            "properties": self.config.properties,
         }
         
         if self.config.cluster_settings["executor"] == "mpi":

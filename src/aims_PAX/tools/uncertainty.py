@@ -1,4 +1,5 @@
 import numpy as np
+from so3krates_torch.calculator.so3 import MultiHeadSO3LRCalculator
 
 
 class HandleUncertainty:
@@ -152,6 +153,46 @@ class MolForceUncertainty(HandleUncertainty):
             (self.global_uncerstainty, self.inter_mol_uncertainty), axis=-1
         )
         return combined_uncertainty.squeeze()
+
+
+class UDDCalculator(MultiHeadSO3LRCalculator):
+
+    def __init__(
+            self,
+            A: float,
+            B: float = None,
+            **kwargs,
+    ):
+        super().__init__(**kwargs)
+        self.A = A
+        self.B = B
+
+    def _apply_bias_potential_linear(
+            self,
+            num_atoms: int
+    ):
+        energy_deviation_ = self.results["energies"] - self.results["energy"]
+        sigma_E_2 = 0.5 * np.sum(
+            energy_deviation_ ** 2.0
+        )
+        
+        E_bias = -self.A * sigma_E_2 / (self.num_heads * num_atoms)
+
+        self.results["energy_bias"] = E_bias
+        self.results["energy"] += E_bias
+
+        force_deviation = self.results["forces_comm"] - self.results["forces"][None, :, :]
+        f_bias = -self.A / (self.num_heads * num_atoms) * np.sum(
+                energy_deviation_[:, :, None] * force_deviation,
+                axis=0
+            )
+        self.results["forces_bias"] = f_bias
+        self.results["forces"] += f_bias
+
+    def _process_results(self, ret_tensors, out, multi_output=False, num_atoms=None):
+        super()._process_results(ret_tensors, out, multi_output)
+        self._apply_bias_potential_linear(num_atoms)
+
 
 
 def get_threshold(

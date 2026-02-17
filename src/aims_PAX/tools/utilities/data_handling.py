@@ -12,6 +12,7 @@ from typing import (
 from pathlib import Path
 from ase.io import write
 from so3krates_torch.data.atomic_data import AtomicData as so3_data
+from so3krates_torch.tools import torch_geometric as so3_torch_geometric
 from mace import data as mace_data
 from mace import tools
 from mace.tools import AtomicNumberTable, torch_geometric, DefaultKeys
@@ -394,7 +395,7 @@ def create_dataloader(
         tuple: _description_
     """
 
-    train_loader = torch_geometric.dataloader.DataLoader(
+    train_loader = so3_torch_geometric.dataloader.DataLoader(
         dataset=train_set,
         batch_size=train_batch_size,
         shuffle=True,
@@ -403,7 +404,7 @@ def create_dataloader(
 
     valid_loaders = {}
     for head, valid_subset in valid_set.items():
-        valid_loader = torch_geometric.dataloader.DataLoader(
+        valid_loader = so3_torch_geometric.dataloader.DataLoader(
             dataset=valid_subset,
             batch_size=valid_batch_size,
             shuffle=False,
