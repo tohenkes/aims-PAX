@@ -916,6 +916,7 @@ class ALConfiguration:
         self.extend_existing_final_ds = self.al_settings[
             'extend_existing_final_ds'
         ]
+        self.update_md_checkpoints = self.al_settings["update_md_checkpoints"]
         
         # Training procedures (TODO: Move training methods from model file here)
         self.replay_strategy = self.al_settings["replay_strategy"]

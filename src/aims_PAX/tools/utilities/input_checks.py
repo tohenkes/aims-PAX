@@ -118,6 +118,7 @@ SCHEME = {
         "replay_strategy": "full_dataset",
         "train_subset_size": None,
         "valid_subset_size": None,
+        "update_md_checkpoints": True
     },
     "optional_cluster": {
         "type": "slurm",
@@ -289,6 +290,7 @@ SCHEME_DTYPES = {
         "use_foundational",
         "distinct_model_sets",
         "dispersion",
+        "update_md_checkpoints",
     ],
     "lists": ["mol_idxs"],
     "optional_lists": [],

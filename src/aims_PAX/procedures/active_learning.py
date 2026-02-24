@@ -1115,6 +1115,7 @@ class ALProcedurePARSL(ALProcedure):
                     f"SCF not converged at worker {idx}. Discarding point and"
                     " restarting MD from last checkpoint."
                 )
+                
                 self.trajectories[idx] = atoms_full_copy(
                     self.state_manager.MD_checkpoints[idx]
                 )
@@ -1134,9 +1135,10 @@ class ALProcedurePARSL(ALProcedure):
                 if self.config.compute_stress:
                     received_point.info["REF_stress"] = job_result["stress"]
 
-                self.state_manager.MD_checkpoints[idx] = atoms_full_copy(
-                    received_point
-                )
+                if self.config.update_md_checkpoints:
+                    self.state_manager.MD_checkpoints[idx] = atoms_full_copy(
+                        received_point
+                    )
 
                 self.data_manager.handle_received_point(
                     idx=idx, received_point=received_point

@@ -1098,9 +1098,10 @@ class ALDFTManager:
                         "REF_stress"
                     ]
 
-                self.state_manager.MD_checkpoints[idx] = atoms_full_copy(
-                    received_point
-                )
+                if self.config.update_md_checkpoints:
+                    self.state_manager.MD_checkpoints[idx] = atoms_full_copy(
+                        received_point
+                    )
             self.state_manager.trajectory_status[idx] = "waiting"
             self.state_manager.num_workers_training += 1
 
