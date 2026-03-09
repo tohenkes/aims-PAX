@@ -7,8 +7,8 @@ import yaml
 from pathlib import Path
 from typing import Union, Dict, Any, Annotated
 
-from pydantic import BaseModel, RootModel, Field, DirectoryPath, model_validator, field_validator, FilePath, \
-    ValidationError, ConfigDict
+from pydantic import BaseModel, RootModel, Field, DirectoryPath,  FilePath, model_validator, field_validator, \
+    ValidationError
 from typing_extensions import Literal
 
 
@@ -36,7 +36,11 @@ class ProjectBaseModel(BaseModel):
             raise
 
 
-class MaceFMSettings(ProjectBaseModel):
+class FMSettings(ProjectBaseModel):
+    """Base class for foundational model settings."""
+
+
+class MaceFMSettings(FMSettings):
     """Pydantic settings for Mace foundational model."""
 
     mace_model: str = Field(
@@ -47,7 +51,7 @@ class MaceFMSettings(ProjectBaseModel):
     )
 
 
-class So3lrFMSettings(ProjectBaseModel):
+class So3lrFMSettings(FMSettings):
     """Pydantic settings for SO3LR foundational model."""
 
     r_max_lr: float | None = Field(
@@ -105,13 +109,14 @@ class IDGSettings(ProjectBaseModel):
         description="Number of models in the ensemble for uncertainty estimation.",
         gt=0,
     )
-    foundational_model: Literal["mace-mp", "so3lr"] = (
-        Field(
-            default="mace-mp",
-            description="Which foundational model to use for structure generation. Possible options: `mace-mp` or `so3lr`.",
-        ),
+    foundational_model: Literal["mace-mp", "so3lr"] = Field(
+        default="mace-mp",
+        description="Which foundational model to use for structure generation. Possible options: `mace-mp` or `so3lr`.",
     )
-    foundational_model_settings: Union[MaceFMSettings, So3lrFMSettings]
+    foundational_model_settings: Union[Dict[str, Any], FMSettings] = Field(
+        default_factory=dict,
+        description="Foundational model settings"
+    )
     intermediate_epochs_idg: int = Field(
         default=5,
         description="Number of intermediate epochs between dataset growth steps in initial training.",
@@ -184,6 +189,12 @@ class IDGSettings(ProjectBaseModel):
             )
         return self
 
+    @model_validator(mode="after")
+    def validate_nested_settings(self) -> "IDGSettings":
+        """Ensures foundational_model_settings matches the foundational_model type."""
+        model_class = MODEL_MAP.get(self.foundational_model)
+        self.foundational_model_settings = model_class(**self.foundational_model_settings)
+        return self
 
 class ALSettings(ProjectBaseModel):
     species_dir: str = Field(
@@ -305,6 +316,7 @@ class ALSettings(ProjectBaseModel):
     extend_existing_final_ds: bool = Field(
         default=False
     )
+
 
     @model_validator(mode="after")
     def check_at_least_one_required(self) -> "ALSettings":
