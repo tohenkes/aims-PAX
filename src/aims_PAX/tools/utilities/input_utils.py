@@ -1,7 +1,7 @@
 import logging
 import os
 from typing import Union
-from .input_checks import check_aimsPAX_settings, check_model_settings
+from aims_PAX.settings import AimsPAXSettings, ModelSettings
 from ase.io import read
 from yaml import safe_load
 import ase
@@ -33,24 +33,11 @@ def read_input_files(
         tuple: A tuple containing the checked model settings, checked AIMS PAX
         settings, path to control file, and path to geometry file.
     """
-    with open(path_to_model_settings, "r") as file:
-        model_settings = safe_load(file)
-    with open(path_to_aimsPAX_settings, "r") as file:
-        aimsPAX_settings = safe_load(file)
+    aimsPAX_settings = AimsPAXSettings.from_file(path_to_aimsPAX_settings)
+    model_settings = ModelSettings.from_file(path_to_model_settings)
 
-    aimsPAX_settings = check_aimsPAX_settings(
-        aimsPAX_settings, procedure=procedure
-    )
-
-    model_settings = check_model_settings(model_settings)
-
-    path_to_control = aimsPAX_settings["MISC"].get(
-        "path_to_control", "./control.in"
-    )
-    path_to_geometry = aimsPAX_settings["MISC"].get(
-        "path_to_geometry", "./geometry.in"
-    )
-
+    path_to_control = aimsPAX_settings.MISC.path_to_control
+    path_to_geometry = aimsPAX_settings.MISC.path_to_geometry
     return (
         model_settings,
         aimsPAX_settings,

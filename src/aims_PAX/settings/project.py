@@ -171,7 +171,7 @@ class IDGSettings(ProjectBaseModel):
         default=500,
         description="Maximum total epochs allowed before halting convergence.",
     )
-    initial_sampling: str = Field(default="foundational")
+    initial_sampling: Literal["aimd", "foundational"] = Field(default="foundational")
     aims_lib_path: str | None = Field(default=None, description="Path to the compiled FHI-aims library for direct force and energy evaluation.")
 
     @model_validator(mode="after")
@@ -592,8 +592,8 @@ class AimsPAXSettings(ProjectBaseModel):
 
         if not (al_active or gen_active):
             raise ValueError(
-                "Incomplete Configuration: You must provide settings for either "
-                "'ACTIVE_LEARNING' or 'INITIAL_DATASET_GENERATION'."
+                "Incomplete Configuration: You must provide settings for "
+                "'ACTIVE_LEARNING' or 'INITIAL_DATASET_GENERATION', or both."
             )
         return self
 
