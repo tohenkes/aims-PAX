@@ -27,6 +27,12 @@ dependencies = [
     "pydantic>=2.0,<3.0.0"
 ]
 
+[project.optional-dependencies]
+tests = [
+    "pytest",
+    "pytest-cov"
+]
+
 [project.urls]
 homepage = "https://github.com/tohenkes/aims_PAX"
 
