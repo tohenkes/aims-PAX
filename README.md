@@ -109,80 +109,81 @@ Example settings can be found in the `examples` folder.
 
 #### INITIAL_DATASET_GENERATION:
 
-| Parameter                       | Type             | Default           | Description                                                                                     |
-| ------------------------------- | ---------------- | ----------------- | ----------------------------------------------------------------------------------------------- |
-| \*species\_dir                | `str`            | —                 | Path to the directory containing the FHI AIMS species defaults.                                 |
-| \*n_points_per_sampling_step_idg           | `int`            | —                 |  Number of points that is sampled at each step for each model in the ensemble and each geometry.                   |
-| analysis | `bool` | `False` | Saves metrics such as losses during initial dataset generation.|
-| desired_acc | `float` | `0.0` | Force MAE (eV/Å) that the ensemble should reach on the validation set. Needs to be combined with `desired_acc_scale_idg`.|
-| desired_acc_scale_idg | `float` | `10.0` | Scales `desired_acc` during initial dataset generation. Resulting product is accuracy that the model has to reach on the validation set before stopping the procedure at this stage. |
-| ensemble_size | `int` | `4` | Number of models in the ensemble for uncertainty estimation. |
-| foundational_model | `str` | `mace-mp` | Which foundational model to use for structure generation. Possible options: `mace-mp` or `so3lr`. |
-| initial_foundational_size | `str` | `"small"` | Size of the foundational model used when `initial_sampling` is set to `mace-mp0`. |
-| foundational_model_settings | `dict` | `{mace_model: small}` | Settings for the chosen foundational model for structure generation. |
-| mace_model | `str` | `small` | Type of `MACE` foundational model. See [here](https://github.com/ACEsuit/mace/blob/main/mace/calculators/foundations_models.py) for their names. |
-|  dispersion_lr_damping | `str` | `None` | Damping parameter for dispersion interaction in `SO3LR`. Needed if `r_max_lr` is not `None`!  Part of `foundational_model_settings`.|
-| r_max_lr | `float` | `None` | Cutoff of long-range modules of `SO3LR`. Part of `foundational_model_settings`. |
-| intermediate_epochs_idg | `int` | `5` | Number of intermediate epochs between dataset growth steps in initial training. |
-| max_initial_epochs | `int` or `float` | `np.inf` | Maximum number of epochs for the initial training stage. |
-| max_initial_set_size | `int` or `float` | `np.inf` | Maximum size of the initial training dataset. |
-| progress_dft_update | `int` | `10` | Intervals at which progress of DFT calculations is logged.|
-| scheduler_initial | `bool` | `True` | Whether to use a learning rate scheduler during initial training. |
-| skip_step_initial | `int` | `25` | Intervals at which a structure is taken from the MD simulation either for the dataset in case of AIMD or for DFT in case of using an MLFF. |
-| valid_ratio | `float` | `0.1` | Fraction of data reserved for validation. |
-| valid_skip | `int` | `1` | Number of training steps between validation runs in initial training. |
-| distinct_model_set | `bool` | `True` | Wether to sample enough points so that every model in the ensemble gets distinct data sets. If set to `False`, the same dataset is used for all ensemble members. |
+| Parameter                        | Type             | Default               | Description                                                                                                                                                                          |
+|----------------------------------|------------------|-----------------------|--------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------|
+| \*species\_dir                   | `str`            | —                     | Path to the directory containing the FHI AIMS species defaults.                                                                                                                      |
+| \*n_points_per_sampling_step_idg | `int`            | —                     | Number of points that is sampled at each step for each model in the ensemble and each geometry.                                                                                      |
+| analysis                         | `bool`           | `False`               | Saves metrics such as losses during initial dataset generation.                                                                                                                      |
+| desired_acc                      | `float`          | `0.0`                 | Force MAE (eV/Å) that the ensemble should reach on the validation set. Needs to be combined with `desired_acc_scale_idg`.                                                            |
+| desired_acc_scale_idg            | `float`          | `10.0`                | Scales `desired_acc` during initial dataset generation. Resulting product is accuracy that the model has to reach on the validation set before stopping the procedure at this stage. |
+| ensemble_size                    | `int`            | `4`                   | Number of models in the ensemble for uncertainty estimation.                                                                                                                         |
+| foundational_model               | `str`            | `mace-mp`             | Which foundational model to use for structure generation. Possible options: `mace-mp` or `so3lr`.                                                                                    |
+| initial_foundational_size        | `str`            | `"small"`             | Size of the foundational model used when `initial_sampling` is set to `mace-mp0`.                                                                                                    |
+| foundational_model_settings      | `dict`           | `{mace_model: small}` | Settings for the chosen foundational model for structure generation.                                                                                                                 |
+| mace_model                       | `str`            | `small`               | Type of `MACE` foundational model. See [here](https://github.com/ACEsuit/mace/blob/main/mace/calculators/foundations_models.py) for their names.                                     |
+| dispersion_lr_damping            | `str`            | `None`                | Damping parameter for dispersion interaction in `SO3LR`. Needed if `r_max_lr` is not `None`!  Part of `foundational_model_settings`.                                                 |
+| r_max_lr                         | `float`          | `None`                | Cutoff of long-range modules of `SO3LR`. Part of `foundational_model_settings`.                                                                                                      |
+| intermediate_epochs_idg          | `int`            | `5`                   | Number of intermediate epochs between dataset growth steps in initial training.                                                                                                      |
+| max_initial_epochs               | `int` or `float` | `np.inf`              | Maximum number of epochs for the initial training stage.                                                                                                                             |
+| max_initial_set_size             | `int` or `float` | `np.inf`              | Maximum size of the initial training dataset.                                                                                                                                        |
+| progress_dft_update              | `int`            | `10`                  | Intervals at which progress of DFT calculations is logged.                                                                                                                           |
+| scheduler_initial                | `bool`           | `True`                | Whether to use a learning rate scheduler during initial training.                                                                                                                    |
+| skip_step_initial                | `int`            | `25`                  | Intervals at which a structure is taken from the MD simulation either for the dataset in case of AIMD or for DFT in case of using an MLFF.                                           |
+| valid_ratio                      | `float`          | `0.1`                 | Fraction of data reserved for validation.                                                                                                                                            |
+| valid_skip                       | `int`            | `1`                   | Number of training steps between validation runs in initial training.                                                                                                                |
+| distinct_model_set               | `bool`           | `True`                | Wether to sample enough points so that every model in the ensemble gets distinct data sets. If set to `False`, the same dataset is used for all ensemble members.                    |
 
 
 ##### Convergence 
 
 After the initial dataset generation is finished *aims PAX* does not converge the model(s) on the final dataset by default. In case you want to do this the following keywords are relevant.
-| Parameter                       | Type             | Default           | Description                                                                                     |
-| ------------------------------- | ---------------- | ----------------- | ----------------------------------------------------------------------------------------------- |
-| converge_initial | `bool` | `False` | Whether to converge the model(s) on the initial training set after a stopping criterion was met. |
-| convergence_patience | `int` | `50` | Number of epochs without improvement before halting convergence. |
-| margin | `float` | `0.002` | Margin to decide if a model has improved over the previous training epoch. |
-| max_convergence_epochs | `int` | `500` | Maximum total epochs allowed before halting convergence |
 
-<!---
-| aims_lib_path | `str` or `None` | `None` | Path to the compiled FHI-aims library for direct force and energy evaluation. |
+| Parameter              | Type            | Default | Description                                                                                      |
+|------------------------|-----------------|---------|--------------------------------------------------------------------------------------------------|
+| converge_initial       | `bool`          | `False` | Whether to converge the model(s) on the initial training set after a stopping criterion was met. |
+| convergence_patience   | `int`           | `50`    | Number of epochs without improvement before halting convergence.                                 |
+| margin                 | `float`         | `0.002` | Margin to decide if a model has improved over the previous training epoch.                       |
+| max_convergence_epochs | `int`           | `500`   | Maximum total epochs allowed before halting convergence                                          |
+
+<!--
+| aims_lib_path          | `str` or `None` | `None`  | Path to the compiled FHI-aims library for direct force and energy evaluation.                    |
 -->
 
 #### ACTIVE_LEARNING:
 
-| Parameter                       | Type             | Default           | Description                                                                                     |
-| ------------------------------- | ---------------- | ----------------- | ----------------------------------------------------------------------------------------------- |
-| \*species\_dir                | `str`            | —                 | Path to the directory containing the FHI AIMS species defaults.                                 |
-| \*num\_trajectories           | `int`            | —                 | How many trajectories are sampled from during the active learning phase.                        |
-| analysis                    | `bool`           | `False`           | Whether to run DFT calculations at specified intervals and save predicitions, uncertainties etc.                     |
-| analysis\_skip              | `int`            | `50`              | Interval (in MD steps) at which analysis DFT calculations are performed.                     |
-| c\_x                        | `float`          | `0.0`             | Weighting factor for the uncertainty threshold (see Eq. 2 in the paper). < 0 tightens, > 0 relaxes the threshold           |
-| desired\_acc                | `float`          | `0.`                 | Force MAE (eV/Å) that the ensemble should reach on the validation set.                                 |
-| ensemble\_size              | `int`            | `4`               | Number of models in the ensemble for uncertainty estimation.                                    |
-| epochs\_per\_worker         | `int`            | `2`               | Number of training epochs per worker after DFT is done.                         |
-| freeze\_threshold\_dataset  | `float`          | `np.inf`          | Training set size at which the uncertainty threshold is frozen; `np.inf` disables freezing.                     |
-| intermediate\_epochs\_al    | `int`            | `1`               | Number of intermediate training epochs after DFT is done.       |
-| margin                      | `float`          | `0.002`           | Margin to decide if a model has improved over the previous training epoch.                               |
-| max\_MD\_steps              | `int`            | `np.inf`                 | Maximum number of steps taken using the MLFF during active learning per trajectory.             |
-| max\_train\_set\_size       | `int`            | `np.inf`                 | Maximum size of training set before procedure is stopped.                                       |
-| seeds\_tags\_dict           | `dict` or `None` | `None`            | Optional mapping of seed indices to trajectory tags for reproducible runs.                      |
-| skip\_step\_mlff            | `int`            | `25`              | Step interval for evaluating the uncertainty criterion during MD in active learning.                   |
-| uncertainty\_type           | `str`            | `"max_atomic_sd"` | Method for estimating prediction uncertainty. Default is max force standard deviation (See Eq. 1 in the paper).                                                   |
-| uncert\_not\_crossed\_limit | `int`            | `50000`             | Max consecutive steps without crossing uncertainty threshold after which the a point is treated as if it crossed the threshold. This is done in case the models are overly confident for a long time.          |
-| valid\_ratio                | `float`          | `0.1`             | Fraction of data reserved for validation during active learning.                                                       |
-| valid\_skip                 | `int`            | `1`               | Rate at which validation of model during training is performed.
-| replay\_strategy                 | `str`            | `full_dataset`               | Method for replaying data during training. Default (`full_dataset`) means, full dataset is used. With `random_batch` only a single batch with the new point from AL and randomly sampled old points are used.  |
+| Parameter                   | Type             | Default           | Description                                                                                                                                                                                                   |
+|-----------------------------|------------------|-------------------|---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------|
+| \*species\_dir              | `str`            | —                 | Path to the directory containing the FHI AIMS species defaults.                                                                                                                                               |
+| \*num\_trajectories         | `int`            | —                 | How many trajectories are sampled from during the active learning phase.                                                                                                                                      |
+| analysis                    | `bool`           | `False`           | Whether to run DFT calculations at specified intervals and save predicitions, uncertainties etc.                                                                                                              |
+| analysis\_skip              | `int`            | `50`              | Interval (in MD steps) at which analysis DFT calculations are performed.                                                                                                                                      |
+| c\_x                        | `float`          | `0.0`             | Weighting factor for the uncertainty threshold (see Eq. 2 in the paper). < 0 tightens, > 0 relaxes the threshold                                                                                              |
+| desired\_acc                | `float`          | `0.`              | Force MAE (eV/Å) that the ensemble should reach on the validation set.                                                                                                                                        |
+| ensemble\_size              | `int`            | `4`               | Number of models in the ensemble for uncertainty estimation.                                                                                                                                                  |
+| epochs\_per\_worker         | `int`            | `2`               | Number of training epochs per worker after DFT is done.                                                                                                                                                       |
+| freeze\_threshold\_dataset  | `float`          | `np.inf`          | Training set size at which the uncertainty threshold is frozen; `np.inf` disables freezing.                                                                                                                   |
+| intermediate\_epochs\_al    | `int`            | `1`               | Number of intermediate training epochs after DFT is done.                                                                                                                                                     |
+| margin                      | `float`          | `0.002`           | Margin to decide if a model has improved over the previous training epoch.                                                                                                                                    |
+| max\_MD\_steps              | `int`            | `np.inf`          | Maximum number of steps taken using the MLFF during active learning per trajectory.                                                                                                                           |
+| max\_train\_set\_size       | `int`            | `np.inf`          | Maximum size of training set before procedure is stopped.                                                                                                                                                     |
+| seeds\_tags\_dict           | `dict` or `None` | `None`            | Optional mapping of seed indices to trajectory tags for reproducible runs.                                                                                                                                    |
+| skip\_step\_mlff            | `int`            | `25`              | Step interval for evaluating the uncertainty criterion during MD in active learning.                                                                                                                          |
+| uncertainty\_type           | `str`            | `"max_atomic_sd"` | Method for estimating prediction uncertainty. Default is max force standard deviation (See Eq. 1 in the paper).                                                                                               |
+| uncert\_not\_crossed\_limit | `int`            | `50000`           | Max consecutive steps without crossing uncertainty threshold after which the a point is treated as if it crossed the threshold. This is done in case the models are overly confident for a long time.         |
+| valid\_ratio                | `float`          | `0.1`             | Fraction of data reserved for validation during active learning.                                                                                                                                              |
+| valid\_skip                 | `int`            | `1`               | Rate at which validation of model during training is performed.                                                                                                                                               |
+| replay\_strategy            | `str`            | `full_dataset`    | Method for replaying data during training. Default (`full_dataset`) means, full dataset is used. With `random_batch` only a single batch with the new point from AL and randomly sampled old points are used. |
 
 ##### Convergence 
 
 After the active learning is finished *aims PAX* converges the model(s) on the final dataset by default. The following keywords are only applied to this part.
 
-| Parameter                       | Type             | Default           | Description                                                                                     |
-| ------------------------------- | ---------------- | ----------------- | ----------------------------------------------------------------------------------------------- |
-| converge\_al                | `bool`           | `True`            | Whether to converge the model(s) on the final training set at the end of active learning.                                 |
-| converge\_best              | `bool`           | `True`            | Whether to only converge the best performing model of the ensemble.      |
-| convergence\_patience       | `int`            | `50`              | Number of epochs without improvement before halting convergence.                             |
-| max\_convergence\_epochs    | `int`            | `500`             | Maximum total epochs allowed before halting convergence.                            |
+| Parameter                | Type   | Default | Description                                                                               |
+|--------------------------|--------|---------|-------------------------------------------------------------------------------------------|
+| converge\_al             | `bool` | `True`  | Whether to converge the model(s) on the final training set at the end of active learning. |
+| converge\_best           | `bool` | `True`  | Whether to only converge the best performing model of the ensemble.                       |
+| convergence\_patience    | `int`  | `50`    | Number of epochs without improvement before halting convergence.                          |
+| max\_convergence\_epochs | `int`  | `500`   | Maximum total epochs allowed before halting convergence.                                  |
 
 
 <!---
@@ -197,22 +198,22 @@ THESE ARE NOT ACTIVELY USED IN *aims-PAX* BUT ARE WORKING
 
 Settings for PARSL.
 
-| Parameter | Type | Default | Description |
-|-----------|------|---------|-------------|
-| type | `str` | `'slurm'` | Cluster backend type. Currently only `slurm` is available. |
-| \*parsl_options | `dict` | — | Parsl configuration options. |
-| &nbsp;&nbsp;&nbsp;&nbsp;&nbsp;\*nodes_per_block | `int` | — | Number of nodes per block. |
-| &nbsp;&nbsp;&nbsp;&nbsp;&nbsp;\*init_blocks | `int` | — | Initial number of blocks to launch. |
-| &nbsp;&nbsp;&nbsp;&nbsp;&nbsp;\*min_blocks | `int` | — | Minimum number of blocks allowed. |
-| &nbsp;&nbsp;&nbsp;&nbsp;&nbsp;\*max_blocks | `int` | — | Maximum number of blocks allowed. |
-| &nbsp;&nbsp;&nbsp;&nbsp;&nbsp;\*label | `str` | —| Unique label for this Parsl configuration. IMPORTANT: If you run multiple instances of aims-PAX on the same machine make sure that the labels are unique for each instance!|
-| &nbsp;&nbsp;&nbsp;&nbsp;&nbsp;run_dir | `str` | `None` | Directory to store runtime files. |
-| &nbsp;&nbsp;&nbsp;&nbsp;&nbsp;function_dir | `str`| `None` | Directory for Parsl function storage. |
-| \*slurm_str | `str` (multiline) | — | SLURM job script header specifying job resources and options. |
-| \*worker_str | `str` (multiline) | — | Shell commands to configure the environment for each worker process e.g. loading modules, activating conda environment. IMPORTANT: On most systems it's necessary to set the following environment variable so that multiple jobs don't interfere with each other: `export WORK_QUEUE_DISABLE_SHARED_PORT=1`. |
-| \*launch_str | `str` | — | Command to run FHI aims e.g. `"srun path/to/aims/aims.XXX.scalapack.mpi.x >> aims.out"` |
-| \*calc_dir | `str` | — | Path to the directory used for calculation outputs. |
-| clean_dirs | `bool` | `True` | Whether to remove calculation directories after DFT computations. |
+| Parameter                                       | Type              | Default   | Description                                                                                                                                                                                                                                                                                                   |
+|-------------------------------------------------|-------------------|-----------|---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------|
+| type                                            | `str`             | `'slurm'` | Cluster backend type. Currently only `slurm` is available.                                                                                                                                                                                                                                                    |
+| \*parsl_options                                 | `dict`            | —         | Parsl configuration options.                                                                                                                                                                                                                                                                                  |
+| &nbsp;&nbsp;&nbsp;&nbsp;&nbsp;\*nodes_per_block | `int`             | —         | Number of nodes per block.                                                                                                                                                                                                                                                                                    |
+| &nbsp;&nbsp;&nbsp;&nbsp;&nbsp;\*init_blocks     | `int`             | —         | Initial number of blocks to launch.                                                                                                                                                                                                                                                                           |
+| &nbsp;&nbsp;&nbsp;&nbsp;&nbsp;\*min_blocks      | `int`             | —         | Minimum number of blocks allowed.                                                                                                                                                                                                                                                                             |
+| &nbsp;&nbsp;&nbsp;&nbsp;&nbsp;\*max_blocks      | `int`             | —         | Maximum number of blocks allowed.                                                                                                                                                                                                                                                                             |
+| &nbsp;&nbsp;&nbsp;&nbsp;&nbsp;\*label           | `str`             | —         | Unique label for this Parsl configuration. IMPORTANT: If you run multiple instances of aims-PAX on the same machine make sure that the labels are unique for each instance!                                                                                                                                   |
+| &nbsp;&nbsp;&nbsp;&nbsp;&nbsp;run_dir           | `str`             | `None`    | Directory to store runtime files.                                                                                                                                                                                                                                                                             |
+| &nbsp;&nbsp;&nbsp;&nbsp;&nbsp;function_dir      | `str`             | `None`    | Directory for Parsl function storage.                                                                                                                                                                                                                                                                         |
+| \*slurm_str                                     | `str` (multiline) | —         | SLURM job script header specifying job resources and options.                                                                                                                                                                                                                                                 |
+| \*worker_str                                    | `str` (multiline) | —         | Shell commands to configure the environment for each worker process e.g. loading modules, activating conda environment. IMPORTANT: On most systems it's necessary to set the following environment variable so that multiple jobs don't interfere with each other: `export WORK_QUEUE_DISABLE_SHARED_PORT=1`. |
+| \*launch_str                                    | `str`             | —         | Command to run FHI aims e.g. `"srun path/to/aims/aims.XXX.scalapack.mpi.x >> aims.out"`                                                                                                                                                                                                                       |
+| \*calc_dir                                      | `str`             | —         | Path to the directory used for calculation outputs.                                                                                                                                                                                                                                                           |
+| clean_dirs                                      | `bool`            | `True`    | Whether to remove calculation directories after DFT computations.                                                                                                                                                                                                                                             |
 
 #### MD:
 This part defines the settings for the molecular dynamics simulations during initial dataset generation and/or active learning. If only one set of settings is given, they are used for all systems/geometries. In case you want to use different settings for different systems or geometries you have specifiy which trajectory/system uses which system using their indices. Practically this means using a nested dictionary in the settings file:
@@ -232,22 +233,22 @@ Here `0` and `1` refer to the indices used for giving the paths to the geometrie
 
 Currently these settings are used for *ab initio* and MLFF MD.
 
-| Parameter | Type | Default | Description |
-|-----------|------|---------|-------------|
-| \*stat_ensemble | `str` | — | Statistical ensemble for molecular dynamics (e.g., `NVT`, `NPT`). |
-| barostat | `str` | `MTK`| Barostat used when `NPT` is chosen. Stands for Full [Martyna-Tobias-Klein barostat](https://doi.org/10.1063/1.467468).|
-| friction | `float` | `0.001` | Friction coefficient for Langevin dynamics (in fs<sup>-1</sup>). |
-| MD_seed | `int` | `42` | Random number generator seed for Langevin dynamics. |
-| pchain | `int` | `3` | Number of thermostats in the barostat chain for MTK dynamics. |
-| pdamp | `float` | `500` | Pressure damping for MTK dynamics (`1000*timestep`). |
-| ploop | `int` | `1` | Number of loops for barostat integration in MTK dynamics. |
-| pressure | `float` | `101325.`| Pressure used for `NPT` in bar |
-| tchain | `int` | `3` | Number of thermostats in the thermostat chain for MTK dynamics. |
-| tdamp | `float` | `50` | Temperature damping for MTK dynamics (`100*timestep`). |
-| temperature | `float` | `300`| Target temperature  |
-| thermostat | `str` | `Langevin` | Thermostat used when `NVT` is chosen. |
-| timestep | `float` | 0.5 | Time step for molecular dynamics (in femtoseconds). |
-| tloop | `int` | `1` | Number of loops for thermostat integration in MTK dynamics. |
+| Parameter       | Type    | Default    | Description                                                                                                            |
+|-----------------|---------|------------|------------------------------------------------------------------------------------------------------------------------|
+| \*stat_ensemble | `str`   | —          | Statistical ensemble for molecular dynamics (e.g., `NVT`, `NPT`).                                                      |
+| barostat        | `str`   | `MTK`      | Barostat used when `NPT` is chosen. Stands for Full [Martyna-Tobias-Klein barostat](https://doi.org/10.1063/1.467468). |
+| friction        | `float` | `0.001`    | Friction coefficient for Langevin dynamics (in fs<sup>-1</sup>).                                                       |
+| MD_seed         | `int`   | `42`       | Random number generator seed for Langevin dynamics.                                                                    |
+| pchain          | `int`   | `3`        | Number of thermostats in the barostat chain for MTK dynamics.                                                          |
+| pdamp           | `float` | `500`      | Pressure damping for MTK dynamics (`1000*timestep`).                                                                   |
+| ploop           | `int`   | `1`        | Number of loops for barostat integration in MTK dynamics.                                                              |
+| pressure        | `float` | `101325.`  | Pressure used for `NPT` in bar                                                                                         |
+| tchain          | `int`   | `3`        | Number of thermostats in the thermostat chain for MTK dynamics.                                                        |
+| tdamp           | `float` | `50`       | Temperature damping for MTK dynamics (`100*timestep`).                                                                 |
+| temperature     | `float` | `300`      | Target temperature                                                                                                     |
+| thermostat      | `str`   | `Langevin` | Thermostat used when `NVT` is chosen.                                                                                  |
+| timestep        | `float` | 0.5        | Time step for molecular dynamics (in femtoseconds).                                                                    |
+| tloop           | `int`   | `1`        | Number of loops for thermostat integration in MTK dynamics.                                                            |
 
 
 
@@ -268,13 +269,13 @@ Similarly, the source of the control files can be either a single path or a dict
 ```
 **Note:** Ideally you don't want to train your model on different levels of theory or DFT settings. Using different control files is mostly intended for using *aims-PAX* on periodic and non-periodic systems simulatenoeusly. Then you can specify that a k grid can be used for the periodic structure but not for the non-periodic one!
 
-| Parameter       | Type          | Default     | Description                                          |
-|-----------------|---------------|-------------|------------------------------------------------------|
-| create_restart | `bool`       | `True`       | Whether to create restart files during the run.     |
-| dataset_dir   | `str`        | `"./data"`    | Directory where dataset files will be stored.            |
-| log_dir       | `str`        | `"./logs"`    | Directory where log files are saved.                 |
-| path_to_control | `str`       | `"./control.in"` | Path to the FHI aims control input file.                      |
-| path_to_geometry | `str`      | `"./geometry.in"` | Path to the geometry input file or folder.                     |
+| Parameter        | Type   | Default           | Description                                     |
+|------------------|--------|-------------------|-------------------------------------------------|
+| create_restart   | `bool` | `True`            | Whether to create restart files during the run. |
+| dataset_dir      | `str`  | `"./data"`        | Directory where dataset files will be stored.   |
+| log_dir          | `str`  | `"./logs"`        | Directory where log files are saved.            |
+| path_to_control  | `str`  | `"./control.in"`  | Path to the FHI aims control input file.        |
+| path_to_geometry | `str`  | `"./geometry.in"` | Path to the geometry input file or folder.      |
 
 
 <!---
@@ -288,73 +289,73 @@ We use exactly the same names as employed in the [MACE code](https://github.com/
 
 #### GENERAL
 
-| Parameter       | Type          | Default     | Description                                          |
-|-----------------|---------------|-------------|------------------------------------------------------|
-| name_exp    | `str`         | -           | This is the name given to the experiment and subsequently to the models and datasets. |
-| checkpoints_dir | `str`         | `"./checkpoints"` | Directory path for storing model checkpoints. |
-| compute_stress  | `bool`        | `False`       | Whether to compute stress tensors. |
-| default_dtype   | `str`         | `"float32"`   | Default data type for model parameters (float32/float64). |
-| loss_dir     | `str`         | `"./losses"`  | Directory path for storing training losses for each ensemble member. |
-| model_dir       | `str`         | `"./model"`   | Directory path for storing final trained models. |
-| seed            | `int`         | `42`          | Random seed (ensemble seeds are randomly chosen using this seed here.) |
+| Parameter       | Type   | Default           | Description                                                                           |
+|-----------------|--------|-------------------|---------------------------------------------------------------------------------------|
+| name_exp        | `str`  | -                 | This is the name given to the experiment and subsequently to the models and datasets. |
+| checkpoints_dir | `str`  | `"./checkpoints"` | Directory path for storing model checkpoints.                                         |
+| compute_stress  | `bool` | `False`           | Whether to compute stress tensors.                                                    |
+| default_dtype   | `str`  | `"float32"`       | Default data type for model parameters (float32/float64).                             |
+| loss_dir        | `str`  | `"./losses"`      | Directory path for storing training losses for each ensemble member.                  |
+| model_dir       | `str`  | `"./model"`       | Directory path for storing final trained models.                                      |
+| seed            | `int`  | `42`              | Random seed (ensemble seeds are randomly chosen using this seed here.)                |
 
 #### ARCHITECTURE
 
-| Parameter       | Type          | Default     | Description                                          |
-|-----------------|---------------|-------------|------------------------------------------------------|
-| atomic_energies | `dict` or `None` | `None `    | Atomic energy references for each element. Dictionary is structured as follows: {atomic_number: energy}. If `None`, atomic energies are determined using the training set using linear least squares. |
-| compute_avg_num_neighbors | `bool` | `True`      | Whether to compute average number of neighbors. |
-| correlation     | `int`         | `3`           | Correlation order for many-body interactions. |
-| gate            | `str`         | `"silu"`      | Activation function. |
-| interaction     | `str`         | `"RealAgnosticResidualInteractionBlock"` | Type of interaction block. |
-| interaction_first| `str`        | `"RealAgnosticResidualInteractionBlock"` | Type of first interaction block. |
-| max_ell         | `int`         | `3`           | Maximum degree of direction embeddings. |
-| max_L           | `int`         | `1`           | Maximum degree for equivariant features. |
-| MLP_irreps      | `str`         | `"16x0e"` | Irreps of the multi-layer perceptron in the last readout. Format is a `str` as defined in [`e3nn`](https://github.com/e3nn/e3nn/) |
-| model           | `str`         | `"MACE"` | Type of MACE model architecture to use. |
-| num_channels    | `int`         | `128`         | Number of channels (features). |
-| num_cutoff_basis| `int`         | `5`           | Number of cutoff basis functions. |
-| num_interactions| `int`         | `2`           | Number of interaction layers. |
-| num_radial_basis| `int`         | `8`           | Number of radial basis functions. |
-| r_max           | `float`       | `5.0`         | Cutoff radius (Å). |
-| radial_MLP      | `list`        | `[64, 64, 64]` | Architecture of the radial MLP (hidden layer sizes). |
-| radial_type     | `str`         | `"bessel"`    | Type of radial basis functions. |
-| scaling         | `str`         | `"rms_forces_scaling"` | Scaling method used. |
+| Parameter                 | Type             | Default                                  | Description                                                                                                                                                                                           |
+|---------------------------|------------------|------------------------------------------|-------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------|
+| atomic_energies           | `dict` or `None` | `None `                                  | Atomic energy references for each element. Dictionary is structured as follows: {atomic_number: energy}. If `None`, atomic energies are determined using the training set using linear least squares. |
+| compute_avg_num_neighbors | `bool`           | `True`                                   | Whether to compute average number of neighbors.                                                                                                                                                       |
+| correlation               | `int`            | `3`                                      | Correlation order for many-body interactions.                                                                                                                                                         |
+| gate                      | `str`            | `"silu"`                                 | Activation function.                                                                                                                                                                                  |
+| interaction               | `str`            | `"RealAgnosticResidualInteractionBlock"` | Type of interaction block.                                                                                                                                                                            |
+| interaction_first         | `str`            | `"RealAgnosticResidualInteractionBlock"` | Type of first interaction block.                                                                                                                                                                      |
+| max_ell                   | `int`            | `3`                                      | Maximum degree of direction embeddings.                                                                                                                                                               |
+| max_L                     | `int`            | `1`                                      | Maximum degree for equivariant features.                                                                                                                                                              |
+| MLP_irreps                | `str`            | `"16x0e"`                                | Irreps of the multi-layer perceptron in the last readout. Format is a `str` as defined in [`e3nn`](https://github.com/e3nn/e3nn/)                                                                     |
+| model                     | `str`            | `"MACE"`                                 | Type of MACE model architecture to use.                                                                                                                                                               |
+| num_channels              | `int`            | `128`                                    | Number of channels (features).                                                                                                                                                                        |
+| num_cutoff_basis          | `int`            | `5`                                      | Number of cutoff basis functions.                                                                                                                                                                     |
+| num_interactions          | `int`            | `2`                                      | Number of interaction layers.                                                                                                                                                                         |
+| num_radial_basis          | `int`            | `8`                                      | Number of radial basis functions.                                                                                                                                                                     |
+| r_max                     | `float`          | `5.0`                                    | Cutoff radius (Å).                                                                                                                                                                                    |
+| radial_MLP                | `list`           | `[64, 64, 64]`                           | Architecture of the radial MLP (hidden layer sizes).                                                                                                                                                  |
+| radial_type               | `str`            | `"bessel"`                               | Type of radial basis functions.                                                                                                                                                                       |
+| scaling                   | `str`            | `"rms_forces_scaling"`                   | Scaling method used.                                                                                                                                                                                  |
 
 
 #### TRAINING
 
-| Parameter       | Type          | Default     | Description                                          |
-|-----------------|---------------|-------------|------------------------------------------------------|
-| amsgrad         | `bool`        | `True`        | Whether to use AMSGrad variant of Adam optimizer. |
-| batch_size      | `int`         | `5`           | Batch size for training data. |
-| clip_grad       | `float`       | `10.0`        | Gradient clipping threshold. |
-| config_type_weights | `dict`    | `{"Default": 1.0}` | Weights for different configuration types. |
-| ema             | `bool`        | `True`        | Whether to use Exponential Moving Average. |
-| ema_decay       | `float`       | `0.99`        | Decay factor for exponential moving average. |
-| energy_weight   | `float`       | `1.0`         | Weight for energy loss component. |
-| forces_weight   | `float`       | `1000.0`      | Weight for forces loss component. |
-| loss            | `str`         | `"weighted"`  | Loss function type. |
-| lr              | `float`       | `0.01`        | Initial learning rate for optimizer. |
-| lr_factor       | `float`       | `0.8`         | Factor by which learning rate is reduced. |
-| lr_scheduler_gamma | `float`    | `0.9993`      | Learning rate decay factor for scheduler. |
-| optimizer       | `str`         | `"adam"`      | Optimizer type (adam/adamw). |
-| scheduler       | `str`         | `"ReduceLROnPlateau"` | Learning rate scheduler type. |
-| scheduler_patience | `int`      | `5`           | Number of epochs to wait before reducing LR. |
-| stress_weight   | `float`       | `1.0`         | Weight for stress loss component. |
-| swa             | `bool`        | `False`       | Whether to use Stochastic Weight Averaging. |
-| valid_batch_size| `int`         | `5`           | Batch size for validation data. |
-| virials_weight  | `float`       | `1.0`         | Weight for virials loss component. |
-| weight_decay    | `float`       | `5.e-07`      | L2 regularization weight decay factor. |
+| Parameter           | Type    | Default               | Description                                       |
+|---------------------|---------|-----------------------|---------------------------------------------------|
+| amsgrad             | `bool`  | `True`                | Whether to use AMSGrad variant of Adam optimizer. |
+| batch_size          | `int`   | `5`                   | Batch size for training data.                     |
+| clip_grad           | `float` | `10.0`                | Gradient clipping threshold.                      |
+| config_type_weights | `dict`  | `{"Default": 1.0}`    | Weights for different configuration types.        |
+| ema                 | `bool`  | `True`                | Whether to use Exponential Moving Average.        |
+| ema_decay           | `float` | `0.99`                | Decay factor for exponential moving average.      |
+| energy_weight       | `float` | `1.0`                 | Weight for energy loss component.                 |
+| forces_weight       | `float` | `1000.0`              | Weight for forces loss component.                 |
+| loss                | `str`   | `"weighted"`          | Loss function type.                               |
+| lr                  | `float` | `0.01`                | Initial learning rate for optimizer.              |
+| lr_factor           | `float` | `0.8`                 | Factor by which learning rate is reduced.         |
+| lr_scheduler_gamma  | `float` | `0.9993`              | Learning rate decay factor for scheduler.         |
+| optimizer           | `str`   | `"adam"`              | Optimizer type (adam/adamw).                      |
+| scheduler           | `str`   | `"ReduceLROnPlateau"` | Learning rate scheduler type.                     |
+| scheduler_patience  | `int`   | `5`                   | Number of epochs to wait before reducing LR.      |
+| stress_weight       | `float` | `1.0`                 | Weight for stress loss component.                 |
+| swa                 | `bool`  | `False`               | Whether to use Stochastic Weight Averaging.       |
+| valid_batch_size    | `int`   | `5`                   | Batch size for validation data.                   |
+| virials_weight      | `float` | `1.0`                 | Weight for virials loss component.                |
+| weight_decay        | `float` | `5.e-07`              | L2 regularization weight decay factor.            |
 
 
 #### MISC
 
-| Parameter       | Type          | Default     | Description                                          |
-|-----------------|---------------|-------------|------------------------------------------------------|
-| device          | `str`         | `"cpu"`       | Device for training (cpu/cuda). |
-| error_table     | `str`         | `"PerAtomMAE"` | Type of error metrics to compute and display. |
-| log_level       | `str`         | `"INFO"`      | Logging level (DEBUG/INFO/WARNING/ERROR). |
+| Parameter   | Type  | Default        | Description                                   |
+|-------------|-------|----------------|-----------------------------------------------|
+| device      | `str` | `"cpu"`        | Device for training (cpu/cuda).               |
+| error_table | `str` | `"PerAtomMAE"` | Type of error metrics to compute and display. |
+| log_level   | `str` | `"INFO"`       | Logging level (DEBUG/INFO/WARNING/ERROR).     |
 
 <!---
 | keep_checkpoints| `bool`        | `False`       | Whether to keep all checkpoint files. |
