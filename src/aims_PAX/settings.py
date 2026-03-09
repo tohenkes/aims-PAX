@@ -1,20 +1,39 @@
 """
 Pydantic settings for aimsPAX project.
 """
-
+import io
 import sys
+import yaml
+from pathlib import Path
 from typing import Union, Dict, Any, Annotated
 
-from pydantic import BaseModel, RootModel, Field, DirectoryPath, model_validator, field_validator
+from pydantic import BaseModel, RootModel, Field, DirectoryPath, model_validator, field_validator, FilePath, \
+    ValidationError
 from typing_extensions import Literal
 
 
 class ProjectBaseModel(BaseModel):
     """Base class for settings in the project"""
 
+    @classmethod
+    def from_file(cls, f: str | Path | io.FileIO) -> "ProjectBaseModel":
+        """Load settings from a file."""
+        if isinstance(f, (str, Path)):
+            path = Path(f)
+            if not path.exists():
+                raise FileNotFoundError(f"Configuration file not found: {path}")
 
-class AimsPAXSettings(ProjectBaseModel):
-    """Pydantic settings for aimsPAX project."""
+            with open(path, "r") as file_stream:
+                data = yaml.safe_load(file_stream)
+        else:
+            data = yaml.safe_load(f)
+        try:
+            return cls(**data)
+        except ValidationError as e:
+            # You can customize the error reporting here
+            print(f"\n[!] Configuration error in {cls.__name__}:")
+            print(e)
+            raise
 
 
 class MaceFMSettings(ProjectBaseModel):
@@ -173,7 +192,7 @@ class IDGSettings(ProjectBaseModel):
         return self
 
 
-class ALSettings(BaseModel):
+class ALSettings(ProjectBaseModel):
     species_dir: str = Field(
         ...,
         description="Path to the directory containing the FHI-aims species defaults."
@@ -310,7 +329,7 @@ class ALSettings(BaseModel):
         return self
 
 
-class TrajectoryMDBase(BaseModel):
+class TrajectoryMDBase(ProjectBaseModel):
     timestep: float = Field(
         default=0.5,
         description="Time step for molecular dynamics (in femtoseconds)."
@@ -432,4 +451,145 @@ class MDSettings(RootModel):
             return fix_dict(v)
         return v
 
+
+class ParslSettings(ProjectBaseModel):
+    nodes_per_block: int = Field(
+        ...,
+        description="Number of nodes per block."
+    )
+    init_blocks: int = Field(
+        ...,
+        description="Initial number of blocks to launch."
+    )
+    min_blocks: int = Field(
+        ...,
+        description="Minimum number of blocks allowed."
+    )
+    max_blocks: int = Field(
+        ...,
+        description="Maximum number of blocks allowed."
+    )
+    label: str = Field(
+        ...,
+        description="Unique label for this Parsl configuration. Must be unique for each aims-PAX instance."
+    )
+    run_dir: str | None = Field(
+        default=None,
+        description="Directory to store runtime files."
+    )
+    function_dir: str | None = Field(
+        default=None,
+        description="Directory for Parsl function storage."
+    )
+
+
+class ClusterSettings(ProjectBaseModel):
+    type: Literal["slurm"] = Field(
+        default="slurm",
+        description="Cluster backend type. Currently only 'slurm' is available."
+    )
+    parsl_options: ParslSettings = Field(
+        ...,
+        description="Parsl configuration options including block scaling and labeling."
+    )
+    slurm_str: str = Field(
+        ...,
+        description="SLURM job script header specifying job resources and options. Can be multiline."
+    )
+    worker_str: str = Field(
+        ...,
+        description=(
+            "Shell commands to configure the environment for each worker process. Can be multiline. "
+            "Ensure 'export WORK_QUEUE_DISABLE_SHARED_PORT=1' is included if necessary."
+        )
+    )
+    launch_str: str = Field(
+        ...,
+        description="Command to run FHI aims, e.g., 'srun path/to/aims >> aims.out'."
+    )
+    calc_dir: str = Field(
+        ...,
+        description="Path to the directory used for calculation outputs."
+    )
+    clean_dirs: bool = Field(
+        default=True,
+        description="Whether to remove calculation directories after DFT computations."
+    )
+
+
+PathOrIndexedPaths = Union[FilePath, Dict[int, FilePath]]
+
+class MiscSettings(ProjectBaseModel):
+    create_restart: bool = Field(
+        default=True,
+        description="Whether to create restart files during the run."
+    )
+    dataset_dir: str = Field(
+        default="./data",
+        description="Directory where dataset files will be stored."
+    )
+    log_dir: str = Field(
+        default="./logs",
+        description="Directory where log files are saved."
+    )
+    path_to_control: PathOrIndexedPaths = Field(
+        default="./control.in",
+        description=(
+            "Path to the FHI-aims control input file. Can be a single path "
+            "or a dictionary mapping system indices to specific control files."
+        )
+    )
+    path_to_geometry: Union[PathOrIndexedPaths | DirectoryPath] = Field(
+        default="./geometry.in",
+        description=(
+            "Path to the geometry input file or folder. Can be a single path, "
+            "a folder, or a dictionary mapping indices to specific geometry files."
+        )
+    )
+
+    @model_validator(mode="after")
+    def validate_indices_match(self) -> "MiscSettings":
+        """
+        Cross-checks that if indexed paths are used, the indices
+        overlap correctly between geometry and control files.
+        """
+        if isinstance(self.path_to_geometry, dict) and isinstance(self.path_to_control, dict):
+            geo_indices = set(self.path_to_geometry.keys())
+            ctrl_indices = set(self.path_to_control.keys())
+
+            if not geo_indices.issubset(ctrl_indices):
+                missing = geo_indices - ctrl_indices
+                raise ValueError(f"Geometry indices {missing} are missing corresponding control files.")
+
+        return self
+
+
+class AimsPAXSettings(ProjectBaseModel):
+    """Pydantic settings for aimsPAX project."""
+    INITIAL_DATASET_GENERATION: IDGSettings | None = Field(
+        default=None,
+        description="Initial dataset generation Settings"
+    )
+    ACTIVE_LEARNING: ALSettings | None = Field(
+        default=None,
+        description="Active Learning settings"
+    )
+    MD: MDSettings = Field(..., description="Molecular Dynamics settings.")
+    CLUSTER: ClusterSettings = Field(..., description="PARSL/HPC infrastructure settings.")
+    MISC: MiscSettings = Field(default_factory=MiscSettings)
+
+    @model_validator(mode="after")
+    def check_operation_mode(self) -> "MasterConfig":
+        """
+        Enforces that at least one functional mode is active.
+        """
+        al_active = self.ACTIVE_LEARNING is not None
+        gen_active = self.INITIAL_DATASET_GENERATION is not None
+
+        if not (al_active or gen_active):
+            raise ValueError(
+                "Incomplete Configuration: You must provide settings for either "
+                "'ACTIVE_LEARNING' or 'INITIAL_DATASET_GENERATION'."
+            )
+        return self
 
