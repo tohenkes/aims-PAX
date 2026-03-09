@@ -8,7 +8,7 @@ from pathlib import Path
 from typing import Union, Dict, Any, Annotated
 
 from pydantic import BaseModel, RootModel, Field, DirectoryPath, model_validator, field_validator, FilePath, \
-    ValidationError
+    ValidationError, ConfigDict
 from typing_extensions import Literal
 
 
@@ -28,9 +28,9 @@ class ProjectBaseModel(BaseModel):
         else:
             data = yaml.safe_load(f)
         try:
-            return cls(**data)
+            return cls.model_validate(data)
         except ValidationError as e:
-            # You can customize the error reporting here
+            # error in validation, can be logged in any way
             print(f"\n[!] Configuration error in {cls.__name__}:")
             print(e)
             raise
@@ -111,7 +111,7 @@ class IDGSettings(ProjectBaseModel):
             description="Which foundational model to use for structure generation. Possible options: `mace-mp` or `so3lr`.",
         ),
     )
-    foundational_model_settings: Union[MaceFMSettings, So3lrFMSettings, Dict[str, Any]]
+    foundational_model_settings: Union[MaceFMSettings, So3lrFMSettings]
     intermediate_epochs_idg: int = Field(
         default=5,
         description="Number of intermediate epochs between dataset growth steps in initial training.",
@@ -168,13 +168,6 @@ class IDGSettings(ProjectBaseModel):
     )
     initial_sampling: str = Field(default="foundational")
     aims_lib_path: str | None = Field(default=None, description="Path to the compiled FHI-aims library for direct force and energy evaluation.")
-
-    @model_validator(mode="after")
-    def validate_nested_settings(self) -> "IDGSettings":
-        """Ensures foundational_model_settings matches the foundational_model type."""
-        model_class = MODEL_MAP.get(self.foundational_model)
-        self.foundational_model_settings = model_class(**self.foundational_model_settings)
-        return self
 
     @model_validator(mode="after")
     def check_at_least_one_required(self) -> "IDGSettings":
@@ -341,8 +334,8 @@ class TrajectoryMDBase(ProjectBaseModel):
 
 
 class LangevinNVT(TrajectoryMDBase):
-    stat_ensemble: Literal["nvt"] = "nvt"
-    thermostat: Literal["langevin"] = "langevin"
+    stat_ensemble: Literal["nvt"]
+    thermostat: Literal["langevin"]
     friction: float = Field(
         default=0.001,
         description="Friction coefficient for Langevin dynamics (in fs<sup>-1</sup>)."
@@ -354,8 +347,8 @@ class LangevinNVT(TrajectoryMDBase):
 
 
 class BerendsenNPT(TrajectoryMDBase):
-    stat_ensemble: Literal["npt"] = "npt"
-    barostat: Literal["berendsen"] = "berendsen"
+    stat_ensemble: Literal["npt"]
+    barostat: Literal["berendsen"]
     pressure: float = Field(
         default=101325.0,
         description="Pressure used for `NPT` in Pa"
@@ -363,7 +356,7 @@ class BerendsenNPT(TrajectoryMDBase):
 
 
 class MTKNPT(TrajectoryMDBase):
-    stat_ensemble: Literal["npt"] = "npt"
+    stat_ensemble: Literal["npt"]
     barostat: Literal["mtk"] = "mtk"
     pressure: float = Field(
         default=101325.0,
@@ -398,7 +391,6 @@ class MTKNPT(TrajectoryMDBase):
 NPTEnsemble = Annotated[
     Union[BerendsenNPT, MTKNPT],
     Field(
-        default="mtk",
         discriminator="barostat",
         description="Barostat used when `NPT` is chosen, either `mtk` or `berendsen`. MTK stands for Full"
                     " [Martyna-Tobias-Klein barostat](https://doi.org/10.1063/1.467468)."
@@ -424,17 +416,17 @@ TrajectoryMDSettings = Annotated[
 
 
 class MDSettings(RootModel):
-    md: Union[Dict[int, TrajectoryMDSettings], TrajectoryMDSettings]
+    root: Union[Dict[int, TrajectoryMDSettings], TrajectoryMDSettings]
 
     def get_for_index(self, index: int) -> TrajectoryMDSettings:
         """Helper to retrieve settings regardless of which format was used."""
-        if isinstance(self.md, dict):
-            if index not in self.md:
+        if isinstance(self.root, dict):
+            if index not in self.root:
                 raise KeyError(f"No MD settings found for trajectory index {index}.")
-            return self.md[index]
-        return self.md
+            return self.root[index]
+        return self.root
 
-    @field_validator("md", mode="before")
+    @field_validator("root", mode="before")
     @classmethod
     def normalize_case(cls, v: Any) -> Any:
         def fix_dict(d: Dict[str, Any]) -> Dict[str, Any]:
@@ -579,7 +571,7 @@ class AimsPAXSettings(ProjectBaseModel):
     MISC: MiscSettings = Field(default_factory=MiscSettings)
 
     @model_validator(mode="after")
-    def check_operation_mode(self) -> "MasterConfig":
+    def check_operation_mode(self) -> "AimsPAXSettings":
         """
         Enforces that at least one functional mode is active.
         """
