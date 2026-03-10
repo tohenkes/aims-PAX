@@ -4,12 +4,16 @@ Model settings for aims-PAX project
 from pathlib import Path
 from typing import Literal, Annotated, Union
 
-from pydantic import Field, field_validator
+from pydantic import Field, field_validator, model_validator
 
 from .project import ProjectBaseModel
 
 
 class GeneralSettings(ProjectBaseModel):
+    model_choice: Literal["mace", "so3krates", "so3lr"] = Field(
+        ...,
+        description="The model to use."
+    )
     name_exp: str = Field(
         ...,
         description="The name given to the experiment, models, and datasets."
@@ -50,8 +54,12 @@ class GeneralSettings(ProjectBaseModel):
         return v
 
 
-class MACEArchitectureSettings(ProjectBaseModel):
-    model: Literal["MACE"]
+class BaseArchitectureSettings(ProjectBaseModel):
+    """Base class for model architecture settings"""
+
+
+class MACEArchitectureSettings(BaseArchitectureSettings):
+    model: Literal["mace"]
     atomic_energies: dict[int, float] | None = Field(
         default=None,
         description="Atomic energy references {atomic_number: energy}. "
@@ -83,7 +91,9 @@ class MACEArchitectureSettings(ProjectBaseModel):
     )
     max_L: int = Field(
         default=1,
-        description="Maximum degree for equivariant features."
+        description="Maximum degree for equivariant features.",
+        ge=0,
+        lt=4
     )
     MLP_irreps: str = Field(
         default="16x0e",
@@ -91,7 +101,8 @@ class MACEArchitectureSettings(ProjectBaseModel):
     )
     num_channels: int = Field(
         default=128,
-        description="Number of channels (features)."
+        description="Number of channels (features).",
+        gt=0
     )
     num_cutoff_basis: int = Field(
         default=5,
@@ -121,19 +132,10 @@ class MACEArchitectureSettings(ProjectBaseModel):
         default="rms_forces_scaling",
         description="Scaling method used."
     )
-    # extra fields from check_inputs
-    use_multihead_model: bool = Field(
-        default=False,
-        description="Whether to use a multihead model architecture."
-    )
-    num_multihead_heads: int | None = Field(
-        default=None,
-        description="Number of heads if using a multihead model."
-    )
 
 
-class SO3LRArchitectureSettings(ProjectBaseModel):
-    model: Literal["SO3LR"]
+class So3kratesArchitectureSettings(BaseArchitectureSettings):
+    model: Literal["so3krates"]
     r_max: float = 4.5
     num_features: int = 128
     num_radial_basis_fn: int = 32
@@ -163,6 +165,10 @@ class SO3LRArchitectureSettings(ProjectBaseModel):
     layers_behave_like_identity_fn_at_init: bool = False
     output_is_zero_at_init: bool = False
     input_convention: str = "positions"
+
+
+class SO3LRArchitectureSettings(So3kratesArchitectureSettings):
+    model: Literal["so3lr"]
     zbl_repulsion_bool: bool = True
     electrostatic_energy_bool: bool = True
     electrostatic_energy_scale: float = 4.0
@@ -177,7 +183,7 @@ class SO3LRArchitectureSettings(ProjectBaseModel):
 
 
 ArchitectureSettings = Annotated[
-    Union[MACEArchitectureSettings, SO3LRArchitectureSettings],
+    Union[MACEArchitectureSettings, So3kratesArchitectureSettings, SO3LRArchitectureSettings],
     Field(
         discriminator="model",
         description="Type of model architecture to use."
@@ -237,6 +243,14 @@ class TrainingSettings(ProjectBaseModel):
     virials_weight: float = Field(
         default=1.0,
         description="Weight for virials loss component."
+    )
+    dipole_weight: float = Field(
+        default=1.0,
+        description="Weight for dipole loss component."
+    )
+    hirshfeld_weight: float = Field(
+        default=1.0,
+        description="Weight for Hirshfeld charge loss component."
     )
     config_type_weights: dict[str, float] = Field(
         default_factory=lambda: {"Default": 1.0},
@@ -340,5 +354,12 @@ class ModelSettings(ProjectBaseModel):
     TRAINING: TrainingSettings = Field(default_factory=TrainingSettings)
     MISC: MiscSettings = Field(default_factory=MiscSettings)
 
-
+    @model_validator(mode="before")
+    @classmethod
+    def normalize_case(cls, data):
+        if isinstance(data, dict):
+            item = data.get("ARCHITECTURE")
+            if isinstance(item, dict) and "model" in item:
+                item["model"] = item["model"].lower()
+        return data
 

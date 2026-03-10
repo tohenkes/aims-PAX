@@ -528,27 +528,40 @@ class MiscSettings(ProjectBaseModel):
         default=True,
         description="Whether to create restart files during the run."
     )
-    dataset_dir: str = Field(
-        default="./data",
+    dataset_dir: Path = Field(
+        default=Path("./data"),
         description="Directory where dataset files will be stored."
     )
-    log_dir: str = Field(
-        default="./logs",
+    log_dir: Path = Field(
+        default=Path("./logs"),
         description="Directory where log files are saved."
     )
     path_to_control: PathOrIndexedPaths = Field(
-        default="./control.in",
+        default=Path("./control.in"),
         description=(
             "Path to the FHI-aims control input file. Can be a single path "
             "or a dictionary mapping system indices to specific control files."
         )
     )
     path_to_geometry: Union[PathOrIndexedPaths | DirectoryPath] = Field(
-        default="./geometry.in",
+        default=Path("./geometry.in"),
         description=(
             "Path to the geometry input file or folder. Can be a single path, "
             "a folder, or a dictionary mapping indices to specific geometry files."
         )
+    )
+    energy_key: str = "REF_energy"
+    forces_key: str = "REF_forces"
+    stress_key: str = "REF_stress"
+    dipole_key: str = "REF_dipole"
+    polarizability_key: str = "REF_polarizability"
+    head_key: str = "head"
+    charges_key: str = "REF_charges"
+    total_charge_key: str = "total_charge"
+    total_spin_key: str = "total_spin"
+    mol_idxs: list[int] | None  = Field(
+        default=None,
+        description="Specific molecule indices to include/exclude."
     )
 
     @model_validator(mode="after")
