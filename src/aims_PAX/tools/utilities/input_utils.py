@@ -1,5 +1,6 @@
 import logging
 import os
+from pathlib import Path
 from typing import Union
 from aims_PAX.settings import AimsPAXSettings, ModelSettings
 from ase.io import read
@@ -47,7 +48,7 @@ def read_input_files(
 
 
 def read_geometry(
-    geometry_source: Union[str, dict[int, str]],
+    geometry_source: Union[str, Path, dict[int, str]],
     log: bool = False
 ) -> dict[int, ase.Atoms]:
     """
@@ -71,7 +72,8 @@ def read_geometry(
             dictionary values are not strings or keys are not integers.
         Exception: If individual files cannot be read by ASE.
     """
-
+    if isinstance(geometry_source, Path):
+        geometry_source = geometry_source.as_posix()
     if isinstance(geometry_source, str):
         if os.path.isdir(geometry_source):
             atoms_dict = {}
