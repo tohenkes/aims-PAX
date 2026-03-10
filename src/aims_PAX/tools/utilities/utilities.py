@@ -2,6 +2,8 @@ import logging
 import re
 import sys
 import os
+
+import GPUtil
 import torch
 import numpy as np
 from typing import Optional, Any, Dict, Union
@@ -13,6 +15,9 @@ from mace.tools import AtomicNumberTable
 from so3krates_torch.modules.models import So3krates, SO3LR
 from so3krates_torch.tools.multihead_utils import reduce_mh_model_to_sh
 from so3krates_torch.tools.finetune import setup_finetuning
+
+from aims_PAX.settings import ModelSettings
+from aims_PAX.settings.project import MDSettings, MiscSettings
 from aims_PAX.tools.model_tools.setup_MACE import setup_mace
 from aims_PAX.tools.model_tools.setup_so3 import setup_so3krates, setup_so3lr, setup_multihead_so3lr
 from aims_PAX.tools.model_tools.training_tools import setup_model_training
@@ -90,80 +95,59 @@ def get_free_vols(lines):
 
 def apply_model_settings(
     target,
-    model_settings: dict,
+    model_settings: ModelSettings,
 ) -> None:
 
     target.model_settings = model_settings
-    
-    general = model_settings["GENERAL"]
-    target.model_choice = general["model_choice"].lower()
-    target.seed = general["seed"]
-    target.checkpoints_dir = general["checkpoints_dir"]
-    target.dtype = general["default_dtype"]
-    torch.set_default_dtype(dtype_mapping[target.dtype])
-    target.model_dir = general["model_dir"]
-    
-    architecture = model_settings["ARCHITECTURE"]
-    target.r_max = architecture["r_max"]
-    
-    if target.model_choice == "so3lr":
-        target.r_max_lr = architecture["r_max_lr"]
-    else:
-        assert architecture.get("r_max_lr") is None, (
-            "r_max_lr is only applicable for so3lr models."
-        )
-        target.r_max_lr = None
-        
-    if target.model_choice in ["so3lr", "so3krates"]:
-        target.dispersion_energy_cutoff_lr_damping = architecture[
-                "dispersion_energy_cutoff_lr_damping"
-            ]
-    
-    target.atomic_energies_dict = architecture["atomic_energies"]
-    if target.model_choice == "mace":
-        target.scaling = architecture["scaling"]
-    else:
-        target.scaling = None
-        
-    training = model_settings["TRAINING"]
-    target.set_batch_size = training["batch_size"]
-    target.set_valid_batch_size = training["valid_batch_size"]
-    
-    misc = model_settings["MISC"]
-    target.device = misc["device"]
-    target.compute_stress = misc["compute_stress"]
-    target.compute_dipole = misc["compute_dipole"]
-    
-    target.properties = ["energy", "forces"]
-    if target.compute_stress:
-        target.properties.append("stress")
-    if target.compute_dipole:
-        target.properties.append("dipole")
-    target.enable_cueq = misc["enable_cueq"]
-    target.enable_cueq_train = misc["enable_cueq_train"]
+    model_choice = model_settings.GENERAL.model_choice.lower()
+    attrs = {
+        "model_settings": model_settings,
+        "model_choice": model_choice,
+        "seed": model_settings.GENERAL.seed,
+        "checkpoints_dir": model_settings.GENERAL.checkpoints_dir,
+        "model_dir": model_settings.GENERAL.model_dir,
+        "dtype": model_settings.GENERAL.default_dtype,
+        "r_max": model_settings.ARCHITECTURE.r_max,
+        "r_max_lr": model_settings.ARCHITECTURE.r_max_lr if model_choice == "so3lr" else None,
+        "dispersion_energy_cutoff_lr_damping": (model_settings.ARCHITECTURE.dispersion_energy_cutoff_lr_damping
+                                                if model_choice == "so3lr" else None),
+        "atomic_energies_dict": None if model_choice != "mace" else model_settings.ARCHITECTURE.atomic_energies,
+        "scaling": None if model_choice != "mace" else model_settings.ARCHITECTURE.scaling,
+        "set_batch_size": model_settings.TRAINING.batch_size,
+        "set_valid_batch_size": model_settings.TRAINING.valid_batch_size,
+        "update_avg_num_neighbors": model_settings.TRAINING.update_avg_num_neighbors,
+        "device": model_settings.MISC.device,
+        "compute_stress": model_settings.MISC.compute_stress,
+        "compute_dipole": model_settings.MISC.compute_dipole,
+        "properties": ["energy", "forces"],
+        "enable_cueq": model_settings.MISC.enable_cueq,
+        "enable_cueq_train": model_settings.MISC.enable_cueq_train,
+        "use_multihead_model": False if model_choice != "so3lr" else model_settings.ARCHITECTURE.use_multihead_model,
+        "num_multihead_heads": 0 if model_choice != "so3lr" else model_settings.ARCHITECTURE.num_multihead_heads,
+    }
+
+    if model_settings.MISC.compute_stress:
+        attrs["properties"].append("stress")
+    if model_settings.MISC.compute_dipole:
+        attrs["properties"].append("dipole")
+
+    # Setting actual attributes
+    for k, v in attrs.items():
+        target.__setattr__(k, v)
+
+    torch.set_default_dtype(getattr(torch, target.dtype))
 
     # Multihead attributes
     target.use_pretrained_model = (
-            isinstance(
-                       training["pretrained_model"], str
-            ) or isinstance(
-                training["pretrained_weights"], str
-            )
+            isinstance(model_settings.TRAINING.pretrained_model, str) or
+            isinstance(model_settings.TRAINING.pretrained_weights, str)
         )
-    target.update_avg_num_neighbors = training["update_avg_num_neighbors"]
     if target.use_pretrained_model and target.update_avg_num_neighbors:
         logging.warning(
             "Using a pretrained model/weights with "
             "update_avg_num_neighbors=True is not recommended."
             "This can lead to high errors in the beginning of training!"
         )
-    target.use_multihead_model = architecture["use_multihead_model"]
-    if target.use_multihead_model:
-        assert target.model_choice != "mace", (
-            "Multihead models are only supported for so3krates and so3lr "
-            " at the moment."
-        )
-    target.num_multihead_heads = architecture["num_multihead_heads"]
     if target.use_multihead_model and target.num_multihead_heads is not None:
         target.all_heads = [
             f"head_{i}" for i in range(target.num_multihead_heads) 
@@ -173,30 +157,22 @@ def apply_model_settings(
 
 
 def is_multi_trajectory_md(
-    md_settings: dict
+    md_settings: MDSettings
 ) -> bool:
     """Check if MD settings use multi-trajectory format."""
     if not md_settings:
         return False
-    
-    first_key = next(iter(md_settings.keys()))
-    
-    try:
-        int(first_key)
-        return True
-    except (ValueError, TypeError):
-        return False
-    
+
+    return isinstance(md_settings.root, dict)
+
 
 def normalize_md_settings(
-    md_settings: dict, 
+    md_settings: MDSettings,
     num_trajectories: int
 ) -> tuple[dict, bool]:
     """Normalize MD settings to multi-trajectory format."""
-    if is_multi_trajectory_md(md_settings.copy()):
-        return md_settings, True
-    else:
-        return {i: md_settings.copy() for i in range(num_trajectories)}, False
+    return ({i: md_settings.get_for_index(i).model_dump() for i in range(num_trajectories)},
+            is_multi_trajectory_md(md_settings))
 
 
 def create_keyspec(
@@ -354,7 +330,7 @@ def select_best_member(
 
 def get_ensemble_training_setups(
     ensemble: dict,
-    model_settings: dict,
+    model_settings: ModelSettings,
     checkpoints_dir: str = None,
     restart: bool = False,
     mol_idxs: Optional[np.ndarray] = None,
@@ -364,7 +340,7 @@ def get_ensemble_training_setups(
 
     Args:
         ensemble (dict): Dictionary of models in the ensemble.
-        model_settings (dict): Model settings dictionary containing
+        model_settings (ModelSettings): Model settings dictionary containing
                               the experiment name and all model and training
                               settings.
         checkpoints_dir (str, optional): Path to the folder where
@@ -379,7 +355,7 @@ def get_ensemble_training_setups(
         dict: Dictionary of training setups for each model in the ensemble.
     """
     
-    model_choice = model_settings["GENERAL"]["model_choice"].lower()
+    model_choice = model_settings.GENERAL.model_choice.lower()
     training_setups = {}
     for tag, model in ensemble.items():
         training_setups[tag] = setup_model_training(
@@ -395,9 +371,9 @@ def get_ensemble_training_setups(
 
 
 def create_seeds_tags_dict(
-    seeds: np.array,
-    model_settings: dict,
-    misc_settings: dict,
+    seeds: np.ndarray,
+    model_settings: ModelSettings,
+    misc_settings: MiscSettings,
     save_seeds_tags_dict: str = "seeds_tags_dict.npz",
 ) -> dict:
     """
@@ -406,9 +382,9 @@ def create_seeds_tags_dict(
 
     Args:
         seeds (np.array): Array of seeds for the ensemble.
-        model_settings (dict): Model settings dictionary containing
+        model_settings (ModelSettings): Model settings dictionary containing
                               the experiment name.
-        al_settings (dict, optional): Active learning settings..
+        misc_settings (MiscSettings): Project miscellaneous settings.
         save_seeds_tags_dict (str, optional): Name of the resulting dict.
                                 Defaults to "seeds_tags_dict.npz".
 
@@ -417,31 +393,31 @@ def create_seeds_tags_dict(
     """
     seeds_tags_dict = {}
     for seed in seeds:
-        tag = model_settings["GENERAL"]["name_exp"] + "-" + str(seed)
+        tag = model_settings.GENERAL.name_exp + "-" + str(seed)
         seeds_tags_dict[tag] = seed
     if save_seeds_tags_dict:
         np.savez(
-            misc_settings["dataset_dir"] + "/" + save_seeds_tags_dict,
+            misc_settings.dataset_dir / save_seeds_tags_dict,
             **seeds_tags_dict,
         )
     return seeds_tags_dict
 
 
 def create_ztable(
-    zs: list,
+    zs: np.ndarray,
 ):
     z_table = tools.get_atomic_number_table_from_zs(z for z in zs)
     return z_table
 
 
 def setup_ensemble_dicts(
-    seeds_tags_dict: dict,
+    seeds_tags_dict: dict[str, int],
     z_table: tools.AtomicNumberTable,
-    model_settings: dict,
-    ensemble_atomic_energies_dict: dict,
+    model_settings: ModelSettings,
+    ensemble_atomic_energies_dict: dict[str, dict[int, int]],
     num_elements: int = 118,
     device: str = "cpu",
-) -> tuple:
+) -> dict[str, Any]:
     """
     Creates dictionaries for the ensemble members i.e. a dictionary of models.
     Also, creates a dictionary for the training setups for each model and
@@ -449,21 +425,24 @@ def setup_ensemble_dicts(
     are returned as a tuple.
 
     Args:
-        seeds (np.array): Array of seeds for the ensemble.
-        save_seeds_tags_dict (bool, optional): Seeds with corresponding tags.
-                                            Defaults to "seeds_tags_dict.npz".
+        seeds_tags_dict (dict[str, int]): Tags with corresponding seeds.
+        z_table (tools.AtomicNumberTable): Atomic numbers of elements in the model
+        model_settings (ModelSettings): Model settings
+        ensemble_atomic_energies_dict (dict[str, dict[int, int]]): Dictionary of atomic energies
+        for each tag
+
 
     Returns:
-        tuple: Tuple of seeds_tags_dict, ensemble, training_setups.
+        A dict connecting tag to ensemble.
     """
 
     ensemble = {}
     for tag, seed in seeds_tags_dict.items():
-        model_settings["GENERAL"]["seed"] = seed
-        tag = model_settings["GENERAL"]["name_exp"] + "-" + str(seed)
+        model_settings.GENERAL.seed = seed
+        tag = model_settings.GENERAL.name_exp + "-" + str(seed)
         seeds_tags_dict[tag] = seed
         
-        model_choice = model_settings["GENERAL"]["model_choice"].lower()
+        model_choice = model_settings.GENERAL.model_choice.lower()
         if model_choice == "mace":
             ensemble[tag] = setup_mace(
                 settings=model_settings,
@@ -477,10 +456,9 @@ def setup_ensemble_dicts(
                 atomic_energies_dict=ensemble_atomic_energies_dict[tag],
             )
         elif model_choice == "so3lr":
-            if model_settings["ARCHITECTURE"]["use_multihead_model"]:
-                assert model_settings["ARCHITECTURE"][
-                    "num_multihead_heads"
-                ] is not None, (
+            # TODO: Move the check to where it belongs
+            if model_settings.ARCHITECTURE.use_multihead_model:
+                assert model_settings.ARCHITECTURE.num_multihead_heads is not None, (
                     "num_multihead_heads must be specified when using "
                     "a multihead SO3LR model."
                 )

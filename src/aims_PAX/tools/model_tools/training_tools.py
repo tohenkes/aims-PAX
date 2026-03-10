@@ -16,9 +16,12 @@ from so3krates_torch.modules.loss import (
 import numpy as np
 import os
 
+from aims_PAX.settings import ModelSettings
+from aims_PAX.settings.model import TrainingSettings
+
 
 def setup_model_training(
-    settings: dict,
+    settings: ModelSettings,
     model,
     model_choice: str,
     tag: str,
@@ -28,12 +31,12 @@ def setup_model_training(
     mol_idxs: np.ndarray = None,
 ):
 
-    general_settings = settings["GENERAL"]
-    training_settings = settings["TRAINING"]
-    misc_settings = settings["MISC"]
+    general_settings = settings.GENERAL
+    training_settings = settings.TRAINING
+    misc_settings = settings.MISC
 
     if checkpoints_dir is None:
-        checkpoints_dir = general_settings["checkpoints_dir"]
+        checkpoints_dir = settings.GENERAL.checkpoints_dir
 
     training_setup = {}
     loss_fn = choose_loss_function(training_settings)
@@ -82,46 +85,53 @@ def setup_model_training(
     return training_setup
 
 
-def choose_loss_function(training_settings: dict) -> torch.nn.Module:
+def choose_loss_function(training_settings: TrainingSettings) -> torch.nn.Module:
     loss_fn: torch.nn.Module
-    if training_settings["loss"].lower() == "weighted":
+    loss = training_settings.loss.lower()
+    energy_weight = training_settings.energy_weight
+    forces_weight = training_settings.forces_weight
+    stress_weight = training_settings.stress_weight
+    dipole_weight = training_settings.dipole_weight
+    hirshfeld_weight = training_settings.hirshfeld_weight
+
+    if loss == "weighted":
         loss_fn = modules.WeightedEnergyForcesLoss(
-            energy_weight=training_settings["energy_weight"],
-            forces_weight=training_settings["forces_weight"],
+            energy_weight=energy_weight,
+            forces_weight=forces_weight,
         )
 
-    elif training_settings["loss"].lower() == "forces_only":
+    elif loss == "forces_only":
         loss_fn = modules.WeightedForcesLoss(
-            forces_weight=training_settings["forces_weight"]
+            forces_weight=forces_weight
         )
 
-    elif training_settings["loss"].lower() == "weighted_stress":
+    elif loss == "weighted_stress":
         loss_fn = modules.WeightedEnergyForcesStressLoss(
-            energy_weight=training_settings["energy_weight"],
-            forces_weight=training_settings["forces_weight"],
-            stress_weight=training_settings["stress_weight"],
+            energy_weight=energy_weight,
+            forces_weight=forces_weight,
+            stress_weight=stress_weight,
         )
-    elif training_settings["loss"].lower() == "weighted_energy_forces_dipole":
+    elif loss == "weighted_energy_forces_dipole":
         loss_fn = WeightedEnergyForcesDipoleLoss(
-            energy_weight=training_settings["energy_weight"],
-            forces_weight=training_settings["forces_weight"],
-            dipole_weight=training_settings["dipole_weight"],
+            energy_weight=energy_weight,
+            forces_weight=forces_weight,
+            dipole_weight=dipole_weight,
         )
-    elif training_settings["loss"].lower() == "weighted_energy_forces_hirshfeld":
+    elif loss == "weighted_energy_forces_hirshfeld":
         loss_fn = WeightedEnergyForcesHirshfeldLoss(
-            energy_weight=training_settings["energy_weight"],
-            forces_weight=training_settings["forces_weight"],
-            hirshfeld_weight=training_settings["hirshfeld_weight"],
+            energy_weight=energy_weight,
+            forces_weight=forces_weight,
+            hirshfeld_weight=hirshfeld_weight,
         )
-    elif training_settings["loss"].lower() == "weighted_energy_forces_dipole_hirshfeld":
+    elif loss == "weighted_energy_forces_dipole_hirshfeld":
         loss_fn = WeightedEnergyForcesDipoleHirshfeldLoss(
-            energy_weight=training_settings["energy_weight"],
-            forces_weight=training_settings["forces_weight"],
-            dipole_weight=training_settings["dipole_weight"],
-            hirshfeld_weight=training_settings["hirshfeld_weight"],
+            energy_weight=energy_weight,
+            forces_weight=forces_weight,
+            dipole_weight=dipole_weight,
+            hirshfeld_weight=hirshfeld_weight,
         )
     else:
-        raise RuntimeError(f"Unknown loss function: {training_settings['loss']}")
+        raise RuntimeError(f"Unknown loss function: {loss}")
     return loss_fn
 
 
