@@ -51,6 +51,7 @@ from aims_PAX.tools.utilities.eval_utils import (
 from aims_PAX.tools.utilities.parsl_utils import (
     prepare_parsl,
     recalc_dft_parsl,
+    recalc_teacher_model_parsl,
     handle_parsl_logger,
 )
 from aims_PAX.tools.uncertainty import (
@@ -1347,7 +1348,168 @@ class ALDFTManagerParallel(ALDFTManager):
             )
 
 
-class ALDFTManagerPARSL(ALDFTManager):
+class ALReferenceManagerPARSL:
+    """
+    Base class for PARSL-based reference calculation managers in AL.
+    Holds shared PARSL infrastructure: thread, queue, futures, results.
+    Subclasses implement _submit_parsl_job() for DFT or teacher model.
+    """
+
+    def __init__(
+        self,
+        config: ALConfiguration,
+        ensemble_manager: ALEnsemble,
+        state_manager: ALStateManager,
+        comm_handler: CommHandler,
+    ):
+        self.config = config
+        self.ensemble_manager = ensemble_manager
+        self.state_manager = state_manager
+        self.comm_handler = comm_handler
+        self.rank = self.comm_handler.rank
+
+        parsl_setup_dict = prepare_parsl(
+            cluster_settings=self.config.cluster_settings
+        )
+        self.parsl_config = parsl_setup_dict["config"]
+        self.calc_dir = parsl_setup_dict["calc_dir"]
+        self.clean_dirs = parsl_setup_dict["clean_dirs"]
+
+        try:
+            parsl.dfk()
+            logging.info(
+                "PARSL is already initialized. Using existing PARSL context."
+            )
+        except parsl.errors.NoDataFlowKernelError:
+            parsl_log_dir = Path(self.config.log_dir)
+            handle_parsl_logger(log_dir=parsl_log_dir / "parsl_al.log")
+            parsl.load(self.parsl_config)
+
+        logging.info("Launching reference manager thread for PARSL.")
+        self.reference_queue = queue.Queue()
+        self.reference_results = {}
+        self.reference_counter = {
+            idx: 0 for idx in range(self.config.num_trajectories)
+        }
+        self.results_lock = threading.Lock()
+        self.kill_thread = False
+        threading.Thread(target=self._reference_thread, daemon=True).start()
+
+    def handle_reference_call(self, point, idx: int):
+        """Enqueue a point for reference calculation."""
+        logging.info(
+            f"Trajectory worker {idx} is sending a point "
+            "for reference calculation."
+        )
+        self.state_manager.trajectory_status[idx] = "waiting"
+        self.state_manager.num_workers_training += 1
+        self.reference_queue.put((idx, point))
+        logging.info(
+            f"Trajectory worker {idx} is waiting for a job to finish."
+        )
+
+    # Keep backward-compatible alias
+    handle_dft_call = handle_reference_call
+
+    def _submit_parsl_job(self, idx, data, job_no):
+        """
+        Submit a PARSL job for the given data point.
+        Must be implemented by subclasses.
+
+        Args:
+            idx (int): Trajectory worker index.
+            data (ase.Atoms): Atoms object to compute.
+            job_no (int): Job number for this worker.
+
+        Returns:
+            AppFuture: PARSL future for the submitted job.
+        """
+        raise NotImplementedError(
+            "Subclasses must implement _submit_parsl_job()"
+        )
+
+    def _reference_thread(self):
+        """
+        Thread that constantly checks the queue for new jobs
+        and submits them to PARSL for reference calculations.
+        It collects the results and stores them in a dictionary
+        that is accessible from the main thread.
+        It also cleans up the directories after the jobs are done
+        if self.clean_dirs is True.
+        """
+        futures = {}
+        for idx in range(self.config.num_trajectories):
+            futures[idx] = {}
+
+        while True:
+            if self.kill_thread:
+                logging.info("Reference manager thread is stopping.")
+                return
+            try:
+                idx, data = self.reference_queue.get(timeout=1)
+                with self.results_lock:
+                    curr_job_no = self.reference_counter[idx]
+
+                futures[idx][curr_job_no] = self._submit_parsl_job(
+                    idx, data, curr_job_no
+                )
+                with self.results_lock:
+                    self.reference_counter[idx] += 1
+                self.reference_queue.task_done()
+
+            except queue.Empty:
+                pass
+
+            # check futures for completion
+            done_jobs = []
+            for job_idx in futures.keys():
+                for job_no, future in futures[job_idx].items():
+                    if future.done():
+                        done_jobs.append((job_idx, job_no))
+
+            for job_idx, job_no in done_jobs:
+                with self.results_lock:
+                    temp_result = futures[job_idx][job_no].result()
+                    if temp_result is None:
+                        self.reference_results[job_idx] = False
+                    else:
+                        self.reference_results[job_idx] = temp_result
+                        logging.info(
+                            f"Reference calculation number {job_no} "
+                            f"for worker {job_idx} finished."
+                        )
+                    del futures[job_idx][job_no]
+
+                    if self.clean_dirs:
+                        try:
+                            shutil.rmtree(
+                                self.calc_dir
+                                / f"worker_{job_idx}_no_{job_no}"
+                            )
+                        except FileNotFoundError:
+                            logging.warning(
+                                f"Directory "
+                                f"{self.calc_dir / f'worker_{job_idx}_no_{job_no}'}"
+                                " not found. Skipping removal."
+                            )
+
+    def finalize_reference(self):
+        """Stop the reference thread and clean up PARSL."""
+        with threading.Lock():
+            self.kill_thread = True
+        time.sleep(10)
+        if not self.config.analysis:
+            parsl.dfk().cleanup()
+
+    # Keep backward-compatible alias
+    finalize_dft = finalize_reference
+
+
+class ALDFTReferenceManagerPARSL(ALReferenceManagerPARSL):
+    """
+    PARSL-based DFT reference manager. Uses FHI-aims via recalc_dft_parsl.
+    """
+
     def __init__(
         self,
         path_to_control: str,
@@ -1357,27 +1519,25 @@ class ALDFTManagerPARSL(ALDFTManager):
         comm_handler: CommHandler,
     ):
         super().__init__(
-            path_to_control=path_to_control,
             config=config,
             ensemble_manager=ensemble_manager,
             state_manager=state_manager,
             comm_handler=comm_handler,
         )
-        parsl_setup_dict = prepare_parsl(
+
+        self.control_parser = AIMSControlParser()
+        self._handle_aims_settings(path_to_control)
+
+        self.launch_str = prepare_parsl(
             cluster_settings=self.config.cluster_settings
-        )
-        self.parsl_config = parsl_setup_dict["config"]
-        self.calc_dir = parsl_setup_dict["calc_dir"]
-        self.clean_dirs = parsl_setup_dict["clean_dirs"]
-        self.launch_str = parsl_setup_dict["launch_str"]
-            
+        )["launch_str"]
+
         self.parsl_func_input = {
             "ase_aims_command": self.launch_str,
             "properties": self.config.properties,
         }
-        
+
         if self.config.cluster_settings["executor"] == "mpi":
-        
             num_nodes = self.config.cluster_settings["parsl_options"].get(
                 "nodes_per_block", 1
             )
@@ -1393,131 +1553,94 @@ class ALDFTManagerPARSL(ALDFTManager):
             self.parsl_func_input["parsl_resource_specification"] = (
                 self.parsl_resource_specification
             )
-            
-        try:
-            parsl.dfk()
-            logging.info(
-                "PARSL is already initialized. Using existing PARSL context."
-            )
-        except parsl.errors.NoDataFlowKernelError:
-            parsl_log_dir = Path(self.config.log_dir)
-            handle_parsl_logger(log_dir=parsl_log_dir / "parsl_al.log")
-            parsl.load(self.parsl_config)
 
-        logging.info("Launching DFT manager thread for PARSL.")
-        self.ab_initio_queue = queue.Queue()
-        self.ab_intio_results = {}
-        self.ab_initio_counter = {
-            idx: 0 for idx in range(self.config.num_trajectories)
+    def _handle_aims_settings(
+        self,
+        control_source: Union[str, dict],
+    ):
+        """
+        Parses the AIMS control file to get the settings.
+        """
+        if isinstance(control_source, str):
+            aims_settings = self.control_parser(control_source)
+            aims_settings["compute_forces"] = True
+            aims_settings["species_dir"] = self.config.species_dir
+            aims_settings["postprocess_anyway"] = True
+            self.aims_settings = {
+                idx: aims_settings
+                for idx in range(self.config.num_trajectories)
+            }
+        elif isinstance(control_source, dict):
+            self.aims_settings = {}
+            for key, value in control_source.items():
+                aims_settings = self.control_parser(value)
+                aims_settings["compute_forces"] = True
+                aims_settings["species_dir"] = self.config.species_dir
+                aims_settings["postprocess_anyway"] = True
+                self.aims_settings[key] = aims_settings
+
+    def _submit_parsl_job(self, idx, data, job_no):
+        """Submit a DFT calculation via PARSL."""
+        func_input = dict(self.parsl_func_input)
+        func_input.update(
+            {
+                "positions": data.get_positions(),
+                "species": data.get_chemical_symbols(),
+                "cell": data.get_cell(),
+                "pbc": data.pbc,
+                "aims_settings": self.aims_settings[idx],
+                "directory": self.calc_dir / f"worker_{idx}_no_{job_no}",
+            }
+        )
+        return recalc_dft_parsl(**func_input)
+
+
+class ALTeacherModelManagerPARSL(ALReferenceManagerPARSL):
+    """
+    PARSL-based teacher model reference manager.
+    Uses a teacher ML model via recalc_teacher_model_parsl.
+    Supports MACE, SO3krates, and SO3LR backends.
+    """
+
+    def __init__(
+        self,
+        teacher_reference_settings: dict,
+        config: ALConfiguration,
+        ensemble_manager: ALEnsemble,
+        state_manager: ALStateManager,
+        comm_handler: CommHandler,
+    ):
+        super().__init__(
+            config=config,
+            ensemble_manager=ensemble_manager,
+            state_manager=state_manager,
+            comm_handler=comm_handler,
+        )
+        self.teacher_reference_settings = teacher_reference_settings
+        self.model_type = teacher_reference_settings["model_type"]
+        self.model_path = teacher_reference_settings.get("model_path", None)
+        self.model_settings = {
+            k: v
+            for k, v in teacher_reference_settings.items()
+            if k not in ("model_type", "model_path")
         }
-        self.results_lock = threading.Lock()
-        self.kill_thread = False
-        threading.Thread(target=self._dft_thread, daemon=True).start()
 
-    def handle_dft_call(self, point, idx: int):
-        logging.info(f"Trajectory worker {idx} is sending a point to DFT.")
-        self.state_manager.trajectory_status[idx] = "waiting"
-        self.state_manager.num_workers_training += 1
-        self.ab_initio_queue.put((idx, point))
-        logging.info(f"Trajectory worker {idx} is waiting for a job to finish.")
+    def _submit_parsl_job(self, idx, data, job_no):
+        """Submit a teacher model calculation via PARSL."""
+        return recalc_teacher_model_parsl(
+            positions=data.get_positions(),
+            species=data.get_chemical_symbols(),
+            cell=data.get_cell(),
+            pbc=data.pbc,
+            model_type=self.model_type,
+            model_path=self.model_path,
+            model_settings=self.model_settings,
+            properties=self.config.properties,
+        )
 
-    def _dft_thread(self):
-        """
-        Thread that constantly checks the queue for new jobs
-        and submits them to PARSL for DFT calculations.
-        It collects the results and stores them in a dictionary
-        that is accessible from the main thread.
-        It also cleans up the directories after the jobs are done
-        if self.clean_dirs is True.
-        """
-        # collect parsl futures
-        futures = {}
-        for idx in range(self.config.num_trajectories):
-            futures[idx] = {}
-        # constantly check the queue for new jobs
-        while True:
-            if self.kill_thread:
-                logging.info("Ab initio manager thread is stopping.")
-                return
-            try:
-                idx, data = self.ab_initio_queue.get(timeout=1)
-                with self.results_lock:
-                    curr_job_no = self.ab_initio_counter[idx]
-                    
-                self.parsl_func_input.update(
-                    {
-                        "positions": data.get_positions(),
-                        "species": data.get_chemical_symbols(),
-                        "cell": data.get_cell(),
-                        "pbc": data.pbc,
-                        "aims_settings": self.aims_settings[idx],
-                        "directory": self.calc_dir / f"worker_{idx}_no_{curr_job_no}",
-                    }
-                )
-                
-                futures[idx][curr_job_no] = recalc_dft_parsl(
-                    **self.parsl_func_input
-                )
-                with self.results_lock:
-                    self.ab_initio_counter[idx] += 1
-                self.ab_initio_queue.task_done()
 
-            # is raised when the queue is empty after the timeout
-            except queue.Empty:
-                pass
-
-            # goes through the futures and checks if they are done
-            done_jobs = []
-            for job_idx in futures.keys():
-                for job_no, future in futures[job_idx].items():
-                    if future.done():
-                        done_jobs.append((job_idx, job_no))
-
-            # if there are done jobs, get the results and store them in dict
-            for job_idx, job_no in done_jobs:
-                with self.results_lock:
-                    temp_result = futures[job_idx][job_no].result()
-                    if temp_result is None:
-                        # if the result is None, it means the DFT calculation
-                        # did not converge
-                        self.ab_intio_results[job_idx] = False
-                    else:
-                        # the DFT calculation converged
-                        self.ab_intio_results[job_idx] = temp_result
-                        logging.info(
-                            f"DFT calculation number {job_no} "
-                            f"for worker {job_idx} finished."
-                        )
-                    # remove the job from the futures dict
-                    # to avoid double counting
-                    del futures[job_idx][job_no]
-                    # remove folder with results
-                    if self.clean_dirs:
-                        try:
-                            shutil.rmtree(
-                                self.calc_dir / f"worker_{job_idx}_no_{job_no}"
-                            )
-                        except FileNotFoundError:
-                            logging.warning(
-                                f"Directory {self.calc_dir / f'worker_{job_idx}_no_{job_no}'}"
-                                "not found. Skipping removal."
-                            )
-
-    def _setup_aims_calculator(self, atoms):
-        pass
-
-    def _recalc_dft(self, current_point):
-        pass
-
-    def finalize_dft(self):
-        with threading.Lock():
-            self.kill_thread = True
-        time.sleep(10)
-        # clean up done in analysis class if
-        # self.config.create_restart is True
-        if not self.config.analysis:
-            # delete all futures
-            parsl.dfk().cleanup()
+# Backward-compatible alias
+ALDFTManagerPARSL = ALDFTReferenceManagerPARSL
 
 
 class ALRunningManager:
@@ -2460,7 +2583,7 @@ class ALAnalysisManagerPARSL(ALAnalysisManager):
         self,
         config: ALConfiguration,
         ensemble_manager: ALEnsemble,
-        dft_manager: ALDFTManagerPARSL,
+        dft_manager: ALDFTReferenceManagerPARSL,
         state_manager: ALStateManager,
         md_manager: ALMD,
         comm_handler: CommHandler,

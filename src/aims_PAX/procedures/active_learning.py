@@ -13,7 +13,8 @@ from .al_managers import (
     ALAnalysisManagerParallel,
     ALDFTManagerSerial,
     ALDFTManagerParallel,
-    ALDFTManagerPARSL,
+    ALDFTReferenceManagerPARSL,
+    ALTeacherModelManagerPARSL,
     ALAnalysisManagerPARSL,
 )
 from aims_PAX.tools.utilities.data_handling import (
@@ -1062,19 +1063,30 @@ class ALProcedurePARSL(ALProcedure):
         )
         self.converge = self.train_manager.converge
 
-        self.dft_manager = ALDFTManagerPARSL(
-            path_to_control=path_to_control,
-            config=self.config,
-            ensemble_manager=self.ensemble_manager,
-            state_manager=self.state_manager,
-            comm_handler=self.comm_handler,
-        )
+        if self.config.use_teacher_reference:
+            self.reference_manager = ALTeacherModelManagerPARSL(
+                teacher_reference_settings=self.config.teacher_reference_settings,
+                config=self.config,
+                ensemble_manager=self.ensemble_manager,
+                state_manager=self.state_manager,
+                comm_handler=self.comm_handler,
+            )
+        else:
+            self.reference_manager = ALDFTReferenceManagerPARSL(
+                path_to_control=path_to_control,
+                config=self.config,
+                ensemble_manager=self.ensemble_manager,
+                state_manager=self.state_manager,
+                comm_handler=self.comm_handler,
+            )
+        # Backward-compatible alias
+        self.dft_manager = self.reference_manager
 
         if self.config.analysis:
             self.analysis_manager = ALAnalysisManagerPARSL(
                 config=self.config,
                 ensemble_manager=self.ensemble_manager,
-                dft_manager=self.dft_manager,
+                dft_manager=self.reference_manager,
                 state_manager=self.state_manager,
                 md_manager=self.md_manager,
                 comm_handler=self.comm_handler,
@@ -1086,24 +1098,27 @@ class ALProcedurePARSL(ALProcedure):
             mlff_manager=self.mlff_manager,
             comm_handler=self.comm_handler,
             rank=self.rank,
-            dft_manager=self.dft_manager,
+            dft_manager=self.reference_manager,
         )
 
     def _waiting_task(self, idx):
 
         if self.config.restart and self.first_wait_after_restart[idx]:
             # if the worker is waiting and we just restarted the
-            # procedure, we have to relaunch the dft job and then
-            # leave the function
-            logging.info(f"Worker {idx} is restarting DFT job after restart.")
-            self.dft_manager.handle_dft_call(
+            # procedure, we have to relaunch the reference job and
+            # then leave the function
+            logging.info(
+                f"Worker {idx} is restarting reference job after restart."
+            )
+            self.reference_manager.handle_reference_call(
                 point=self.trajectories[idx], idx=idx
             )
             self.first_wait_after_restart[idx] = False
             return None
 
-        # with self.results_lock:
-        job_result = self.dft_manager.ab_intio_results.get(idx, "not_done")
+        job_result = self.reference_manager.reference_results.get(
+            idx, "not_done"
+        )
 
         if job_result == "not_done":
             # if the job is not done, we return None and
@@ -1112,8 +1127,8 @@ class ALProcedurePARSL(ALProcedure):
         else:
             if not job_result:
                 logging.info(
-                    f"SCF not converged at worker {idx}. Discarding point and"
-                    " restarting MD from last checkpoint."
+                    f"Reference calculation failed at worker {idx}. "
+                    "Discarding point and restarting MD from last checkpoint."
                 )
                 
                 self.trajectories[idx] = atoms_full_copy(
@@ -1143,9 +1158,9 @@ class ALProcedurePARSL(ALProcedure):
                 self.data_manager.handle_received_point(
                     idx=idx, received_point=received_point
                 )
-            with self.dft_manager.results_lock:
-                # remove the job from the results dict to avoid double counting
-                del self.dft_manager.ab_intio_results[idx]
+            with self.reference_manager.results_lock:
+                # remove the job from the results dict
+                del self.reference_manager.reference_results[idx]
 
     def _al_loop(self):
         super()._al_loop()

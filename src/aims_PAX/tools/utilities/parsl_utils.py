@@ -300,3 +300,120 @@ def recalc_dft_parsl(
             f"DFT calculation failed in directory {directory}: {str(e)}"
         )
         return None
+   
+ 
+@python_app
+def recalc_teacher_model_parsl(
+    positions: np.ndarray,
+    species: np.ndarray,
+    cell: np.ndarray,
+    pbc: bool,
+    model_type: str,
+    model_path: str = None,
+    model_settings: dict = None,
+    properties: list = ["energy", "forces"],
+    **kwargs
+):
+    """
+    PARSL app that runs a teacher model for reference calculations.
+    The calculator is constructed inside the app to avoid PyTorch
+    pickling issues. The function needs all necessary modules as
+    the PARSL worker is running completely independently of the
+    main process.
+
+    Args:
+        positions (np.ndarray): Geometry of the system.
+        species (np.ndarray): Elements in the system.
+        cell (np.ndarray): Unit cell of the system.
+        pbc (bool): Periodic boundary conditions.
+        model_type (str): Type of the teacher model.
+            One of "mace-mp", "mace", "so3lr", "so3krates".
+        model_path (str, optional): Path to a trained model file.
+            Required for "mace", "so3lr", "so3krates".
+        model_settings (dict, optional): Additional model settings
+            (e.g. mace_model size, device, dtype, etc.).
+        properties (list, optional): Which properties to calculate.
+                                    Defaults to ["energy", "forces"].
+    Returns:
+        dict: Results of the teacher model calculation, or None on failure.
+    """
+    from ase import Atoms
+    import logging
+
+    if model_settings is None:
+        model_settings = {}
+
+    atoms = Atoms(
+        positions=positions,
+        symbols=species,
+        cell=cell,
+        pbc=pbc,
+    )
+
+    device = model_settings.get("device", "cpu")
+    default_dtype = model_settings.get("default_dtype", "float64")
+    compute_stress = "stress" in properties
+
+    try:
+        if model_type == "mace-mp":
+            from mace.calculators import mace_mp
+
+            mace_model = model_settings.get("mace_model", "small")
+            dispersion = model_settings.get("dispersion", False)
+            damping = model_settings.get("damping", "bj")
+            dispersion_xc = model_settings.get("dispersion_xc", "pbe")
+            dispersion_cutoff = model_settings.get("dispersion_cutoff", 12.0)
+            calc = mace_mp(
+                model=mace_model,
+                dispersion=dispersion,
+                default_dtype=default_dtype,
+                device=device,
+                damping=damping,
+                dispersion_xc=dispersion_xc,
+                dispersion_cutoff=dispersion_cutoff,
+            )
+        elif model_type == "mace":
+            from mace.calculators import MACECalculator
+
+            calc = MACECalculator(
+                model_paths=model_path,
+                device=device,
+                default_dtype=default_dtype,
+            )
+        elif model_type == "so3lr":
+            from so3krates_torch.calculator.so3 import SO3LRCalculator
+
+            r_max_lr = model_settings.get("r_max_lr", None)
+            dispersion_lr_damping = model_settings.get(
+                "dispersion_lr_damping", None
+            )
+            calc = SO3LRCalculator(
+                model_path=model_path,
+                r_max_lr=r_max_lr,
+                dispersion_energy_cutoff_lr_damping=dispersion_lr_damping,
+                compute_stress=compute_stress,
+                device=device,
+                default_dtype=default_dtype,
+            )
+        elif model_type == "so3krates":
+            from so3krates_torch.calculator.so3 import TorchkratesCalculator
+
+            calc = TorchkratesCalculator(
+                model_path=model_path,
+                compute_stress=compute_stress,
+                device=device,
+                default_dtype=default_dtype,
+            )
+        else:
+            raise ValueError(
+                f"Unknown teacher model type: {model_type}. "
+                "Supported types: 'mace-mp', 'mace', 'so3lr', 'so3krates'."
+            )
+
+        calc.calculate(atoms=atoms, properties=properties)
+        return calc.results
+    except Exception as e:
+        logging.warning(
+            f"Teacher model calculation failed: {str(e)}"
+        )
+        return None

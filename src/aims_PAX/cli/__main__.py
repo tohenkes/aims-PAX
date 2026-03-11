@@ -2,6 +2,7 @@ from aims_PAX.procedures.initial_dataset import (
     InitialDatasetAIMD,
     InitialDatasetFoundational,
     InitialDatasetPARSL,
+    InitialDatasetPARSLTeacher,
 )
 from aims_PAX.procedures.active_learning import (
     ALProcedureSerial,
@@ -63,13 +64,24 @@ def main():
         == "foundational"
     ):
         if aimsPAX_settings.get("CLUSTER", False):
-            initial_ds = InitialDatasetPARSL(
-                model_settings=model_settings,
-                aimsPAX_settings=aimsPAX_settings,
-                path_to_control=path_to_control,
-                path_to_geometry=path_to_geometry,
-                close_parsl=False,
-            )
+            if aimsPAX_settings["INITIAL_DATASET_GENERATION"].get(
+                "use_teacher_reference", False
+            ):
+                initial_ds = InitialDatasetPARSLTeacher(
+                    model_settings=model_settings,
+                    aimsPAX_settings=aimsPAX_settings,
+                    path_to_control=path_to_control,
+                    path_to_geometry=path_to_geometry,
+                    close_parsl=False,
+                )
+            else:
+                initial_ds = InitialDatasetPARSL(
+                    model_settings=model_settings,
+                    aimsPAX_settings=aimsPAX_settings,
+                    path_to_control=path_to_control,
+                    path_to_geometry=path_to_geometry,
+                    close_parsl=False,
+                )
         else:
             initial_ds = InitialDatasetFoundational(
                 model_settings=model_settings,

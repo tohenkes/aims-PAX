@@ -68,6 +68,12 @@ SCHEME = {
         "aims_lib_path": None,
         "progress_dft_update": 10,
         "distinct_model_sets": True,
+        "use_teacher_reference": False,
+        "teacher_reference_settings": {
+            "model_type": "mace-mp",
+            "mace_model": "small",
+            "model_path": None,
+        },
     },
     "optional_foundational": {
         "mace_model": "small",
@@ -118,7 +124,13 @@ SCHEME = {
         "replay_strategy": "full_dataset",
         "train_subset_size": None,
         "valid_subset_size": None,
-        "update_md_checkpoints": True
+        "update_md_checkpoints": True,
+        "use_teacher_reference": False,
+        "teacher_reference_settings": {
+            "model_type": "mace-mp",
+            "mace_model": "small",
+            "model_path": None,
+        },
     },
     "optional_cluster": {
         "type": "slurm",
@@ -291,10 +303,11 @@ SCHEME_DTYPES = {
         "distinct_model_sets",
         "dispersion",
         "update_md_checkpoints",
+        "use_teacher_reference",
     ],
     "lists": ["mol_idxs"],
     "optional_lists": [],
-    "dicts": ["parsl_options", "MISC", "foundational_model_settings"],
+    "dicts": ["parsl_options", "MISC", "foundational_model_settings", "teacher_reference_settings"],
     "optional_dicts_strings": [  # Fields that can be dict or string
         "path_to_control",
         "path_to_geometry",
@@ -735,6 +748,22 @@ def check_aimsPAX_settings(settings: dict, procedure: str = "full") -> dict:
         settings["INITIAL_DATASET_GENERATION"] = idg_settings
         aims_lib_path_provided_idg = idg_settings.get("aims_lib_path", False)
 
+        # Validate teacher reference settings
+        if idg_settings.get("use_teacher_reference", False):
+            assert settings.get("CLUSTER", False), (
+                "`use_teacher_reference: True` requires `CLUSTER` settings "
+                "(teacher reference only works with PARSL)."
+            )
+            assert idg_settings.get("initial_sampling") == "foundational", (
+                "`use_teacher_reference: True` requires "
+                "`initial_sampling: foundational`."
+            )
+            teacher_ref = idg_settings.get("teacher_reference_settings", {})
+            assert "model_type" in teacher_ref, (
+                "`teacher_reference_settings` must contain `model_type` "
+                "when `use_teacher_reference` is True."
+            )
+
     if procedure == "al" or procedure == "full":
         assert (
             settings.get("ACTIVE_LEARNING") is not None
@@ -779,6 +808,25 @@ def check_aimsPAX_settings(settings: dict, procedure: str = "full") -> dict:
         )
         settings["ACTIVE_LEARNING"] = al_settings
         aims_lib_path_provided_al = al_settings.get("aims_lib_path", False)
+
+        # Validate teacher reference settings for AL
+        if al_settings.get("use_teacher_reference", False):
+            assert settings.get("CLUSTER", False), (
+                "`use_teacher_reference: True` in ACTIVE_LEARNING requires "
+                "`CLUSTER` settings (teacher reference only works with PARSL)."
+            )
+            teacher_ref = al_settings.get("teacher_reference_settings", {})
+            assert "model_type" in teacher_ref, (
+                "`teacher_reference_settings` must contain `model_type` "
+                "when `use_teacher_reference` is True in ACTIVE_LEARNING."
+            )
+            if al_settings.get("analysis", False):
+                logging.warning(
+                    "`analysis: True` with `use_teacher_reference: True` in "
+                    "ACTIVE_LEARNING is not supported. Disabling analysis."
+                )
+                al_settings["analysis"] = False
+                settings["ACTIVE_LEARNING"] = al_settings
 
     cluster_settings = settings.get("CLUSTER", False)
     if cluster_settings:

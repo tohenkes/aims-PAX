@@ -363,6 +363,8 @@ class PrepareInitialDatasetProcedure:
         self.initial_sampling = self.idg_settings["initial_sampling"]
         self.foundational_model = self.idg_settings["foundational_model"]
         self.foundational_model_settings = self.idg_settings["foundational_model_settings"]
+        self.use_teacher_reference = self.idg_settings["use_teacher_reference"]
+        self.teacher_reference_settings = self.idg_settings["teacher_reference_settings"]
         
         self.restart = os.path.exists(
             "restart/initial_ds/initial_ds_restart.npy"
@@ -973,6 +975,10 @@ class ALConfiguration:
         # foundational model usage during AL
         self.use_foundational = self.al_settings["use_foundational"]
         self.foundational_model_settings = self.al_settings["foundational_model_settings"]
+
+        # teacher model usage during AL (replaces DFT with teacher model)
+        self.use_teacher_reference = self.al_settings["use_teacher_reference"]
+        self.teacher_reference_settings = self.al_settings["teacher_reference_settings"]
 
     def _setup_molecular_indices(self):
         """
