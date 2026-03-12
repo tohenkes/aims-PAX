@@ -1566,7 +1566,7 @@ class ALDFTReferenceManagerPARSL(ALReferenceManagerPARSL):
             )
 
         if self.workqueue_resource_spec is not None:
-            self.parsl_func_input["resource_specification"] = (
+            self.parsl_func_input["parsl_resource_specification"] = (
                 self.workqueue_resource_spec
             )
 
@@ -1645,7 +1645,7 @@ class ALTeacherModelManagerPARSL(ALReferenceManagerPARSL):
         """Submit a teacher model calculation via PARSL."""
         kwargs = {}
         if self.workqueue_resource_spec is not None:
-            kwargs["resource_specification"] = self.workqueue_resource_spec
+            kwargs["parsl_resource_specification"] = self.workqueue_resource_spec
         return recalc_teacher_model_parsl(
             positions=data.get_positions(),
             species=data.get_chemical_symbols(),

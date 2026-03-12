@@ -1073,7 +1073,7 @@ class InitialDatasetPARSL(InitialDatasetFoundational):
                     else None
                 )
             if self.workqueue_resource_spec is not None:
-                self.parsl_func_input["resource_specification"] = (
+                self.parsl_func_input["parsl_resource_specification"] = (
                     self.workqueue_resource_spec
                 )
 
@@ -1309,7 +1309,7 @@ class InitialDatasetPARSLTeacher(InitialDatasetPARSL):
 
         kwargs = {}
         if self.workqueue_resource_spec is not None:
-            kwargs["resource_specification"] = self.workqueue_resource_spec
+            kwargs["parsl_resource_specification"] = self.workqueue_resource_spec
         return recalc_teacher_model_parsl(
             positions=atoms.get_positions(),
             species=atoms.get_chemical_symbols(),
