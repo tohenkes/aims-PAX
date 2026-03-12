@@ -269,6 +269,7 @@ def recalc_dft_parsl(
     from aims_PAX.tools.utilities.utilities import get_free_vols
     import os
     from ase import Atoms
+    from ase.io import ParseError
 
     # Convert inputs to ASE Atoms object
     atoms = Atoms(
@@ -289,6 +290,10 @@ def recalc_dft_parsl(
         command = ase_aims_command
 
     os.environ["ASE_AIMS_COMMAND"] = command
+    os.environ["PARSL_RESOURCE_SPECIFICATION"] = str(kwargs.get("resource_specification", ""))
+
+    for var in ["UCX_NUM_EPS",]:
+        os.environ.pop(var, None)
 
     calc = Aims(
         profile=AimsProfile(command=os.environ["ASE_AIMS_COMMAND"]),

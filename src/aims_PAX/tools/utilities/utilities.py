@@ -583,6 +583,12 @@ def setup_pretrained(
             model_settings=model_settings,
             num_elements=num_elements
         )
+
+    if model_settings["GENERAL"]["model_choice"].lower() == "so3lr":
+        model.r_max_lr = model_settings["ARCHITECTURE"]["r_max_lr"]
+        logging.info(
+            f"Set r_max_lr to {model.r_max_lr} for pretrained SO3LR model."
+        )
     return model
 
 
