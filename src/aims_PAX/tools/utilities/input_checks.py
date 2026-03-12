@@ -599,6 +599,8 @@ def check_dtypes(
     scheme_key: str,
 ) -> dict:
     for k in scheme[scheme_key]:
+        if k not in settings:
+            continue
         if k in scheme_dtype["floats"]:
             if settings[k] is np.inf:
                 continue
@@ -872,9 +874,14 @@ def check_aimsPAX_settings(settings: dict, procedure: str = "full") -> dict:
                         "`CLUSTER` settings for the local executor!"
                     )
         else:
+            # DFT-specific keys not required when teacher model handles
+            # all reference calculations
+            dft_only_cluster_keys = {"launch_str", "calc_dir"}
             # check if all required keywords are present
             for k in SCHEME["required_cluster"]:
                 if k not in cluster_settings:
+                    if all_teacher and k in dft_only_cluster_keys:
+                        continue
                     raise ValueError(
                         f"The keyword `{k}` is required in the `CLUSTER` settings!"
                     )
