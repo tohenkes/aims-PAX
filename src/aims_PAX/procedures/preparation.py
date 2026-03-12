@@ -6,7 +6,10 @@ from typing import Union, List
 import numpy as np
 from mace import tools
 from mace.calculators import MACECalculator
-from so3krates_torch.calculator.so3 import TorchkratesCalculator, MultiHeadSO3LRCalculator
+from so3krates_torch.calculator.so3 import (
+    TorchkratesCalculator,
+    MultiHeadSO3LRCalculator,
+)
 from aims_PAX.tools.uncertainty import (
     HandleUncertainty,
     MolForceUncertainty,
@@ -43,9 +46,7 @@ from aims_PAX.tools.model_tools.train_epoch import (
     train_epoch,
     validate_epoch_ensemble,
 )
-from aims_PAX.tools.model_tools.training_tools import (
-    setup_model_training
-)
+from aims_PAX.tools.model_tools.training_tools import setup_model_training
 from aims_PAX.tools.utilities.mpi_utils import CommHandler
 import ase
 import logging
@@ -76,7 +77,7 @@ class PrepareInitialDatasetProcedure:
         self,
         model_settings: dict,
         aimsPAX_settings: dict,
-        path_to_control: str = "./control.in", #TODO: Rename
+        path_to_control: str = "./control.in",  # TODO: Rename
         path_to_geometry: str = "./geometry.in",
         use_mpi: bool = True,
     ) -> None:
@@ -127,11 +128,16 @@ class PrepareInitialDatasetProcedure:
         self.control_parser = AIMSControlParser()
         self._handle_model_settings(model_settings)
         if self.rank == 0:
-            logging.info(f"Using following settings for {self.model_choice.upper()}:")
+            logging.info(
+                f"Using following settings for {self.model_choice.upper()}:"
+            )
             log_yaml_block(self.model_choice.upper(), model_settings)
 
         self._handle_settings(aimsPAX_settings)
-        self._handle_aims_settings(path_to_control)
+        if not self.use_teacher_reference:
+            self._handle_aims_settings(path_to_control)
+        else:
+            self.aims_settings = {}
         self._create_folders()
 
         if self.restart:
@@ -164,15 +170,15 @@ class PrepareInitialDatasetProcedure:
         self.num_trajectories = len(self.trajectories)
         self.md_settings, _ = normalize_md_settings(
             md_settings=self.md_settings_raw,
-            num_trajectories=self.num_trajectories
+            num_trajectories=self.num_trajectories,
         )
-        
+
         if self.rank == 0:
             logging.info(
                 "Running Initial Dataset Procedure with "
                 f"{len(self.trajectories)} geometries."
             )
-            
+
         if self.model_choice == "mace":
             self.z = Z_from_geometry(self.trajectories)
         elif self.model_choice in ["so3lr", "so3krates"]:
@@ -182,7 +188,7 @@ class PrepareInitialDatasetProcedure:
         self.md_drivers = {idx: None for idx in self.trajectories.keys()}
 
         self._setup_seeds()
-        
+
         self.seeds_tags_dict = create_seeds_tags_dict(
             seeds=self.ensemble_seeds,
             model_settings=self.model_settings,
@@ -244,30 +250,24 @@ class PrepareInitialDatasetProcedure:
 
             else:
                 self.ensemble_ase_sets = {
-                        tag: {"train": [], "valid": []}
-                        for tag in self.ensemble.keys()
-                    }
+                    tag: {"train": [], "valid": []}
+                    for tag in self.ensemble.keys()
+                }
 
                 if self.use_multihead_model:
                     self.ensemble_model_sets = {
-                            tag: {"train": [], "valid": {}}
-                            for tag in self.ensemble.keys()
-                        }
+                        tag: {"train": [], "valid": {}}
+                        for tag in self.ensemble.keys()
+                    }
                     for head in self.all_heads:
                         for tag in self.ensemble.keys():
-                            self.ensemble_model_sets[tag]["valid"][
-                                head
-                            ] = []
+                            self.ensemble_model_sets[tag]["valid"][head] = []
                 else:
                     self.ensemble_model_sets = {
-                            tag: {"train": [], "valid": {
-                                "Default": []
-                            }}
-                            for tag in self.ensemble.keys()
-                        }
-                
+                        tag: {"train": [], "valid": {"Default": []}}
+                        for tag in self.ensemble.keys()
+                    }
 
-                        
         if self.analysis:
             if self.restart:
                 self.collect_losses = self.init_ds_restart_dict[
@@ -299,10 +299,7 @@ class PrepareInitialDatasetProcedure:
             model_settings (dict): Dictionary containing the model settings.
         """
 
-        apply_model_settings(
-            target=self,
-            model_settings=model_settings
-        )
+        apply_model_settings(target=self, model_settings=model_settings)
         # No CuEQ training during initial dataset generation
         # (because avg_num_neighbors, mean, std, atomic energies etc
         # are changing all the time; not possible to modify with CuEQ)
@@ -346,15 +343,15 @@ class PrepareInitialDatasetProcedure:
         self.margin = self.idg_settings["margin"]
         self.mol_idxs = self.misc["mol_idxs"]
         self.key_specification = create_keyspec(
-            energy_key=self.misc['energy_key'],
-            forces_key=self.misc['forces_key'],
-            stress_key=self.misc['stress_key'],
-            dipole_key=self.misc['dipole_key'],
-            polarizability_key=self.misc['polarizability_key'],
-            head_key=self.misc['head_key'],
-            charges_key=self.misc['charges_key'],
-            total_charge_key=self.misc['total_charge_key'],
-            total_spin_key=self.misc['total_spin_key'],
+            energy_key=self.misc["energy_key"],
+            forces_key=self.misc["forces_key"],
+            stress_key=self.misc["stress_key"],
+            dipole_key=self.misc["dipole_key"],
+            polarizability_key=self.misc["polarizability_key"],
+            head_key=self.misc["head_key"],
+            charges_key=self.misc["charges_key"],
+            total_charge_key=self.misc["total_charge_key"],
+            total_spin_key=self.misc["total_spin_key"],
         )
         self.idg_progress_dft_update = self.idg_settings["progress_dft_update"]
         if not self.idg_settings["scheduler_initial"]:
@@ -362,10 +359,14 @@ class PrepareInitialDatasetProcedure:
 
         self.initial_sampling = self.idg_settings["initial_sampling"]
         self.foundational_model = self.idg_settings["foundational_model"]
-        self.foundational_model_settings = self.idg_settings["foundational_model_settings"]
+        self.foundational_model_settings = self.idg_settings[
+            "foundational_model_settings"
+        ]
         self.use_teacher_reference = self.idg_settings["use_teacher_reference"]
-        self.teacher_reference_settings = self.idg_settings["teacher_reference_settings"]
-        
+        self.teacher_reference_settings = self.idg_settings[
+            "teacher_reference_settings"
+        ]
+
         self.restart = os.path.exists(
             "restart/initial_ds/initial_ds_restart.npy"
         )
@@ -443,10 +444,8 @@ class PrepareInitialDatasetProcedure:
         return calc
 
     def _handle_aims_settings(
-            self,
-            control_source: Union[str, dict[int, str]],
-            log: bool = False
-            ):
+        self, control_source: Union[str, dict[int, str]], log: bool = False
+    ):
         """
         Parses the AIMS control file to get the settings for the AIMS
         calculator.
@@ -473,11 +472,9 @@ class PrepareInitialDatasetProcedure:
                     True  # this is necesssary to check for convergence in ASI
                 )
                 if log:
-                    logging.info(
-                        f"Control file for geometry {key}: {value}."
-                    )
+                    logging.info(f"Control file for geometry {key}: {value}.")
                 self.aims_settings[key] = aims_settings
-        
+
     def setup_md(self, atoms: ase.Atoms, md_settings: dict):
         """
         Sets up the ASE molecular dynamics object for the atoms object.
@@ -531,7 +528,8 @@ class PrepareInitialDatasetProcedure:
                     "atoms": atoms,
                     "timestep": md_settings["timestep"] * units.fs,
                     "temperature_K": md_settings["temperature"],
-                    "externalstress": md_settings["pressure"] * units.Pascal
+                    "externalstress": md_settings["pressure"]
+                    * units.Pascal
                     * units.bar,
                     "ttime": md_settings["ttime"] * units.fs,
                     "pfactor": md_settings["pfactor"] * units.fs,
@@ -554,7 +552,7 @@ class PrepareInitialDatasetProcedure:
                     "tloop": md_settings["tloop"],
                     "ploop": md_settings["ploop"],
                 }
-                
+
                 dyn = MTKNPT(**npt_settings)
 
         return dyn
@@ -582,7 +580,7 @@ class PrepareInitialDatasetProcedure:
                         z=self.z,
                         seeds_tags_dict=self.seeds_tags_dict,
                         dtype=self.dtype,
-                        model_choice=self.model_choice
+                        model_choice=self.model_choice,
                     )
                 else:
 
@@ -883,13 +881,10 @@ class ALConfiguration:
 
     def _setup_model_configuration(self):
         """Setup model-specific configuration."""
-        
-        apply_model_settings(
-            target=self,
-            model_settings=self.model_settings
-        )
+
+        apply_model_settings(target=self, model_settings=self.model_settings)
         self.checkpoints_dir += "/al"
-        
+
     def _setup_aimsPAX_configuration(self):
         """Setup active learning configuration."""
         # Training parameters
@@ -916,10 +911,10 @@ class ALConfiguration:
         self.max_train_set_size = self.al_settings["max_train_set_size"]
         self.c_x = self.al_settings["c_x"]
         self.extend_existing_final_ds = self.al_settings[
-            'extend_existing_final_ds'
+            "extend_existing_final_ds"
         ]
         self.update_md_checkpoints = self.al_settings["update_md_checkpoints"]
-        
+
         # Training procedures (TODO: Move training methods from model file here)
         self.replay_strategy = self.al_settings["replay_strategy"]
         self.train_subset_size = self.al_settings["train_subset_size"]
@@ -929,12 +924,12 @@ class ALConfiguration:
                 "train_subset_size must be specified for random_subset "
                 "replay strategy."
             )
-        
+
         # Paths
         self.dataset_dir = Path(self.misc["dataset_dir"])
         self.log_dir = self.misc["log_dir"]
-        self.species_dir = self.al_settings["species_dir"]
-        self.ASI_path = self.al_settings["aims_lib_path"]
+        self.species_dir = self.al_settings.get("species_dir", None)
+        self.ASI_path = self.al_settings.get("aims_lib_path", None)
 
         # Optional settings
         self.analysis = self.al_settings["analysis"]
@@ -954,15 +949,15 @@ class ALConfiguration:
         self.freeze_threshold = False
 
         self.key_specification = create_keyspec(
-            energy_key=self.misc['energy_key'],
-            forces_key=self.misc['forces_key'],
-            stress_key=self.misc['stress_key'],
-            dipole_key=self.misc['dipole_key'],
-            polarizability_key=self.misc['polarizability_key'],
-            head_key=self.misc['head_key'],
-            charges_key=self.misc['charges_key'],
-            total_charge_key=self.misc['total_charge_key'],
-            total_spin_key=self.misc['total_spin_key'],
+            energy_key=self.misc["energy_key"],
+            forces_key=self.misc["forces_key"],
+            stress_key=self.misc["stress_key"],
+            dipole_key=self.misc["dipole_key"],
+            polarizability_key=self.misc["polarizability_key"],
+            head_key=self.misc["head_key"],
+            charges_key=self.misc["charges_key"],
+            total_charge_key=self.misc["total_charge_key"],
+            total_spin_key=self.misc["total_spin_key"],
         )
 
         # Molecular indices
@@ -974,11 +969,15 @@ class ALConfiguration:
 
         # foundational model usage during AL
         self.use_foundational = self.al_settings["use_foundational"]
-        self.foundational_model_settings = self.al_settings["foundational_model_settings"]
+        self.foundational_model_settings = self.al_settings[
+            "foundational_model_settings"
+        ]
 
         # teacher model usage during AL (replaces DFT with teacher model)
         self.use_teacher_reference = self.al_settings["use_teacher_reference"]
-        self.teacher_reference_settings = self.al_settings["teacher_reference_settings"]
+        self.teacher_reference_settings = self.al_settings[
+            "teacher_reference_settings"
+        ]
 
     def _setup_molecular_indices(self):
         """
@@ -1227,7 +1226,7 @@ class ALEnsemble:
             self.z = Z_from_geometry(atoms)
         elif self.config.model_choice in ["so3lr", "so3krates"]:
             self.z = np.array([i for i in range(1, 119)])
-            
+
         self.z_table = create_ztable(self.z)
 
     def _load_seeds_tags_dict(self):
@@ -1264,9 +1263,7 @@ class ALEnsemble:
             assert self.config.model_choice not in [
                 "so3lr",
                 "so3krates",
-            ], (
-                "CuEQ is not supported for So3krates/SO3LR."
-            )
+            ], "CuEQ is not supported for So3krates/SO3LR."
         self.ensemble = ensemble_from_folder(
             path_to_models=self.config.model_dir,
             device=self.config.device,
@@ -1290,10 +1287,12 @@ class ALEnsemble:
 
     def _setup_datasets(self):
         """Setup initial datasets (rank 0 only)."""
-        dataset_subdir = "final" if (
-            self.config.restart or self.config.extend_existing_final_ds
-        ) else "initial"
-        
+        dataset_subdir = (
+            "final"
+            if (self.config.restart or self.config.extend_existing_final_ds)
+            else "initial"
+        )
+
         log_message = (
             "Loading datasets from checkpoint."
             if self.config.restart
@@ -1322,9 +1321,7 @@ class ALEnsemble:
         self.train_dataset_len = len(
             self.ensemble_ase_sets[list(self.ensemble.keys())[0]]["train"]
         )
-        logging.info(
-            f'Length of training set: {self.train_dataset_len}'
-        )
+        logging.info(f"Length of training set: {self.train_dataset_len}")
 
     def _broadcast_dataset_info(self):
         """Broadcast dataset information to all ranks."""
@@ -1335,31 +1332,32 @@ class ALEnsemble:
         self.comm_handler.barrier()
 
     def _check_subset_size(self, data_set, set_subset_size):
-        
+
         subset_size = (
-                len(data_set)
-                if len(data_set)
-                < set_subset_size
-                else set_subset_size
-            )
+            len(data_set)
+            if len(data_set) < set_subset_size
+            else set_subset_size
+        )
         return subset_size
 
     def create_training_subset(
-            self, 
-            model_point,
-            idx: int, 
-            ):
+        self,
+        model_point,
+        idx: int,
+    ):
         """
         Creates a single batch of specified size. It includes the newly sampled
         point and a random selection of points from the current training set.
         """
-        
+
         assert self.config.train_subset_size is not None, (
             f"train_subset_size must be specified when using replay strategy "
             f"{self.config.replay_strategy}."
         )
         set_valid_size = (
-            self.config.valid_subset_size if self.config.valid_subset_size is not None else np.inf
+            self.config.valid_subset_size
+            if self.config.valid_subset_size is not None
+            else np.inf
         )
 
         for tag in self.ensemble_ase_sets.keys():
@@ -1369,17 +1367,16 @@ class ALEnsemble:
             if self.config.replay_strategy == "random_subset":
                 train_subset_size = self._check_subset_size(
                     data_set=self.ensemble_model_sets[tag]["train"],
-                    set_subset_size=self.config.train_subset_size
+                    set_subset_size=self.config.train_subset_size,
                 )
                 valid_subset_sizes = {}
-                for head_name, head_data in self.ensemble_model_sets[
-                    tag
-                ]["valid"].items():
+                for head_name, head_data in self.ensemble_model_sets[tag][
+                    "valid"
+                ].items():
                     valid_subset_sizes[head_name] = self._check_subset_size(
-                        data_set=head_data,
-                        set_subset_size=set_valid_size
-                        )
-                   
+                        data_set=head_data, set_subset_size=set_valid_size
+                    )
+
                 train_batch_size = min(
                     self.config.set_batch_size, train_subset_size
                 )
@@ -1391,21 +1388,21 @@ class ALEnsemble:
                     for head_name in valid_subset_sizes.keys()
                 ]
                 valid_batch_size = min(valid_batch_sizes)
-                
+
             random_sample_train = random.sample(
                 self.ensemble_model_sets[tag]["train"],
                 train_subset_size - 1,
             )
-            
+
             random_samples_valid = {}
-            for head_name, head_data in self.ensemble_model_sets[
-                tag
-            ]["valid"].items():
+            for head_name, head_data in self.ensemble_model_sets[tag][
+                "valid"
+            ].items():
                 random_samples_valid[head_name] = random.sample(
                     head_data,
                     valid_subset_sizes[head_name],
                 )
-                
+
             train_set = random_sample_train + model_point
             valid_set = random_samples_valid
             (
@@ -1417,12 +1414,20 @@ class ALEnsemble:
                 train_batch_size,
                 valid_batch_size,
             )
-            
-        logging.info(f"Using replay strategy: \"{self.config.replay_strategy}\". Sample sizes:")
-        logging.info(f'Training set has {train_subset_size} point(s) with {len(self.ensemble_model_sets[tag]["train_subset"][idx])} batch(es).')
-        
-        for head_name, head_data in self.ensemble_model_sets[tag]["valid_subset"][idx].items():
-            logging.info(f'Validation set for head "{head_name}" has {valid_subset_sizes[head_name]} point(s) with {len(head_data)} batch(es).')
+
+        logging.info(
+            f'Using replay strategy: "{self.config.replay_strategy}". Sample sizes:'
+        )
+        logging.info(
+            f'Training set has {train_subset_size} point(s) with {len(self.ensemble_model_sets[tag]["train_subset"][idx])} batch(es).'
+        )
+
+        for head_name, head_data in self.ensemble_model_sets[tag][
+            "valid_subset"
+        ][idx].items():
+            logging.info(
+                f'Validation set for head "{head_name}" has {valid_subset_sizes[head_name]} point(s) with {len(head_data)} batch(es).'
+            )
 
 
 class ALCalculatorMLFF:
@@ -1537,8 +1542,10 @@ class ALCalculatorMLFF:
 
         if self.config.use_foundational:
             logging.info("Using foundational model for MD.")
-            foundational_model_settings = self.config.foundational_model_settings
-            mace_model = foundational_model_settings['mace_model']
+            foundational_model_settings = (
+                self.config.foundational_model_settings
+            )
+            mace_model = foundational_model_settings["mace_model"]
             # for propagation
             self.mlff_calc = mace_mp(
                 model=mace_model,
@@ -1563,7 +1570,7 @@ class ALCalculatorMLFF:
                 default_dtype=self.config.dtype,
                 enable_cueq=self.config.enable_cueq,
             )
-            
+
         else:
             logging.info("Using custom model for MD.")
             model_paths = list_files_in_directory(self.config.model_dir)
@@ -1573,7 +1580,8 @@ class ALCalculatorMLFF:
                     map_location=self.config.device,
                     weights_only=False,
                 )
-                for model_path in model_paths if model_path.endswith('.model')
+                for model_path in model_paths
+                if model_path.endswith(".model")
             ]
             if self.config.model_choice == "mace":
                 self.mlff_calc = MACECalculator(
@@ -1591,7 +1599,6 @@ class ALCalculatorMLFF:
                         r_max_lr=self.config.r_max_lr,
                         dispersion_energy_cutoff_lr_damping=self.config.dispersion_energy_cutoff_lr_damping,
                         compute_stress=self.config.compute_stress,
-                        
                     )
                 else:
                     self.mlff_calc = TorchkratesCalculator(
@@ -1624,14 +1631,9 @@ class ALMD:
             num_trajectories=self.config.num_trajectories,
         )
         if self.rank == 0:
-            logging.info(
-                f'Using following settings for MDs:'
-            )
-            log_yaml_block(
-                "MD_SETTINGS",
-                self.md_settings
-            )
-            
+            logging.info(f"Using following settings for MDs:")
+            log_yaml_block("MD_SETTINGS", self.md_settings)
+
         self.md_drivers = {}
 
         # Setup MD modification if configured
@@ -1662,7 +1664,9 @@ class ALMD:
         """Setup ASE molecular dynamics object for given atoms."""
         stat_ensemble = md_settings["stat_ensemble"].lower()
         self._initialize_velocities(atoms, md_settings)
-        dyn = self._create_dynamics_engine(atoms, md_settings, stat_ensemble, idx)
+        dyn = self._create_dynamics_engine(
+            atoms, md_settings, stat_ensemble, idx
+        )
         return dyn
 
     def _create_dynamics_engine(
@@ -1751,7 +1755,7 @@ class ALMD:
             "ploop": md_settings["ploop"],
         }
         return MTKNPT(**npt_settings)
-    
+
     def _initialize_velocities(self, atoms: ase.Atoms, md_settings: dict):
         """
         Initialize Maxwell-Boltzmann velocity distribution
@@ -1940,11 +1944,9 @@ class ALRestart:
         # Special handling for uncertainty_checks
         if self.config.analysis and self.config.mol_idxs is not None:
             self.state_manager.uncertainty_checks = []
-            
+
         # Special handling for subset data sets if applies
-        if self.config.replay_strategy in [
-            "random_subset"
-            ]:
+        if self.config.replay_strategy in ["random_subset"]:
             for idx in range(self.config.num_trajectories):
                 self.ensemble_manager.create_training_subset(
                     model_point=self.state_manager.last_point_added[idx],
@@ -2116,13 +2118,13 @@ class PrepareALProcedure:
             log_yaml_block(
                 "ACTIVE_LEARNING", aimsPAX_settings["ACTIVE_LEARNING"]
             )
-            logging.info(f"Using following settings for {self.config.model_choice}:")
+            logging.info(
+                f"Using following settings for {self.config.model_choice}:"
+            )
             log_yaml_block(self.config.model_choice, model_settings)
         # Initialize all managers
         self.state_manager = ALStateManager(self.config, self.comm_handler)
-        self.ensemble_manager = ALEnsemble(
-            self.config, self.comm_handler
-        )
+        self.ensemble_manager = ALEnsemble(self.config, self.comm_handler)
         self.mlff_manager = ALCalculatorMLFF(
             self.config, self.ensemble_manager, self.comm_handler
         )
@@ -2134,7 +2136,7 @@ class PrepareALProcedure:
             self.state_manager,
             self.comm_handler,
             self.md_manager,
-            self.ensemble_manager
+            self.ensemble_manager,
         )
 
         # Set random seed

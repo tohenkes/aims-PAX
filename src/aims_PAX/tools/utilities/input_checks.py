@@ -3,7 +3,7 @@ import numpy as np
 from .utilities import normalize_md_settings
 
 SCHEME = {
-    "required_global": ["MD", "CLUSTER", 'TRAINING'],
+    "required_global": ["MD", "CLUSTER", "TRAINING"],
     "at_least_one_required_global": [
         "ACTIVE_LEARNING",
         "INITIAL_DATASET_GENERATION",
@@ -52,9 +52,9 @@ SCHEME = {
             "r_max_lr": None,
             "dispersion_lr_damping": None,
             "dispersion": False,
-            "dispersion_xc": 'pbe',
-            'damping': 'bj',
-            'dispersion_cutoff': 12.0,
+            "dispersion_xc": "pbe",
+            "damping": "bj",
+            "dispersion_cutoff": 12.0,
         },
         "skip_step_initial": 25,
         "desired_acc": 0.0,
@@ -80,9 +80,9 @@ SCHEME = {
         "r_max_lr": None,
         "dispersion_lr_damping": None,
         "dispersion": False,
-        "dispersion_xc": 'pbe',
-        'damping': 'bj',
-        'dispersion_cutoff': 12.0,
+        "dispersion_xc": "pbe",
+        "damping": "bj",
+        "dispersion_cutoff": 12.0,
     },
     "optional_al": {
         "freeze_threshold_dataset": np.inf,
@@ -117,9 +117,9 @@ SCHEME = {
             "r_max_lr": None,
             "dispersion_lr_damping": None,
             "dispersion": False,
-            "dispersion_xc": 'pbe',
-            'damping': 'bj',
-            'dispersion_cutoff': 12.0,
+            "dispersion_xc": "pbe",
+            "damping": "bj",
+            "dispersion_cutoff": 12.0,
         },
         "replay_strategy": "full_dataset",
         "train_subset_size": None,
@@ -136,7 +136,8 @@ SCHEME = {
         "type": "slurm",
         "clean_dirs": True,
         "executor": "workqueue",
-        "tasks_per_node": 1
+        "tasks_per_node": 1,
+        "max_workers": 4,
     },
     "required_md": [
         "stat_ensemble",
@@ -157,16 +158,14 @@ SCHEME = {
         "pressure": 101325,  # 1 atm in pascal
         "temperature": 300,
         "timestep": 0.5,
-        "tdamp": 0.5*100,
-        "pdamp": 0.5*1000,
+        "tdamp": 0.5 * 100,
+        "pdamp": 0.5 * 1000,
         "tchain": 3,
         "pchain": 3,
         "tloop": 1,
         "ploop": 1,
     },
-    "optional_training": {
-        
-    },
+    "optional_training": {},
     "optional_misc": {
         "path_to_control": "./control.in",
         "path_to_geometry": "./geometry.in",
@@ -208,7 +207,7 @@ SCHEME_DTYPES = {
         "pfactor",
         "externalstress",
         "tdamp",
-        "pdamp"
+        "pdamp",
     ],
     "ints": [
         "num_trajectories",
@@ -242,9 +241,9 @@ SCHEME_DTYPES = {
         "tloop",
         "ploop",
         "tasks_per_node",
+        "max_workers",
     ],
     "strings": [
-        "species_dir",
         "label",
         "slurm_str",
         "worker_str",
@@ -273,6 +272,7 @@ SCHEME_DTYPES = {
         "replay_strategy",
     ],
     "optional_strings": [  # Fields that can be None or string
+        "species_dir",
         "seeds_tags_dict",
         "aims_lib_path",
         "dispersion_xc",
@@ -287,7 +287,6 @@ SCHEME_DTYPES = {
         "dispersion_lr_damping",
         "dispersion_energy_cutoff_lr_damping",
         "dispersion_cutoff",
-        
     ],
     "bools": [
         "analysis",
@@ -307,11 +306,16 @@ SCHEME_DTYPES = {
     ],
     "lists": ["mol_idxs"],
     "optional_lists": [],
-    "dicts": ["parsl_options", "MISC", "foundational_model_settings", "teacher_reference_settings"],
+    "dicts": [
+        "parsl_options",
+        "MISC",
+        "foundational_model_settings",
+        "teacher_reference_settings",
+    ],
     "optional_dicts_strings": [  # Fields that can be dict or string
         "path_to_control",
         "path_to_geometry",
-    ]
+    ],
 }
 
 SCHEME_MODEL_TRAINING = {
@@ -367,15 +371,12 @@ SCHEME_MODEL_MISC = {
         "compute_stress": False,
         "compute_dipole": False,
         "enable_cueq": False,
-        "enable_cueq_train": False
+        "enable_cueq_train": False,
     },
 }
 
 SCHEME_MODEL_GENERAL = {
-    "required_general": [
-    "name_exp",
-    "model_choice"
-    ],
+    "required_general": ["name_exp", "model_choice"],
     "optional_general": {
         "checkpoints_dir": "./checkpoints",
         "loss_dir": "./losses",
@@ -412,7 +413,7 @@ SCHEME_MODEL_DTYPES = {
         "error_table",
         "log_level",
         "MLP_irreps",
-        #SO3LR
+        # SO3LR
         "message_normalization",
         "radial_basis_fn",
         "qk_non_linearity",
@@ -434,7 +435,7 @@ SCHEME_MODEL_DTYPES = {
         "virials_weight",
         "stress_weight",
         "clip_grad",
-        #SO3LR
+        # SO3LR
         "electrostatic_energy_scale",
         "dispersion_energy_scale",
     ],
@@ -450,7 +451,7 @@ SCHEME_MODEL_DTYPES = {
         "batch_size",
         "valid_batch_size",
         "scheduler_patience",
-        #SO3LR
+        # SO3LR
         "num_radial_basis_fn",
         "num_features",
         "num_heads",
@@ -471,7 +472,7 @@ SCHEME_MODEL_DTYPES = {
         "enable_cueq",
         "enable_cueq_train",
         "update_avg_num_neighbors",
-        #SO3LR
+        # SO3LR
         "initialize_ev_to_zeros",
         "trainable_rbf",
         "energy_learn_atomic_type_shifts",
@@ -493,15 +494,12 @@ SCHEME_MODEL_DTYPES = {
     ],
     "lists": [
         "radial_MLP",
-        #SO3LR
+        # SO3LR
         "degrees",
     ],
     "dicts": ["config_type_weights"],
     "optional_lists": [],
-    "optional_strings": [
-        "pretrained_model",
-        "pretrained_weights"
-        ],
+    "optional_strings": ["pretrained_model", "pretrained_weights"],
     "optional_dicts": ["atomic_energies"],
     "optional_dicts_strings": [],
     "optional_floats": [
@@ -509,7 +507,7 @@ SCHEME_MODEL_DTYPES = {
     ],
     "optional_ints": [
         "num_multihead_heads",
-    ]
+    ],
 }
 
 SCHEME_MACE = {
@@ -554,7 +552,7 @@ SCHEME_SO3LR = {
         "num_layers": 3,
         "final_mlp_layers": 2,
         "energy_regression_dim": 128,
-        "message_normalization": 'avg_num_neighbors',
+        "message_normalization": "avg_num_neighbors",
         "initialize_ev_to_zeros": True,
         "radial_basis_fn": "bernstein",
         "trainable_rbf": False,
@@ -592,6 +590,7 @@ SCHEME_SO3LR.update(SCHEME_MODEL_TRAINING)
 SCHEME_SO3LR.update(SCHEME_MODEL_MISC)
 SCHEME_SO3LR.update(SCHEME_MODEL_GENERAL)
 SCHEME_SO3LR.update(SCHEME_MODEL_GLOBAL)
+
 
 def check_dtypes(
     settings: dict,
@@ -694,7 +693,12 @@ def check_aimsPAX_settings(settings: dict, procedure: str = "full") -> dict:
             ), f"The keyword `{k}` is not valid in the INITIAL_DATASET_GENERATION input structure!"
 
         # check if all required keywords are present
+        idg_teacher = idg_settings.get("use_teacher_reference", False)
         for k in SCHEME["required_idg"]:
+            if k == "species_dir" and idg_teacher:
+                if k not in idg_settings:
+                    idg_settings[k] = None
+                continue
             if k not in idg_settings:
                 raise ValueError(
                     f"The keyword `{k}` is required in the INITIAL_DATASET_GENERATION settings!"
@@ -714,24 +718,24 @@ def check_aimsPAX_settings(settings: dict, procedure: str = "full") -> dict:
             if k not in idg_settings:
                 idg_settings[k] = SCHEME["optional_idg"][k]
 
-        use_foundational = idg_settings.get(
-            'initial_sampling'
-            ) == 'foundational'
+        use_foundational = (
+            idg_settings.get("initial_sampling") == "foundational"
+        )
 
         if use_foundational:
-            foundational_settings = idg_settings[
-                'foundational_model_settings'
-            ]
+            foundational_settings = idg_settings["foundational_model_settings"]
             for k in SCHEME["optional_foundational"]:
                 if k not in foundational_settings:
-                    foundational_settings[k] = SCHEME["optional_foundational"][k]
+                    foundational_settings[k] = SCHEME["optional_foundational"][
+                        k
+                    ]
             foundational_settings = check_dtypes(
                 settings=foundational_settings,
                 scheme_key="optional_foundational",
                 scheme=SCHEME,
                 scheme_dtype=SCHEME_DTYPES,
             )
-            idg_settings['foundational_model_settings'] = foundational_settings
+            idg_settings["foundational_model_settings"] = foundational_settings
 
         idg_settings = check_dtypes(
             settings=idg_settings,
@@ -778,7 +782,12 @@ def check_aimsPAX_settings(settings: dict, procedure: str = "full") -> dict:
                 check
             ), f"The keyword `{k}` is not valid in the ACTIVE_LEARNING input structure!"
         # check if all required keywords are present
+        al_teacher = al_settings.get("use_teacher_reference", False)
         for k in SCHEME["required_al"]:
+            if k == "species_dir" and al_teacher:
+                if k not in al_settings:
+                    al_settings[k] = None
+                continue
             if k not in al_settings:
                 raise ValueError(
                     f"The keyword `{k}` is required in the `ACTIVE_LEARNING` settings!"
@@ -828,8 +837,23 @@ def check_aimsPAX_settings(settings: dict, procedure: str = "full") -> dict:
                 al_settings["analysis"] = False
                 settings["ACTIVE_LEARNING"] = al_settings
 
+    # Determine if all reference calculations use teacher models
+    all_teacher = True
+    if procedure == "initial-ds" or procedure == "full":
+        if not settings.get("INITIAL_DATASET_GENERATION", {}).get(
+            "use_teacher_reference", False
+        ):
+            all_teacher = False
+    if procedure == "al" or procedure == "full":
+        if not settings.get("ACTIVE_LEARNING", {}).get(
+            "use_teacher_reference", False
+        ):
+            all_teacher = False
+
     cluster_settings = settings.get("CLUSTER", False)
     if cluster_settings:
+        is_local = cluster_settings.get("executor", "workqueue") == "local"
+
         # check structure
         for k, v in cluster_settings.items():
             required_cluster = k in SCHEME["required_cluster"]
@@ -838,45 +862,66 @@ def check_aimsPAX_settings(settings: dict, procedure: str = "full") -> dict:
             assert (
                 check
             ), f"The keyword `{k}` is not valid in the CLUSTER input structure!"
-        # check if all required keywords are present
-        for k in SCHEME["required_cluster"]:
-            if k not in cluster_settings:
-                raise ValueError(
-                    f"The keyword `{k}` is required in the `CLUSTER` settings!"
-                )
+
+        if is_local:
+            # local executor only requires calc_dir when DFT is used
+            if "calc_dir" not in cluster_settings:
+                if not all_teacher:
+                    raise ValueError(
+                        "The keyword `calc_dir` is required in the "
+                        "`CLUSTER` settings for the local executor!"
+                    )
+        else:
+            # check if all required keywords are present
+            for k in SCHEME["required_cluster"]:
+                if k not in cluster_settings:
+                    raise ValueError(
+                        f"The keyword `{k}` is required in the `CLUSTER` settings!"
+                    )
+
         # check if optional keys, values are missing and put defaults
         for k in SCHEME["optional_cluster"]:
             if k not in cluster_settings:
                 cluster_settings[k] = SCHEME["optional_cluster"][k]
 
-        # check required parsl options
-        parsl_options = cluster_settings.get("parsl_options", {})
-        for k in SCHEME["required_parsl_options"]:
-            if k not in parsl_options:
-                raise ValueError(
-                    f"The keyword `{k}` is required in the `parsl_options` settings!"
-                )
-        # check parsl options dtypes
-        parsl_options = check_dtypes(
-            settings=parsl_options,
-            scheme_key="required_parsl_options",
-            scheme=SCHEME,
-            scheme_dtype=SCHEME_DTYPES,
-        )
-        cluster_settings["parsl_options"] = parsl_options
-        # check cluster options dtypes
-        cluster_settings = check_dtypes(
-            settings=cluster_settings,
-            scheme_key="required_cluster",
-            scheme=SCHEME,
-            scheme_dtype=SCHEME_DTYPES,
-        )
+        if not is_local:
+            # check required parsl options (Slurm-specific)
+            parsl_options = cluster_settings.get("parsl_options", {})
+            for k in SCHEME["required_parsl_options"]:
+                if k not in parsl_options:
+                    raise ValueError(
+                        f"The keyword `{k}` is required in the `parsl_options` settings!"
+                    )
+            # check parsl options dtypes
+            parsl_options = check_dtypes(
+                settings=parsl_options,
+                scheme_key="required_parsl_options",
+                scheme=SCHEME,
+                scheme_dtype=SCHEME_DTYPES,
+            )
+            cluster_settings["parsl_options"] = parsl_options
+            # check cluster options dtypes
+            cluster_settings = check_dtypes(
+                settings=cluster_settings,
+                scheme_key="required_cluster",
+                scheme=SCHEME,
+                scheme_dtype=SCHEME_DTYPES,
+            )
+
         settings["CLUSTER"] = cluster_settings
 
-    if not aims_lib_path_provided_idg and not aims_lib_path_provided_al:
-        assert cluster_settings, (
-            "The `aims_lib_path` is not provided in the "
-            "`INITIAL_DATASET_GENERATION` or `ACTIVE_LEARNING` settings! "
+    if not all_teacher:
+        if not aims_lib_path_provided_idg and not aims_lib_path_provided_al:
+            assert cluster_settings, (
+                "The `aims_lib_path` is not provided in the "
+                "`INITIAL_DATASET_GENERATION` or `ACTIVE_LEARNING` "
+                "settings! "
+            )
+    else:
+        logging.info(
+            "All reference calculations use teacher models. "
+            "DFT inputs (species_dir, control.in, calc_dir, "
+            "aims_lib_path) are not required."
         )
 
     # check MD settings
@@ -884,12 +929,12 @@ def check_aimsPAX_settings(settings: dict, procedure: str = "full") -> dict:
         settings.get("MD") is not None
     ), "The `MD` settings are not provided! "
     md_settings_raw = settings.get("MD")
-    
+
     md_settings, is_multi_md = normalize_md_settings(
         md_settings=md_settings_raw,
-        num_trajectories=1  # does not matter how many copies for input check
+        num_trajectories=1,  # does not matter how many copies for input check
     )
-    
+
     for idx, md_setting in md_settings.items():
         # check that all required MD keywords are present
         for k in SCHEME["required_md"]:
@@ -938,7 +983,7 @@ def check_aimsPAX_settings(settings: dict, procedure: str = "full") -> dict:
                 f"but got `{md_setting['stat_ensemble']}`!"
             )
         # check if the optional keywords have values of the correct type
-        
+
         if md_setting["stat_ensemble"].lower() == "nvt":
             if md_setting["thermostat"].lower() == "langevin":
                 md_scheme_key = "optional_langevin"
@@ -971,7 +1016,7 @@ def check_aimsPAX_settings(settings: dict, procedure: str = "full") -> dict:
         )
         if is_multi_md:
             settings["MD"][idx] = md_setting
-            
+
     if not is_multi_md:
         settings["MD"] = md_setting
 
@@ -984,6 +1029,7 @@ def check_aimsPAX_settings(settings: dict, procedure: str = "full") -> dict:
                 f"The keyword `{k}` is not provided in the `MISC` settings! "
                 f"Setting it to the default value: {SCHEME['optional_misc'][k]}"
             )
+    misc_settings["all_teacher"] = all_teacher
     settings["MISC"] = misc_settings
 
     return settings
@@ -1002,23 +1048,26 @@ def check_model_settings(settings: dict) -> dict:
     """
     try:
         general_settings = settings["GENERAL"]
-        model_choice = general_settings.get('model_choice')
+        model_choice = general_settings.get("model_choice")
     except KeyError:
-        raise KeyError("The `model_choice` must be specified in the `GENERAL` settings!")
-    
+        raise KeyError(
+            "The `model_choice` must be specified in the `GENERAL` settings!"
+        )
+
     assert (
-        model_choice is not None, "The `model_choice` must be specified in the `GENERAL` settings!"
+        model_choice is not None,
+        "The `model_choice` must be specified in the `GENERAL` settings!",
     )
     assert (
-        model_choice.lower() in ['mace', 'so3lr'],
-        f"The `model_choice` must be either 'mace' or 'so3lr', but got '{model_choice}'!"
+        model_choice.lower() in ["mace", "so3lr"],
+        f"The `model_choice` must be either 'mace' or 'so3lr', but got '{model_choice}'!",
     )
-    
-    if model_choice.lower() == 'mace':
+
+    if model_choice.lower() == "mace":
         model_scheme_used = SCHEME_MACE
-    if model_choice.lower() in ['so3krates', 'so3lr']:
+    if model_choice.lower() in ["so3krates", "so3lr"]:
         model_scheme_used = SCHEME_SO3LR
-        
+
     # Check top-level keys
     for k in settings.keys():
         required_global = k in model_scheme_used["required_global"]

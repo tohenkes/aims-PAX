@@ -1,6 +1,7 @@
 import os
 from parsl.config import Config
 from parsl.executors import WorkQueueExecutor, MPIExecutor
+from parsl.executors import ThreadPoolExecutor as ParslThreadPoolExecutor
 from parsl.providers import SlurmProvider
 from parsl.launchers import SimpleLauncher
 from parsl import python_app
@@ -37,11 +38,7 @@ def prepare_parsl(cluster_settings: dict = None) -> dict:
         "Cluster settings not found. Please provide a YAML file "
         "with the cluster settings."
     )
-    try:
-        launch_str = cluster_settings["launch_str"]
-    except KeyError:
-        exception_msg = "Launch string not found in YAML file. Closing."
-        raise KeyError(exception_msg)
+    launch_str = cluster_settings.get("launch_str", "")
 
     config = create_parsl_config(cluster_settings=cluster_settings)
     # get the path to the directory where the calculations will be run
@@ -108,6 +105,27 @@ def create_parsl_config(cluster_settings: dict) -> Config:
         Config: A PARSL configuration object with the specified settings.
     """
 
+    executor = cluster_settings.get("executor", "workqueue")
+
+    if executor == "local":
+        parsl_info_dir = Path("./parsl_info")
+        if not os.path.exists(parsl_info_dir):
+            os.makedirs(parsl_info_dir)
+        run_dir = parsl_info_dir / "run_dir"
+        config = Config(
+            executors=[
+                ParslThreadPoolExecutor(
+                    label="local",
+                    max_threads=cluster_settings.get("max_workers", 4),
+                )
+            ],
+            run_dir=str(run_dir),
+            app_cache=False,
+            initialize_logging=False,
+            retries=0,
+        )
+        return config
+
     parsl_options = cluster_settings["parsl_options"]
 
     nodes_per_block = parsl_options.get("nodes_per_block", 1)
@@ -150,7 +168,7 @@ def create_parsl_config(cluster_settings: dict) -> Config:
         logging.error("Partition not found. Closing.")
         raise KeyError("Partition not found in slurm options string.")
 
-    if cluster_settings["executor"] == "workqueue":
+    if executor == "workqueue":
         config = Config(
             executors=[
                 WorkQueueExecutor(
@@ -173,9 +191,9 @@ def create_parsl_config(cluster_settings: dict) -> Config:
             run_dir=str(run_dir),
             app_cache=False,
             initialize_logging=False,
-            retries=3
+            retries=3,
         )
-    elif cluster_settings["executor"] == "mpi":
+    elif executor == "mpi":
         config = Config(
             executors=[
                 MPIExecutor(
@@ -197,7 +215,7 @@ def create_parsl_config(cluster_settings: dict) -> Config:
             run_dir=str(run_dir),
             app_cache=False,
             initialize_logging=False,
-            retries=3
+            retries=3,
         )
     return config
 
@@ -224,7 +242,7 @@ def recalc_dft_parsl(
     directory: str = "./",
     properties: list = ["energy", "forces"],
     aims_output_file: str = "aims.out",
-    **kwargs
+    **kwargs,
 ):
     """
     PARSL app that runs the DFT calculations using ASE AIMS calculator.
@@ -300,8 +318,8 @@ def recalc_dft_parsl(
             f"DFT calculation failed in directory {directory}: {str(e)}"
         )
         return None
-   
- 
+
+
 @python_app
 def recalc_teacher_model_parsl(
     positions: np.ndarray,
@@ -312,7 +330,7 @@ def recalc_teacher_model_parsl(
     model_path: str = None,
     model_settings: dict = None,
     properties: list = ["energy", "forces"],
-    **kwargs
+    **kwargs,
 ):
     """
     PARSL app that runs a teacher model for reference calculations.
@@ -413,7 +431,5 @@ def recalc_teacher_model_parsl(
         calc.calculate(atoms=atoms, properties=properties)
         return calc.results
     except Exception as e:
-        logging.warning(
-            f"Teacher model calculation failed: {str(e)}"
-        )
+        logging.warning(f"Teacher model calculation failed: {str(e)}")
         return None
