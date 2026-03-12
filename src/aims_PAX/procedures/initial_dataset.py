@@ -1023,6 +1023,7 @@ class InitialDatasetPARSL(InitialDatasetFoundational):
             use_mpi=False,
         )
         self.close_parsl = close_parsl
+        self.workqueue_resource_spec = None
 
         if parsl is None:
             raise ImportError(
@@ -1063,7 +1064,19 @@ class InitialDatasetPARSL(InitialDatasetFoundational):
                 self.parsl_func_input["parsl_resource_specification"] = (
                     self.parsl_resource_specification
                 )
-                
+
+            if self.cluster_settings.get("executor", "workqueue") == "workqueue":
+                cores_per_job = self.cluster_settings.get("cores_per_job", None)
+                self.workqueue_resource_spec = (
+                    {"cores": cores_per_job}
+                    if cores_per_job is not None
+                    else None
+                )
+            if self.workqueue_resource_spec is not None:
+                self.parsl_func_input["resource_specification"] = (
+                    self.workqueue_resource_spec
+                )
+
             handle_parsl_logger(
                 log_dir=self.log_dir / "parsl_initial_dataset.log",
             )
@@ -1294,6 +1307,9 @@ class InitialDatasetPARSLTeacher(InitialDatasetPARSL):
         model_settings.setdefault("device", self.device)
         model_settings.setdefault("default_dtype", self.dtype)
 
+        kwargs = {}
+        if self.workqueue_resource_spec is not None:
+            kwargs["resource_specification"] = self.workqueue_resource_spec
         return recalc_teacher_model_parsl(
             positions=atoms.get_positions(),
             species=atoms.get_chemical_symbols(),
@@ -1303,6 +1319,7 @@ class InitialDatasetPARSLTeacher(InitialDatasetPARSL):
             model_path=model_path,
             model_settings=model_settings,
             properties=self.properties,
+            **kwargs,
         )
 
     def _process_reference_result(self, result_dict, current_point):

@@ -1385,6 +1385,17 @@ class ALReferenceManagerPARSL:
             handle_parsl_logger(log_dir=parsl_log_dir / "parsl_al.log")
             parsl.load(self.parsl_config)
 
+        executor = self.config.cluster_settings.get("executor", "workqueue")
+        if executor == "workqueue":
+            cores_per_job = self.config.cluster_settings.get(
+                "cores_per_job", None
+            )
+            self.workqueue_resource_spec = (
+                {"cores": cores_per_job} if cores_per_job is not None else None
+            )
+        else:
+            self.workqueue_resource_spec = None
+
         logging.info("Launching reference manager thread for PARSL.")
         self.reference_queue = queue.Queue()
         self.reference_results = {}
@@ -1554,6 +1565,11 @@ class ALDFTReferenceManagerPARSL(ALReferenceManagerPARSL):
                 self.parsl_resource_specification
             )
 
+        if self.workqueue_resource_spec is not None:
+            self.parsl_func_input["resource_specification"] = (
+                self.workqueue_resource_spec
+            )
+
     def _handle_aims_settings(
         self,
         control_source: Union[str, dict],
@@ -1627,6 +1643,9 @@ class ALTeacherModelManagerPARSL(ALReferenceManagerPARSL):
 
     def _submit_parsl_job(self, idx, data, job_no):
         """Submit a teacher model calculation via PARSL."""
+        kwargs = {}
+        if self.workqueue_resource_spec is not None:
+            kwargs["resource_specification"] = self.workqueue_resource_spec
         return recalc_teacher_model_parsl(
             positions=data.get_positions(),
             species=data.get_chemical_symbols(),
@@ -1636,6 +1655,7 @@ class ALTeacherModelManagerPARSL(ALReferenceManagerPARSL):
             model_path=self.model_path,
             model_settings=self.model_settings,
             properties=self.config.properties,
+            **kwargs,
         )
 
 

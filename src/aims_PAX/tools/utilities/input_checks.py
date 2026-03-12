@@ -138,6 +138,7 @@ SCHEME = {
         "executor": "workqueue",
         "tasks_per_node": 1,
         "max_workers": 4,
+        "cores_per_job": None,
     },
     "required_md": [
         "stat_ensemble",
@@ -281,6 +282,7 @@ SCHEME_DTYPES = {
     "optional_ints": [
         "train_subset_size",
         "valid_subset_size",
+        "cores_per_job",
     ],
     "optional_floats": [
         "r_max_lr",
@@ -911,6 +913,12 @@ def check_aimsPAX_settings(settings: dict, procedure: str = "full") -> dict:
             cluster_settings = check_dtypes(
                 settings=cluster_settings,
                 scheme_key="required_cluster",
+                scheme=SCHEME,
+                scheme_dtype=SCHEME_DTYPES,
+            )
+            cluster_settings = check_dtypes(
+                settings=cluster_settings,
+                scheme_key="optional_cluster",
                 scheme=SCHEME,
                 scheme_dtype=SCHEME_DTYPES,
             )

@@ -70,5 +70,11 @@ CLUSTER:
 
   launch_str: srun path/to/aims.x >> aims.out
   calc_dir: "path/to/working/dir/calc"
+  # cores_per_job: 32  # Optional. Reserves N cores per reference job in WorkQueue
+  #                    # scheduler, enabling multiple concurrent jobs per node.
+  #                    # E.g. cores_per_job: 32 on a 128-core node allows 4
+  #                    # concurrent jobs. Must match MPI rank count in launch_str
+  #                    # (e.g. "srun -n 32 aims.x") for DFT calculations.
+  #                    # Applies to both DFT and teacher model reference calculations.
 
   
