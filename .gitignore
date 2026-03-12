@@ -20,5 +20,4 @@ src/aims_PAX.egg-info
 /dev_examples
 CLAUDE.md
 .claude
-
-
+.vscode
