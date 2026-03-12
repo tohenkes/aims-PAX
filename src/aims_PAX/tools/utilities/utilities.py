@@ -1619,14 +1619,27 @@ def setup_logger(
     logger = logging.getLogger()
     logger.setLevel(logging.DEBUG)  # Set to DEBUG to capture all levels
 
+    # Clear existing handlers and filters to prevent duplication
+    for handler in logger.handlers[:]:
+        logger.removeHandler(handler)
+    logger.filters.clear()
+
     # Create formatters
     formatter = logging.Formatter(
         "%(asctime)s.%(msecs)03d %(levelname)s: %(message)s",
         datefmt="%Y-%m-%d %H:%M:%S",
     )
 
-    # Add filter for rank
-    logger.addFilter(lambda _: rank == 0)
+    # Messages from third-party libraries that are noisy and not useful
+    _NOISY_MESSAGES = {"Using CPU"}
+
+    # Add filter for rank and to suppress noisy third-party messages
+    logger.addFilter(
+        lambda record: rank == 0
+        and not any(
+            msg in record.getMessage() for msg in _NOISY_MESSAGES
+        )
+    )
 
     # Create console handler
     ch = logging.StreamHandler(stream=sys.stdout)

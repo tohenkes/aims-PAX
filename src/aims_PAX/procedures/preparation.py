@@ -109,6 +109,8 @@ class PrepareInitialDatasetProcedure:
             else logging.INFO
         )
 
+        for handler in logging.root.handlers[:]:
+            logging.root.removeHandler(handler)
         self.logger = setup_logger(
             level=logger_level,
             tag="initial_dataset",
