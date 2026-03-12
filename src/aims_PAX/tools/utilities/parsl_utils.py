@@ -403,29 +403,22 @@ def recalc_teacher_model_parsl(
                 device=device,
                 default_dtype=default_dtype,
             )
-        elif model_type == "so3lr":
-            from so3krates_torch.calculator.so3 import SO3LRCalculator
+        elif model_type in ["so3lr", "so3krates"]:
 
             r_max_lr = model_settings.get("r_max_lr", None)
             dispersion_lr_damping = model_settings.get(
                 "dispersion_lr_damping", None
             )
-            calc = SO3LRCalculator(
-                model_path=model_path,
-                r_max_lr=r_max_lr,
-                dispersion_energy_cutoff_lr_damping=dispersion_lr_damping,
-                compute_stress=compute_stress,
-                device=device,
-                default_dtype=default_dtype,
-            )
-        elif model_type == "so3krates":
+
             from so3krates_torch.calculator.so3 import TorchkratesCalculator
 
             calc = TorchkratesCalculator(
-                model_path=model_path,
+                model_paths=model_path,
                 compute_stress=compute_stress,
                 device=device,
                 default_dtype=default_dtype,
+                r_max_lr=r_max_lr,
+                dispersion_lr_damping=dispersion_lr_damping,
             )
         else:
             raise ValueError(
