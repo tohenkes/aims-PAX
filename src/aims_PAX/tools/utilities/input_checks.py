@@ -139,6 +139,8 @@ SCHEME = {
         "tasks_per_node": 1,
         "max_workers": 4,
         "cores_per_job": None,
+        "memory_per_job": None,
+        "disk_per_job": None,
     },
     "required_md": [
         "stat_ensemble",
@@ -283,6 +285,8 @@ SCHEME_DTYPES = {
         "train_subset_size",
         "valid_subset_size",
         "cores_per_job",
+        "memory_per_job",
+        "disk_per_job",
     ],
     "optional_floats": [
         "r_max_lr",

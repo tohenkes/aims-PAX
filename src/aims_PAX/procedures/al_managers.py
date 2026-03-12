@@ -1390,9 +1390,25 @@ class ALReferenceManagerPARSL:
             cores_per_job = self.config.cluster_settings.get(
                 "cores_per_job", None
             )
-            self.workqueue_resource_spec = (
-                {"cores": cores_per_job} if cores_per_job is not None else None
-            )
+            if cores_per_job is not None:
+                memory_per_job = self.config.cluster_settings.get(
+                    "memory_per_job", None
+                )
+                if memory_per_job is None:
+                    raise ValueError(
+                        "memory_per_job must be set in CLUSTER settings "
+                        "when cores_per_job is set."
+                    )
+                disk_per_job = self.config.cluster_settings.get(
+                    "disk_per_job", 1000
+                )
+                self.workqueue_resource_spec = {
+                    "cores": cores_per_job,
+                    "memory": memory_per_job,
+                    "disk": disk_per_job,
+                }
+            else:
+                self.workqueue_resource_spec = None
         else:
             self.workqueue_resource_spec = None
 
