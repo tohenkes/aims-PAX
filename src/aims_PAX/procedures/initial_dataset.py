@@ -629,7 +629,7 @@ class InitialDatasetFoundational(InitialDatasetProcedure):
         """
         self._md_w_foundational()
         if self.rank == 0:
-            logging.info("Recalculating energies and forces with DFT.")
+            logging.info("Recalculating energies and forces with reference method.")
         recalculated_points = []
         for idx in self.trajectories.keys():
             for atoms in self.sampled_points[idx]:
@@ -961,7 +961,7 @@ class InitialDatasetFoundationalParallel(InitialDatasetFoundational):
                     ):
                         logging.info(
                             f"Computed {len(temp_sampled_energies)} points "
-                            "with DFT and sending them to training worker."
+                            "with reference method and sending them to training worker."
                         )
 
                         # TODO: create loop or package data in one
@@ -1146,7 +1146,7 @@ class InitialDatasetPARSL(InitialDatasetFoundational):
         self._md_w_foundational()
         recalculated_points = []
         if self.rank == 0:
-            logging.info("Recalculating energies and forces with DFT.")
+            logging.info("Recalculating energies and forces with reference method.")
             job_results = {idx: {} for idx in self.sampled_points.keys()}
             calc_launched = 0
             # loop over different systems
