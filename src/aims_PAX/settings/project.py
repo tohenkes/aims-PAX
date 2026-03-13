@@ -457,34 +457,47 @@ class MDSettings(RootModel):
 
 
 class ParslSettings(ProjectBaseModel):
+    # The defaults for these fields have been set in tools.utilities.parsl_utils.create_parsl_config
     nodes_per_block: int = Field(
-        ...,
+        default=1,
         description="Number of nodes per block."
     )
     init_blocks: int = Field(
-        ...,
+        default=1,
         description="Initial number of blocks to launch."
     )
     min_blocks: int = Field(
-        ...,
+        default=1,
         description="Minimum number of blocks allowed."
     )
     max_blocks: int = Field(
-        ...,
+        default=1,
         description="Maximum number of blocks allowed."
     )
     label: str = Field(
-        ...,
+        default="workqueue",
         description="Unique label for this Parsl configuration. Must be unique for each aims-PAX instance."
     )
-    run_dir: str | None = Field(
+    parsl_info_dir: Path = Field(
+        default=Path("./parsl_info"),
+        description="Directory for PARSL-related files."
+    )
+    run_dir: Path | None = Field(
         default=None,
         description="Directory to store runtime files."
     )
-    function_dir: str | None = Field(
+    function_dir: Path | None = Field(
         default=None,
         description="Directory for Parsl function storage."
     )
+    @model_validator(mode="after")
+    def create_directories(self) -> "ParslSettings":
+        """Automatically create the parsl directories if they don't exist."""
+        self.run_dir = self.run_dir or self.parsl_info_dir / "run_dir"
+        self.function_dir = self.function_dir or self.parsl_info_dir / "function_dir"
+        for path in (self.parsl_info_dir, self.run_dir, self.function_dir):
+            path.mkdir(parents=True, exist_ok=True)
+        return self
 
 
 class ClusterSettings(ProjectBaseModel):
@@ -511,9 +524,17 @@ class ClusterSettings(ProjectBaseModel):
         ...,
         description="Command to run FHI aims, e.g., 'srun path/to/aims >> aims.out'."
     )
-    calc_dir: str = Field(
-        ...,
+    calc_dir: Path = Field(
+        "./aims_ase_calcs",
         description="Path to the directory used for calculation outputs."
+    )
+    executor: Literal["workqueue", "mpi"] = Field(
+        default="workqueue",
+        description="The workload executor. can be `workqueue` or `mpi`.`"
+    )
+    tasks_per_node: int = Field(
+        default=1,
+        description="Number of parallel tasks per node."
     )
     clean_dirs: bool = Field(
         default=True,

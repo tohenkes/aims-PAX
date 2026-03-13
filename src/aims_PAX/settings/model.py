@@ -284,6 +284,10 @@ class TrainingSettings(ProjectBaseModel):
         default=False,
         description="Whether to use Stochastic Weight Averaging."
     )
+    start_swa: int | None = Field(
+        default=None,
+        description="Amount of training completed before stochastic weight averaging begins."
+    )
     # extra fields
     pretrained_model: str | None = None
     pretrained_weights: str | None = None
