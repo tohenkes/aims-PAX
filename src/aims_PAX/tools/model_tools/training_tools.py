@@ -17,7 +17,7 @@ import numpy as np
 import os
 
 from aims_PAX.settings import ModelSettings
-from aims_PAX.settings.model import TrainingSettings
+from aims_PAX.settings.model import TrainingSettings, MiscSettings
 
 
 def setup_model_training(
@@ -31,7 +31,6 @@ def setup_model_training(
     mol_idxs: np.ndarray = None,
 ):
 
-    general_settings = settings.GENERAL
     training_settings = settings.TRAINING
     misc_settings = settings.MISC
 
@@ -74,12 +73,12 @@ def setup_model_training(
     )
     training_setup["checkpoint_handler"] = checkpoint_handler
     
-    training_setup["device"] = misc_settings["device"]
-    training_setup["max_grad_norm"] = training_settings["clip_grad"]
+    training_setup["device"] = misc_settings.device
+    training_setup["max_grad_norm"] = training_settings.clip_grad
     training_setup["output_args"] = {
         "forces": True,
         "virials": False,  # TODO: Remove hardcoding
-        "stress": misc_settings["compute_stress"],
+        "stress": misc_settings.compute_stress
     }
     training_setup["epoch"] = epoch
     return training_setup
@@ -136,45 +135,45 @@ def choose_loss_function(training_settings: TrainingSettings) -> torch.nn.Module
 
 
 def choose_scheduler(optimizer, training_settings):
-    if training_settings["scheduler"] == "ExponentialLR":
+    if training_settings.scheduler == "ExponentialLR":
         lr_scheduler = torch.optim.lr_scheduler.ExponentialLR(
-            optimizer=optimizer, gamma=training_settings["lr_scheduler_gamma"]
+            optimizer=optimizer, gamma=training_settings.lr_scheduler_gamma
         )
-    elif training_settings["scheduler"] == "ReduceLROnPlateau":
+    elif training_settings.scheduler == "ReduceLROnPlateau":
         lr_scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(
             optimizer=optimizer,
-            factor=training_settings["lr_factor"],
-            patience=training_settings["scheduler_patience"],
+            factor=training_settings.lr_factor,
+            patience=training_settings.scheduler_patience,
         )
     else:
         raise RuntimeError(
-            f"Unknown scheduler: {training_settings['scheduler']}"
+            f"Unknown scheduler: {training_settings.scheduler}"
         )
     return lr_scheduler
 
 
 def setup_optimizer(
         model,
-        training_settings: dict,
+        training_settings: TrainingSettings,
         param_options: dict
     ):
 
-    if training_settings["optimizer"] == "adamw":
+    if training_settings.optimizer == "adamw":
         optimizer = torch.optim.AdamW(**param_options)
-    elif training_settings["optimizer"] == "adam":
+    elif training_settings.optimizer == "adam":
         optimizer = torch.optim.Adam(**param_options)
     else:
         raise RuntimeError(
-            f"Unknown optimizer: {training_settings['optimizer']}"
+            f"Unknown optimizer: {training_settings.optimizer}"
         )
     return optimizer
 
 
-def setup_ema(training_settings: dict, model) -> Optional[ExponentialMovingAverage]:
+def setup_ema(training_settings: TrainingSettings, model) -> Optional[ExponentialMovingAverage]:
     ema: Optional[ExponentialMovingAverage] = None
-    if training_settings["ema"]:
+    if training_settings.ema:
         ema = ExponentialMovingAverage(
-            model.parameters(), decay=training_settings["ema_decay"]
+            model.parameters(), decay=training_settings.ema_decay
         )
     return ema
 
@@ -182,8 +181,8 @@ def setup_ema(training_settings: dict, model) -> Optional[ExponentialMovingAvera
 def setup_checkpoint(
     checkpoints_dir: str,
     tag: str,
-    misc_settings: dict,
-    training_settings: dict,
+    misc_settings: MiscSettings,
+    training_settings: TrainingSettings,
     restart: bool,
     convergence: bool,
     model,
@@ -193,9 +192,10 @@ def setup_checkpoint(
         checkpoint_handler = tools.CheckpointHandler(
             directory=checkpoints_dir,
             tag=tag,
-            keep=misc_settings["keep_checkpoints"],
-            swa_start=training_settings.get("start_swa"),
+            keep=misc_settings.keep_checkpoints,
+            swa_start=training_settings.start_swa
         )
+        # Q: what does it mean if start_swa is None?
         if restart:
             epoch = checkpoint_handler.load_latest(
                 state=tools.CheckpointState(
@@ -204,7 +204,7 @@ def setup_checkpoint(
                     training_setup["lr_scheduler"],
                 ),
                 swa=False,
-                device=misc_settings["device"],
+                device=torch.device(misc_settings.device),
             )
         else:
             epoch = 0
@@ -212,8 +212,8 @@ def setup_checkpoint(
         checkpoint_handler = tools.CheckpointHandler(
             directory=checkpoints_dir + "/convergence",
             tag=tag + "_convergence",
-            keep=misc_settings["keep_checkpoints"],
-            swa_start=training_settings.get("start_swa"),
+            keep=misc_settings.keep_checkpoints,
+            swa_start=training_settings.start_swa,
         )
 
         if restart and os.path.exists(checkpoints_dir + "/convergence"):
@@ -224,7 +224,7 @@ def setup_checkpoint(
                     training_setup["lr_scheduler"],
                 ),
                 swa=False,
-                device=misc_settings["device"],
+                device=torch.device(misc_settings.device),
             )
         else:
             epoch = 0
@@ -233,13 +233,13 @@ def setup_checkpoint(
 
 def create_standard_optimizer(
         model: torch.nn.Module,
-        training_settings: dict,
+        training_settings: TrainingSettings,
 ):
     param_options = dict(
         params=model.parameters(),
-        lr=training_settings["lr"],
-        weight_decay=training_settings["weight_decay"],
-        amsgrad=training_settings["amsgrad"],
+        lr=training_settings.lr,
+        weight_decay=training_settings.weight_decay,
+        amsgrad=training_settings.amsgrad,
     )
 
     optimizer = setup_optimizer(
@@ -253,7 +253,7 @@ def create_standard_optimizer(
 
 def create_mace_optimizer(
     model: modules.MACE,
-    training_settings: dict,
+    training_settings: TrainingSettings,
 ) -> dict:
 
     decay_interactions = {}
@@ -274,7 +274,7 @@ def create_mace_optimizer(
             {
                 "name": "interactions_decay",
                 "params": list(decay_interactions.values()),
-                "weight_decay": training_settings["weight_decay"],
+                "weight_decay": training_settings.weight_decay,
             },
             {
                 "name": "interactions_no_decay",
@@ -284,7 +284,7 @@ def create_mace_optimizer(
             {
                 "name": "products",
                 "params": model.products.parameters(),
-                "weight_decay": training_settings["weight_decay"],
+                "weight_decay": training_settings.weight_decay,
             },
             {
                 "name": "readouts",
@@ -292,8 +292,8 @@ def create_mace_optimizer(
                 "weight_decay": 0.0,
             },
         ],
-        lr=training_settings["lr"],
-        amsgrad=training_settings["amsgrad"],
+        lr=training_settings.lr,
+        amsgrad=training_settings.amsgrad,
     )
 
     optimizer = setup_optimizer(
