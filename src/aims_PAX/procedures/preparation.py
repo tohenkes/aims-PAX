@@ -1586,21 +1586,42 @@ class ALCalculatorMLFF:
                 f"path: {model_path}"
             )
             # for uncertainty estimation
-            model_paths = list_files_in_directory(self.config.model_dir)
+            ensemble_paths = list_files_in_directory(self.config.model_dir)
             self.models = [
                 torch.load(
-                    f=model_path,
+                    f=p,
                     map_location=self.config.device,
                     weights_only=False,
                 )
-                for model_path in model_paths
+                for p in ensemble_paths
+                if p.endswith(".model")
             ]
-            self.mlff_calc_ensemble = MACECalculator(
-                models=self.models,
-                device=self.config.device,
-                default_dtype=self.config.dtype,
-                enable_cueq=self.config.enable_cueq,
-            )
+            if self.config.model_choice == "mace":
+                self.mlff_calc_ensemble = MACECalculator(
+                    models=self.models,
+                    device=self.config.device,
+                    default_dtype=self.config.dtype,
+                    enable_cueq=self.config.enable_cueq,
+                )
+            elif self.config.model_choice in ["so3lr", "so3krates"]:
+                if self.config.use_multihead_model:
+                    self.mlff_calc_ensemble = MultiHeadSO3LRCalculator(
+                        model=self.models,
+                        device=self.config.device,
+                        default_dtype=self.config.dtype,
+                        r_max_lr=self.config.r_max_lr,
+                        dispersion_energy_cutoff_lr_damping=self.config.dispersion_energy_cutoff_lr_damping,
+                        compute_stress=self.config.compute_stress,
+                    )
+                else:
+                    self.mlff_calc_ensemble = TorchkratesCalculator(
+                        models=self.models,
+                        device=self.config.device,
+                        default_dtype=self.config.dtype,
+                        r_max_lr=self.config.r_max_lr,
+                        dispersion_energy_cutoff_lr_damping=self.config.dispersion_energy_cutoff_lr_damping,
+                        compute_stress=self.config.compute_stress,
+                    )
 
         else:
             logging.info("Using custom model for MD.")
