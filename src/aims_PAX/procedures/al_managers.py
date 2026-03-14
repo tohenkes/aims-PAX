@@ -1851,13 +1851,13 @@ class ALRunningManager:
 
             point = trajectories[idx].copy()
             if self.config.use_foundational:
-                self.mlff_manager.model_calc_ensemble.calculate(
+                self.mlff_manager.mlff_calc_ensemble.calculate(
                     atoms=point,
                 )
-                prediction = self.mlff_manager.model_calc_ensemble.results[
+                prediction = self.mlff_manager.mlff_calc_ensemble.results[
                     "forces_comm"
                 ]
-            else:    
+            else:
                 prediction = trajectories[idx].calc.results["forces_comm"]
 
             uncertainty = get_uncertainty_func(prediction)
