@@ -1547,14 +1547,43 @@ class ALCalculatorMLFF:
             foundational_model_settings = (
                 self.config.foundational_model_settings
             )
-            mace_model = foundational_model_settings["mace_model"]
+            model_type = foundational_model_settings.get(
+                "model_type", "mace-mp"
+            )
+            model_path = foundational_model_settings.get("model_path", None)
             # for propagation
-            self.mlff_calc = mace_mp(
-                model=mace_model,
-                dispersion=False,
-                default_dtype=self.config.dtype,
-                device=self.config.device,
-                enable_cueq=self.config.enable_cueq,
+            if model_type == "mace-mp":
+                mace_model = foundational_model_settings["mace_model"]
+                self.mlff_calc = mace_mp(
+                    model=mace_model,
+                    dispersion=False,
+                    default_dtype=self.config.dtype,
+                    device=self.config.device,
+                    enable_cueq=self.config.enable_cueq,
+                )
+            elif model_type == "mace":
+                self.mlff_calc = MACECalculator(
+                    model_paths=model_path,
+                    device=self.config.device,
+                    default_dtype=self.config.dtype,
+                    enable_cueq=self.config.enable_cueq,
+                )
+            elif model_type in ["so3lr", "so3krates"]:
+                self.mlff_calc = TorchkratesCalculator(
+                    model_paths=model_path,
+                    compute_stress=self.config.compute_stress,
+                    device=self.config.device,
+                    default_dtype=self.config.dtype,
+                    r_max_lr=foundational_model_settings.get("r_max_lr"),
+                    dispersion_energy_cutoff_lr_damping=(
+                        foundational_model_settings.get(
+                            "dispersion_lr_damping"
+                        )
+                    ),
+                )
+            logging.info(
+                f"Foundational model type: {model_type}, "
+                f"path: {model_path}"
             )
             # for uncertainty estimation
             model_paths = list_files_in_directory(self.config.model_dir)

@@ -113,6 +113,8 @@ SCHEME = {
         "extend_existing_final_ds": False,
         "use_foundational": False,
         "foundational_model_settings": {
+            "model_type": "mace-mp",
+            "model_path": None,
             "mace_model": "small",
             "r_max_lr": None,
             "dispersion_lr_damping": None,
@@ -844,6 +846,26 @@ def check_aimsPAX_settings(settings: dict, procedure: str = "full") -> dict:
                 )
                 al_settings["analysis"] = False
                 settings["ACTIVE_LEARNING"] = al_settings
+
+        # Validate foundational model settings for AL
+        if al_settings.get("use_foundational", False):
+            fms = al_settings.get("foundational_model_settings", {})
+            model_type = fms.get("model_type", "mace-mp")
+            model_path = fms.get("model_path", None)
+            supported_types = ["mace-mp", "mace", "so3lr", "so3krates"]
+            assert model_type in supported_types, (
+                f"`foundational_model_settings.model_type` must be one of "
+                f"{supported_types}, got '{model_type}'."
+            )
+            if model_type != "mace-mp":
+                assert model_path is not None, (
+                    f"`foundational_model_settings.model_path` is required "
+                    f"when model_type is '{model_type}'."
+                )
+                assert os.path.isfile(model_path), (
+                    f"`foundational_model_settings.model_path` not found: "
+                    f"'{model_path}'."
+                )
 
     # Determine if all reference calculations use teacher models
     all_teacher = True

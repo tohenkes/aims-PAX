@@ -27,6 +27,15 @@ ACTIVE_LEARNING:
   skip_step_mlff: 25 
   num_trajectories: 8
   species_dir: "path/to/FHIaims/species_defaults/defaults_2020/light"
+  # use_foundational: true          # Use a pre-trained model for MD propagation;
+  #                                  # the trained ensemble is used only for
+  #                                  # uncertainty estimation and re-training.
+  # foundational_model_settings:
+  #   model_type: mace-mp            # mace-mp | mace | so3lr | so3krates
+  #   mace_model: small              # for model_type: mace-mp (small/medium/large)
+  #   model_path: null               # required for model_type: mace | so3lr | so3krates
+  #   r_max_lr: null                 # for model_type: so3lr | so3krates
+  #   dispersion_lr_damping: null    # for model_type: so3lr | so3krates
 
 
 MD:
