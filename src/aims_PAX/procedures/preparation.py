@@ -1449,6 +1449,7 @@ class ALCalculatorMLFF:
         # model calculator
         self.models = None
         self.mlff_calc = None
+        self.mlff_calc_ensemble = None  # only set when use_foundational=True
 
         # Atomic energies handling
         self.update_atomic_energies = False

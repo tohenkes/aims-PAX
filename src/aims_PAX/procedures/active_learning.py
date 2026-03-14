@@ -212,7 +212,7 @@ class ALProcedure(PrepareALProcedure):
         if self.config.use_foundational:
             # updating only the ensemble calculator which is used for 
             # uncertainty estimation
-            self.mlff_manager.model_calc_ensemble.models = [
+            self.mlff_manager.mlff_calc_ensemble.models = [
                 self.ensemble[tag] for tag in self.ensemble.keys()
             ]
         else:
