@@ -2001,10 +2001,14 @@ class ALRestart:
         # Special handling for subset data sets if applies
         if self.config.replay_strategy in ["random_subset"]:
             for idx in range(self.config.num_trajectories):
-                self.ensemble_manager.create_training_subset(
-                    model_point=self.state_manager.last_point_added[idx],
-                    idx=idx,
-                )
+                if (
+                    self.state_manager.last_point_added
+                    and idx in self.state_manager.last_point_added
+                ):
+                    self.ensemble_manager.create_training_subset(
+                        model_point=self.state_manager.last_point_added[idx],
+                        idx=idx,
+                    )
 
     def _broadcast_restart_state(self):
         """Broadcast restart state from rank 0 to all processes."""
