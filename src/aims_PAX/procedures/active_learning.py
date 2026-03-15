@@ -310,16 +310,17 @@ class ALProcedure(PrepareALProcedure):
 
             # save final results in new directory called results:
             if not self.config.converge_al:
-                os.makedirs("results", exist_ok=True)
+                results_dir = self.config.output_dir / "results"
+                results_dir.mkdir(parents=True, exist_ok=True)
                 save_datasets(
                     ensemble=self.ensemble,
                     ensemble_ase_sets=self.ensemble_manager.ensemble_ase_sets,
-                    path=Path("results"),
+                    path=results_dir,
                 )
                 save_models(
                     ensemble=self.ensemble,
                     training_setups=self.ensemble_manager.training_setups,
-                    model_dir=Path("results"),
+                    model_dir=results_dir,
                     current_epoch=self.state_manager.total_epoch,
                     model_settings=self.config.model_settings["ARCHITECTURE"].copy(),
                     model_choice=self.config.model_choice
@@ -333,7 +334,7 @@ class ALProcedure(PrepareALProcedure):
                 self.restart_manager.update_restart_dict(
                     trajectories_keys=self.trajectories.keys(),
                     md_drivers=self.md_manager.md_drivers,
-                    save_restart="restart/al/al_restart.npy",
+                    save_restart=self.config.al_restart_path,
                 )
                 self.restart_manager.al_restart_dict["al_done"] = True
 

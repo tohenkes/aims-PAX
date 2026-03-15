@@ -47,6 +47,10 @@ MD:
   seed: 42
 
 MISC:
+  # Base directory for ALL output (logs, data, models, checkpoints, analysis,
+  # results, restart, PARSL scratch). Relative sub-paths (dataset_dir, log_dir,
+  # model_dir, checkpoints_dir) are resolved against this directory.
+  output_dir: "."
   create_restart: True
 
 CLUSTER:

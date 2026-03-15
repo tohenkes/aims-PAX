@@ -9,6 +9,7 @@ import logging
 from mpi4py import MPI
 from asi4py.asecalc import ASI_ASE_calculator
 from typing import List
+from pathlib import Path
 
 WORLD_COMM = MPI.COMM_WORLD
 WORLD_SIZE = WORLD_COMM.Get_size()
@@ -27,7 +28,9 @@ class E0Calculator:
         path_to_geometry: str = "./geometry.in",
         Zs: List[int] = None,
         aims_path: str = None,
+        output_dir: str = ".",
     ):
+        self.output_dir = Path(output_dir)
 
         if path_to_control is None:
             raise FileNotFoundError("No control.in provided.")
@@ -92,8 +95,9 @@ class E0Calculator:
         MPI.COMM_WORLD.Barrier()
         self.get_atomic_energies()
         if RANK == 0:
-            logging.info(f"Saving atomic energies to ./atomic_energies.npz")
-            np.savez("./atomic_energies.npz", self.atomic_energies_dict)
+            out_path = self.output_dir / "atomic_energies.npz"
+            logging.info(f"Saving atomic energies to {out_path}")
+            np.savez(out_path, self.atomic_energies_dict)
 
     def handle_aims_settings(self, path_to_control: str):
         """

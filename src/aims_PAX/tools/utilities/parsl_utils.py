@@ -13,7 +13,9 @@ from pathlib import Path
 from typing import Optional
 
 
-def prepare_parsl(cluster_settings: dict = None) -> dict:
+def prepare_parsl(
+    cluster_settings: dict = None, output_dir: Path = Path(".")
+) -> dict:
     """
     Prepare the PARSL configuration and settings for running calculations.
     Creates the config file, sets the calculation directory, defines if
@@ -25,6 +27,9 @@ def prepare_parsl(cluster_settings: dict = None) -> dict:
 
     Args:
         cluster_settings (dict, optional): _description_. Defaults to None.
+        output_dir (Path, optional): Base output directory. Relative paths
+            for calc_dir and parsl_info_dir are resolved against this.
+            Defaults to Path(".").
 
     Raises:
         KeyError: Launch string not found in YAML file.
@@ -40,13 +45,18 @@ def prepare_parsl(cluster_settings: dict = None) -> dict:
     )
     launch_str = cluster_settings.get("launch_str", "")
 
-    config = create_parsl_config(cluster_settings=cluster_settings)
-    # get the path to the directory where the calculations will be run
-    # if none is provided use the current working directory
-    calc_dir = cluster_settings.get(
-        "calc_dir", os.getcwd() + "/" + "ase_aims_calcs/"
+    config = create_parsl_config(
+        cluster_settings=cluster_settings, output_dir=output_dir
     )
-    calc_dir = Path(calc_dir)
+    # get the path to the directory where the calculations will be run
+    # if none is provided, place it under output_dir
+    _calc_dir = cluster_settings.get("calc_dir", None)
+    if _calc_dir is None:
+        calc_dir = output_dir / "ase_aims_calcs"
+    else:
+        calc_dir = Path(_calc_dir)
+        if not calc_dir.is_absolute():
+            calc_dir = output_dir / calc_dir
     clean_dirs = cluster_settings.get("clean_dirs", True)
     calc_idx = 0
 
@@ -59,7 +69,9 @@ def prepare_parsl(cluster_settings: dict = None) -> dict:
     }
 
 
-def create_parsl_config(cluster_settings: dict) -> Config:
+def create_parsl_config(
+    cluster_settings: dict, output_dir: Path = Path(".")
+) -> Config:
     """
     Reads in CLUSTER settings as a dict (provided in the yaml file).
     The information is then used to create a PARSL configuration object.
@@ -108,7 +120,7 @@ def create_parsl_config(cluster_settings: dict) -> Config:
     executor = cluster_settings.get("executor", "workqueue")
 
     if executor == "local":
-        parsl_info_dir = Path("./parsl_info")
+        parsl_info_dir = output_dir / "parsl_info"
         if not os.path.exists(parsl_info_dir):
             os.makedirs(parsl_info_dir)
         run_dir = parsl_info_dir / "run_dir"
@@ -132,7 +144,13 @@ def create_parsl_config(cluster_settings: dict) -> Config:
     init_blocks = parsl_options.get("init_blocks", 1)
     min_blocks = parsl_options.get("min_blocks", 1)
     max_blocks = parsl_options.get("max_blocks", 1)
-    parsl_info_dir = Path(parsl_options.get("parsl_info_dir", "./parsl_info"))
+    _parsl_info = parsl_options.get("parsl_info_dir", None)
+    if _parsl_info is None:
+        parsl_info_dir = output_dir / "parsl_info"
+    else:
+        parsl_info_dir = Path(_parsl_info)
+        if not parsl_info_dir.is_absolute():
+            parsl_info_dir = output_dir / parsl_info_dir
 
     # create a parent folder for all the parsl stuff
     if not os.path.exists(parsl_info_dir):

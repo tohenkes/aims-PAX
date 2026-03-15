@@ -919,7 +919,7 @@ class ALTrainingManager:
             self.restart_manager.update_restart_dict(
                 trajectories_keys=self.state_manager.trajectories.keys(),
                 md_drivers=self.md_manager.md_drivers,
-                save_restart="restart/al/al_restart.npy",
+                save_restart=self.config.al_restart_path,
             )
             self.orchestrator.save_restart = False
 
@@ -1004,16 +1004,17 @@ class ALTrainingManager:
             model_choice=self.config.model_choice
         )
         # save model(s) and datasets in final results directory
-        os.makedirs("results", exist_ok=True)
+        results_dir = self.config.output_dir / "results"
+        results_dir.mkdir(parents=True, exist_ok=True)
         save_datasets(
             ensemble=self.ensemble_manager.ensemble,
             ensemble_ase_sets=self.ensemble_manager.ensemble_ase_sets,
-            path=Path("results"),
+            path=results_dir,
         )
         save_models(
             ensemble=self.ensemble_manager.ensemble,
             training_setups=self.ensemble_manager.training_setups,
-            model_dir=Path("results"),
+            model_dir=results_dir,
             current_epoch=self.state_manager.total_epoch,
             convert_cueq_to_e3nn=self.config.enable_cueq_train,
             model_settings=self.config.model_settings["ARCHITECTURE"],
@@ -1369,7 +1370,8 @@ class ALReferenceManagerPARSL:
         self.rank = self.comm_handler.rank
 
         parsl_setup_dict = prepare_parsl(
-            cluster_settings=self.config.cluster_settings
+            cluster_settings=self.config.cluster_settings,
+            output_dir=self.config.output_dir,
         )
         self.parsl_config = parsl_setup_dict["config"]
         self.calc_dir = parsl_setup_dict["calc_dir"]
@@ -1822,7 +1824,7 @@ class ALRunningManager:
         restart_manager.update_restart_dict(
             trajectories_keys=trajectories.keys(),
             md_drivers=md_drivers,
-            save_restart="restart/al/al_restart.npy",
+            save_restart=self.config.al_restart_path,
         )
 
     def calculate_uncertainty_data(
@@ -2107,17 +2109,24 @@ class ALAnalysisManager:
         """
         Saves the analysis data to files.
         """
+        analysis_dir = self.config.output_dir / "analysis"
         np.savez(
-            "analysis/analysis_checks.npz", self.state_manager.analysis_checks
+            analysis_dir / "analysis_checks.npz",
+            self.state_manager.analysis_checks,
         )
-        np.savez("analysis/t_intervals.npz", self.state_manager.t_intervals)
-        np.savez("analysis/al_losses.npz", **self.state_manager.collect_losses)
         np.savez(
-            "analysis/thresholds.npz", self.state_manager.collect_thresholds
+            analysis_dir / "t_intervals.npz", self.state_manager.t_intervals
+        )
+        np.savez(
+            analysis_dir / "al_losses.npz", **self.state_manager.collect_losses
+        )
+        np.savez(
+            analysis_dir / "thresholds.npz",
+            self.state_manager.collect_thresholds,
         )
         if self.config.mol_idxs is not None:
             np.savez(
-                "analysis/uncertainty_checks.npz",
+                analysis_dir / "uncertainty_checks.npz",
                 self.state_manager.uncertainty_checks,
             )
 

@@ -264,7 +264,7 @@ class InitialDatasetProcedure(PrepareInitialDatasetProcedure):
                     if self.create_restart:
                         self._update_restart_dict()
                         np.save(
-                            "restart/initial_ds/initial_ds_restart.npy",
+                            self.initial_ds_restart_path,
                             self.init_ds_restart_dict,
                         )
                     if (
@@ -321,7 +321,7 @@ class InitialDatasetProcedure(PrepareInitialDatasetProcedure):
         self,
         valid_loss: float,
         ensemble_valid_losses: dict,
-        save_path: str = "analysis/initial_losses.npz",
+        save_path=None,
     ):
         """
         Collects number of epochs, average validation loss and
@@ -332,9 +332,13 @@ class InitialDatasetProcedure(PrepareInitialDatasetProcedure):
             valid_loss (float): Averaged validation loss over the ensemble.
             ensemble_valid_losses (dict): Per ensemble member
                                                     validation losses.
-            save_path (str, optional): Path to save the analysis data.
-                    Defaults to "analysis/initial_losses.npz".
+            save_path (str or Path, optional): Path to save the analysis
+                data. Defaults to output_dir/analysis/initial_losses.npz.
         """
+        if save_path is None:
+            save_path = (
+                self.output_dir / "analysis" / "initial_losses.npz"
+            )
         self.collect_losses["epoch"].append(self.epoch)
         self.collect_losses["avg_losses"].append(valid_loss)
         self.collect_losses["ensemble_losses"].append(ensemble_valid_losses)
@@ -405,7 +409,7 @@ class InitialDatasetProcedure(PrepareInitialDatasetProcedure):
                 self._update_restart_dict()
                 self.init_ds_restart_dict["initial_ds_done"] = True
                 np.save(
-                    "restart/initial_ds/initial_ds_restart.npy",
+                    self.initial_ds_restart_path,
                     self.init_ds_restart_dict,
                 )
         self.logger.handlers.clear()
@@ -1034,7 +1038,8 @@ class InitialDatasetPARSL(InitialDatasetFoundational):
         if self.rank == 0:
             logging.info("Setting up PARSL for initial dataset generation.")
             parsl_setup_dict = prepare_parsl(
-                cluster_settings=self.cluster_settings
+                cluster_settings=self.cluster_settings,
+                output_dir=self.output_dir,
             )
             self.config = parsl_setup_dict["config"]
             self.calc_dir = parsl_setup_dict["calc_dir"]

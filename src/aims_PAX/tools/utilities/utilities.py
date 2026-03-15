@@ -397,7 +397,7 @@ def get_ensemble_training_setups(
 def create_seeds_tags_dict(
     seeds: np.array,
     model_settings: dict,
-    misc_settings: dict,
+    dataset_dir,
     save_seeds_tags_dict: str = "seeds_tags_dict.npz",
 ) -> dict:
     """
@@ -408,7 +408,7 @@ def create_seeds_tags_dict(
         seeds (np.array): Array of seeds for the ensemble.
         model_settings (dict): Model settings dictionary containing
                               the experiment name.
-        al_settings (dict, optional): Active learning settings..
+        dataset_dir: Path to the dataset directory where the dict is saved.
         save_seeds_tags_dict (str, optional): Name of the resulting dict.
                                 Defaults to "seeds_tags_dict.npz".
 
@@ -421,7 +421,7 @@ def create_seeds_tags_dict(
         seeds_tags_dict[tag] = seed
     if save_seeds_tags_dict:
         np.savez(
-            misc_settings["dataset_dir"] + "/" + save_seeds_tags_dict,
+            Path(dataset_dir) / save_seeds_tags_dict,
             **seeds_tags_dict,
         )
     return seeds_tags_dict

@@ -102,7 +102,13 @@ class PrepareInitialDatasetProcedure:
         self.rank = self.comm_handler.get_rank()
         self.world_size = self.comm_handler.get_size()
 
-        self.log_dir = Path(aimsPAX_settings["MISC"]["log_dir"])
+        _misc = aimsPAX_settings["MISC"]
+        _output_dir = Path(_misc.get("output_dir", "."))
+        _output_dir.mkdir(parents=True, exist_ok=True)
+        _log_dir = Path(_misc["log_dir"])
+        self.log_dir = (
+            _log_dir if _log_dir.is_absolute() else _output_dir / _log_dir
+        )
         logger_level = (
             logging.DEBUG
             if model_settings["MISC"]["log_level"].lower() == "debug"
@@ -149,13 +155,13 @@ class PrepareInitialDatasetProcedure:
                 )
             try:
                 self.init_ds_restart_dict = np.load(
-                    "restart/initial_ds/initial_ds_restart.npy",
+                    self.initial_ds_restart_path,
                     allow_pickle=True,
                 ).item()
             except FileNotFoundError:
                 logging.error(
-                    "Restart file under 'restart/initial_ds/"
-                    "initial_ds_restart.npy' not found."
+                    f"Restart file under '{self.initial_ds_restart_path}'"
+                    " not found."
                 )
                 raise
             self.trajectories = self.init_ds_restart_dict["trajectories"]
@@ -194,7 +200,7 @@ class PrepareInitialDatasetProcedure:
         self.seeds_tags_dict = create_seeds_tags_dict(
             seeds=self.ensemble_seeds,
             model_settings=self.model_settings,
-            misc_settings=self.misc,
+            dataset_dir=self.dataset_dir,
         )
 
         self._handle_atomic_energies()
@@ -324,6 +330,29 @@ class PrepareInitialDatasetProcedure:
         self.md_settings_raw = aimsPAX_settings["MD"]
         self.cluster_settings = aimsPAX_settings.get("CLUSTER", None)
 
+        self.output_dir = Path(self.misc.get("output_dir", "."))
+
+        def _r(p):
+            p = Path(p)
+            return p if p.is_absolute() else self.output_dir / p
+
+        self.checkpoints_dir = str(_r(self.checkpoints_dir))
+        self.model_settings["GENERAL"]["checkpoints_dir"] = (
+            self.checkpoints_dir
+        )
+        self.model_dir = str(_r(self.model_dir))
+        self.model_settings["GENERAL"]["model_dir"] = self.model_dir
+        self.model_settings["GENERAL"]["loss_dir"] = str(
+            _r(self.model_settings["GENERAL"]["loss_dir"])
+        )
+
+        self.initial_ds_restart_path = (
+            self.output_dir
+            / "restart"
+            / "initial_ds"
+            / "initial_ds_restart.npy"
+        )
+
         self.ensemble_size = self.idg_settings["ensemble_size"]
         self.desired_acc = self.idg_settings["desired_acc"]
         self.desired_acc_scale_idg = self.idg_settings["desired_acc_scale_idg"]
@@ -369,9 +398,7 @@ class PrepareInitialDatasetProcedure:
             "teacher_reference_settings"
         ]
 
-        self.restart = os.path.exists(
-            "restart/initial_ds/initial_ds_restart.npy"
-        )
+        self.restart = self.initial_ds_restart_path.exists()
         self.create_restart = self.misc["create_restart"]
         if self.create_restart:
             self.init_ds_restart_dict = {
@@ -394,18 +421,23 @@ class PrepareInitialDatasetProcedure:
         """
         Creates the necessary directories for saving the datasets.
         """
-        self.dataset_dir = Path(self.misc["dataset_dir"])
+        _raw = Path(self.misc["dataset_dir"])
+        self.dataset_dir = (
+            _raw if _raw.is_absolute() else self.output_dir / _raw
+        )
         (self.dataset_dir / "initial" / "training").mkdir(
             parents=True, exist_ok=True
         )
         (self.dataset_dir / "initial" / "validation").mkdir(
             parents=True, exist_ok=True
         )
-        os.makedirs("model", exist_ok=True)
+        (self.output_dir / "model").mkdir(parents=True, exist_ok=True)
         if self.analysis:
-            os.makedirs("analysis", exist_ok=True)
+            (self.output_dir / "analysis").mkdir(parents=True, exist_ok=True)
         if self.create_restart:
-            os.makedirs("restart/initial_ds", exist_ok=True)
+            self.initial_ds_restart_path.parent.mkdir(
+                parents=True, exist_ok=True
+            )
 
     def _setup_aims_calculator(
         self,
@@ -928,8 +960,29 @@ class ALConfiguration:
             )
 
         # Paths
-        self.dataset_dir = Path(self.misc["dataset_dir"])
-        self.log_dir = self.misc["log_dir"]
+        self.output_dir = Path(self.misc.get("output_dir", "."))
+        self.output_dir.mkdir(parents=True, exist_ok=True)
+
+        def _r(p):
+            p = Path(p)
+            return p if p.is_absolute() else self.output_dir / p
+
+        self.dataset_dir = _r(self.misc["dataset_dir"])
+        self.log_dir = str(_r(self.misc["log_dir"]))
+        self.checkpoints_dir = str(_r(self.checkpoints_dir))
+        self.model_settings["GENERAL"]["checkpoints_dir"] = (
+            self.checkpoints_dir
+        )
+        self.model_dir = str(_r(self.model_dir))
+        self.model_settings["GENERAL"]["model_dir"] = self.model_dir
+        self.model_settings["GENERAL"]["loss_dir"] = str(
+            _r(self.model_settings["GENERAL"]["loss_dir"])
+        )
+
+        self.al_restart_path = (
+            self.output_dir / "restart" / "al" / "al_restart.npy"
+        )
+
         self.species_dir = self.al_settings.get("species_dir", None)
         self.ASI_path = self.al_settings.get("aims_lib_path", None)
 
@@ -966,7 +1019,7 @@ class ALConfiguration:
         self._setup_molecular_indices()
 
         # Restart handling
-        self.restart = os.path.exists("restart/al/al_restart.npy")
+        self.restart = self.al_restart_path.exists()
         self.create_restart = self.misc["create_restart"]
 
         # foundational model usage during AL
@@ -1305,9 +1358,7 @@ class ALEnsemble:
 
         self.ensemble_ase_sets = load_ensemble_sets_from_folder(
             ensemble=self.ensemble,
-            path_to_folder=Path(
-                self.config.misc["dataset_dir"] + f"/{dataset_subdir}"
-            ),
+            path_to_folder=self.config.dataset_dir / dataset_subdir,
         )
 
         self.ensemble_model_sets = ase_to_model_ensemble_sets(
@@ -1984,7 +2035,7 @@ class ALRestart:
         logging.info("Restarting active learning procedure from checkpoint.")
 
         self.al_restart_dict = np.load(
-            "restart/al/al_restart.npy", allow_pickle=True
+            self.config.al_restart_path, allow_pickle=True
         ).item()
 
         # Load all available keys from restart dict
@@ -2274,10 +2325,14 @@ class PrepareALProcedure:
         )
 
         if self.config.analysis:
-            os.makedirs("analysis", exist_ok=True)
+            (self.config.output_dir / "analysis").mkdir(
+                parents=True, exist_ok=True
+            )
 
         if self.config.create_restart:
-            os.makedirs("restart/al", exist_ok=True)
+            self.config.al_restart_path.parent.mkdir(
+                parents=True, exist_ok=True
+            )
 
     def check_al_done(self) -> bool:
         """Check if active learning is done."""

@@ -175,6 +175,7 @@ SCHEME = {
     "optional_misc": {
         "path_to_control": "./control.in",
         "path_to_geometry": "./geometry.in",
+        "output_dir": ".",
         "dataset_dir": "./data",
         "log_dir": "./logs",
         "create_restart": True,
@@ -262,6 +263,7 @@ SCHEME_DTYPES = {
         "executor",
         "stat_ensemble",
         "thermostat",
+        "output_dir",
         "dataset_dir",
         "log_dir",
         "barostat",
