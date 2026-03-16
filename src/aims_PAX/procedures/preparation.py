@@ -893,32 +893,28 @@ class ALConfiguration:
         self.ASI_path = self.al_settings.aims_lib_path
 
         # Optional settings
-        self.analysis = self.al_settings["analysis"]
-        self.seeds_tags_dict = self.al_settings.get("seeds_tags_dict", None)
+        self.analysis = self.al_settings.analysis
+        self.seeds_tags_dict = self.al_settings.seeds_tags_dict
 
         # Uncertainty parameters
-        self.converge_al = self.al_settings["converge_al"]
-        self.converge_best = self.al_settings["converge_best"]
-        self.uncertainty_type = self.al_settings["uncertainty_type"]
+        self.converge_al = self.al_settings.converge_al
+        self.converge_best = self.al_settings.converge_best
+        self.uncertainty_type = self.al_settings.uncertainty_type
 
-        self.uncert_not_crossed_limit = self.al_settings[
-            "uncert_not_crossed_limit"
-        ]
-        self.freeze_threshold_dataset = self.al_settings[
-            "freeze_threshold_dataset"
-        ]
+        self.uncert_not_crossed_limit = self.al_settings.uncert_not_crossed_limit
+        self.freeze_threshold_dataset = self.al_settings.freeze_threshold_dataset
         self.freeze_threshold = False
 
         self.key_specification = create_keyspec(
-            energy_key=self.misc['energy_key'],
-            forces_key=self.misc['forces_key'],
-            stress_key=self.misc['stress_key'],
-            dipole_key=self.misc['dipole_key'],
-            polarizability_key=self.misc['polarizability_key'],
-            head_key=self.misc['head_key'],
-            charges_key=self.misc['charges_key'],
-            total_charge_key=self.misc['total_charge_key'],
-            total_spin_key=self.misc['total_spin_key'],
+            energy_key=self.misc.energy_key,
+            forces_key=self.misc.forces_key,
+            stress_key=self.misc.stress_key,
+            dipole_key=self.misc.dipole_key,
+            polarizability_key=self.misc.polarizability_key,
+            head_key=self.misc.head_key,
+            charges_key=self.misc.charges_key,
+            total_charge_key=self.misc.total_charge_key,
+            total_spin_key=self.misc.total_spin_key,
         )
 
         # Molecular indices
@@ -926,18 +922,23 @@ class ALConfiguration:
 
         # Restart handling
         self.restart = os.path.exists("restart/al/al_restart.npy")
-        self.create_restart = self.misc["create_restart"]
+        self.create_restart = self.misc.create_restart
 
         # foundational model usage during AL
-        self.use_foundational = self.al_settings["use_foundational"]
-        self.foundational_model_settings = self.al_settings["foundational_model_settings"]
+        # FIXME: If one can use foundational model in AL as well, then it would be better
+        #        to have the model name (mace/so3lr) in the model settings
+        self.use_foundational = self.al_settings.use_foundational
+        self.foundational_model_settings = self.al_settings.foundational_model_settings
+
 
     def _setup_molecular_indices(self):
         """
         Setup molecular indices configuration.
         Only needed if intermolecular uncertainty is used.
         """
-        mol_idxs_path = self.misc["mol_idxs"]
+        # FIXME: This is just incorrect and should be changed. I do not understand
+        #        yet how though
+        mol_idxs_path = self.misc.mol_idxs
         self.mol_idxs = (
             np.load(mol_idxs_path, allow_pickle=True)["arr_0"].tolist()
             if mol_idxs_path is not None
@@ -946,16 +947,12 @@ class ALConfiguration:
 
         if self.mol_idxs is not None:
             self.intermol_crossed = 0
-            self.intermol_crossed_limit = self.al_settings[
-                "intermol_crossed_limit"
-            ]
-            self.intermol_forces_weight = self.al_settings[
-                "intermol_forces_weight"
-            ]
+            self.intermol_crossed_limit = self.al_settings.intermol_crossed_limit
+            self.intermol_forces_weight = self.al_settings.intermol_forces_weight
             self.switched_on_intermol = False
 
             # Check if using intermolecular loss
-            loss_type = self.model_settings["TRAINING"]["loss"].lower()
+            loss_type = self.model_settings.TRAINING.loss.lower()
             self.using_intermol_loss = loss_type == "intermol"
 
 
@@ -1225,7 +1222,7 @@ class ALEnsemble:
             dtype=dtype_mapping[self.config.dtype],
             convert_to_cueq=self.config.enable_cueq_train,
         )
-        if self.config.model_settings["TRAINING"]["perform_finetuning"]:
+        if self.config.model_settings.TRAINING.perform_finetuning:
             for tag, model in self.ensemble.items():
                 self.ensemble[tag] = apply_finetuning_settings(
                     model=model,
@@ -1257,7 +1254,7 @@ class ALEnsemble:
         self.ensemble_ase_sets = load_ensemble_sets_from_folder(
             ensemble=self.ensemble,
             path_to_folder=Path(
-                self.config.misc["dataset_dir"] + f"/{dataset_subdir}"
+                self.config.misc.dataset_dir / dataset_subdir
             ),
         )
 
@@ -2036,8 +2033,8 @@ class PrepareALProcedure:
 
     def __init__(
         self,
-        model_settings: dict,
-        aimsPAX_settings: dict,
+        model_settings: ModelSettings,
+        aimsPAX_settings: AimsPAXSettings,
         path_to_control: str = "./control.in",
         path_to_geometry: str = "./geometry.in",
         use_mpi: bool = True,
@@ -2063,13 +2060,13 @@ class PrepareALProcedure:
             logging.info("Initializing active learning procedure.")
             logging.info(f"Procedure runs on {self.world_size} workers.")
             logging.info(
-                "Using followng settings for the active learning procedure:"
+                "Using following settings for the active learning procedure:"
             )
             log_yaml_block(
-                "ACTIVE_LEARNING", aimsPAX_settings["ACTIVE_LEARNING"]
+                "ACTIVE_LEARNING", aimsPAX_settings.ACTIVE_LEARNING.model_dump()
             )
             logging.info(f"Using following settings for {self.config.model_choice}:")
-            log_yaml_block(self.config.model_choice, model_settings)
+            log_yaml_block(self.config.model_choice, model_settings.model_dump())
         # Initialize all managers
         self.state_manager = ALStateManager(self.config, self.comm_handler)
         self.ensemble_manager = ALEnsemble(
@@ -2143,18 +2140,13 @@ class PrepareALProcedure:
         for handler in logging.root.handlers[:]:
             logging.root.removeHandler(handler)
 
-        logger_level = (
-            logging.DEBUG
-            if self.config.model_settings["MISC"]["log_level"].lower()
-            == "debug"
-            else logging.INFO
-        )
+        logger_level = getattr(logging, self.config.model_settings.MISC.log_level, logging.INFO)
 
         self.log_dir = Path(self.config.log_dir)
         tools.setup_logger(
             level=logger_level,
             tag="active_learning",
-            directory=self.log_dir,
+            directory=self.log_dir.as_posix(),
         )
 
     def _create_folders(self):
