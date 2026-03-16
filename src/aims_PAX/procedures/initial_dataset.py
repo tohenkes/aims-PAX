@@ -4,7 +4,6 @@ import shutil
 from .preparation import PrepareInitialDatasetProcedure
 from mace import tools
 from mace.calculators import mace_mp
-from typing import Optional
 from so3krates_torch.calculator.so3 import SO3LRCalculator
 from aims_PAX.tools.utilities.data_handling import (
     create_dataloader,
@@ -31,9 +30,12 @@ import logging
 import random
 import sys
 
+from ..settings import ModelSettings, AimsPAXSettings
+from ..settings.project import MaceFMSettings, So3lrFMSettings
+
 try:
     import asi4py
-except Exception as e:
+except ImportError as e:
     asi4py = None
 try:
     import parsl
@@ -188,12 +190,12 @@ class InitialDatasetProcedure(PrepareInitialDatasetProcedure):
             ensemble_valid_losses = {
                 tag: np.inf for tag in self.ensemble.keys()
             }
-            for _ in range(self.intermediate_epochs):
+            for _ in range(self.intermediate_epochs_idg):
                 # each member gets trained individually
                 for tag, model in self.ensemble.items():
 
                     logger = tools.MetricsLogger(
-                        directory=self.model_settings["GENERAL"]["loss_dir"],
+                        directory=self.model_settings.GENERAL.loss_dir,
                         tag=tag + "_train",
                     )
                     train_epoch(
@@ -232,7 +234,7 @@ class InitialDatasetProcedure(PrepareInitialDatasetProcedure):
                             "valid_loader"
                             ],
                         logger=logger,
-                        log_errors=self.model_settings["MISC"]["error_table"],
+                        log_errors=self.model_settings.MISC.error_table,
                         epoch=self.epoch,
                         multihead=self.use_multihead_model,
                     )
@@ -394,9 +396,9 @@ class InitialDatasetProcedure(PrepareInitialDatasetProcedure):
             save_models(
                 ensemble=self.ensemble,
                 training_setups=self.training_setups,
-                model_dir=self.model_settings["GENERAL"]["model_dir"],
+                model_dir=self.model_settings.GENERAL.model_dir,
                 current_epoch=self.epoch,
-                model_settings=self.model_settings["ARCHITECTURE"],
+                model_settings=self.model_settings.ARCHITECTURE,
                 model_choice=self.model_choice
             )
 
@@ -453,7 +455,7 @@ class InitialDatasetAIMD(InitialDatasetProcedure):
         """
         if len(self.atoms) > 1:
             raise NotImplementedError(
-                "Initital dataset generation with AIMD is not "
+                "Initial dataset generation with AIMD is not "
                 "implemented for multiple geometries."
             )
         for idx in self.trajectories.keys():
@@ -481,7 +483,7 @@ class InitialDatasetFoundational(InitialDatasetProcedure):
     def _setup_foundational(
         self,
         model_choice: str,
-        foundational_model_settings: dict
+        foundational_model_settings: MaceFMSettings | So3lrFMSettings
     ):
         """
         Creates the foundational model for sampling.
@@ -493,13 +495,11 @@ class InitialDatasetFoundational(InitialDatasetProcedure):
         """
 
         if model_choice == 'mace-mp':
-            mace_model = foundational_model_settings['mace_model']
-            dispersion = foundational_model_settings['dispersion']
-            damping = foundational_model_settings['damping']
-            dispersion_xc = foundational_model_settings['dispersion_xc']
-            dispersion_cutoff = foundational_model_settings[
-                'dispersion_cutoff'
-            ]
+            mace_model = foundational_model_settings.mace_model
+            dispersion = foundational_model_settings.dispersion
+            damping = foundational_model_settings.damping
+            dispersion_xc = foundational_model_settings.dispersion_xc
+            dispersion_cutoff = foundational_model_settings.dispersion_cutoff
             if dispersion:
                 try:
                     from torch_dftd.torch_dftd3_calculator import TorchDFTD3Calculator
@@ -519,10 +519,8 @@ class InitialDatasetFoundational(InitialDatasetProcedure):
                 dispersion_cutoff=dispersion_cutoff,
             )
         elif model_choice == 'so3lr':
-            r_max_lr = foundational_model_settings['r_max_lr']
-            dispersion_lr_damping = foundational_model_settings[
-                'dispersion_lr_damping'
-            ]
+            r_max_lr = foundational_model_settings.r_max_lr
+            dispersion_lr_damping = foundational_model_settings.dispersion_lr_damping
             return SO3LRCalculator(
                 r_max_lr=r_max_lr,
                 dispersion_energy_cutoff_lr_damping=dispersion_lr_damping,
@@ -600,7 +598,8 @@ class InitialDatasetFoundational(InitialDatasetProcedure):
         self.sampled_points = {idx: [] for idx in self.trajectories.keys()}
         if self.rank == 0:
             for idx in self.trajectories.keys():
-                logging.info(f"Sampling from trajectory {idx}. Number of MD steps: {self.skip_step * samples_per_trajectory}.")
+                logging.info(f"Sampling from trajectory {idx}. Number of MD steps: "
+                             f"{self.skip_step_initial * samples_per_trajectory}.")
                 dyn = self.md_drivers[idx]
                 atoms = self.trajectories[idx]
                 for _ in range(
@@ -1007,8 +1006,8 @@ class InitialDatasetPARSL(InitialDatasetFoundational):
 
     def __init__(
         self,
-        model_settings: dict,
-        aimsPAX_settings: dict,
+        model_settings: ModelSettings,
+        aimsPAX_settings: AimsPAXSettings,
         path_to_control: str = "./control.in",
         path_to_geometry: str = "./geometry.in",
         close_parsl: bool = True,
@@ -1045,14 +1044,11 @@ class InitialDatasetPARSL(InitialDatasetFoundational):
                 "properties": self.properties,
             }
             
-            if self.cluster_settings["executor"] == "mpi":
+            if self.cluster_settings.executor == "mpi":
             
-                num_nodes = self.cluster_settings["parsl_options"].get(
-                    "nodes_per_block", 1
-                )
-                rank_per_nodes = self.cluster_settings.get(
-                    "tasks_per_node", 1
-                )
+                num_nodes = self.cluster_settings.parsl_options.nodes_per_block
+                rank_per_nodes = self.cluster_settings.tasks_per_node
+
                 num_ranks = num_nodes * rank_per_nodes
                 self.parsl_resource_specification = {
                     "num_nodes": num_nodes,
@@ -1067,7 +1063,7 @@ class InitialDatasetPARSL(InitialDatasetFoundational):
                 log_dir=self.log_dir / "parsl_initial_dataset.log",
             )
             logging.info("Using following settings for the HPC environment:")
-            log_yaml_block("CLUSTER:", self.cluster_settings)
+            log_yaml_block("CLUSTER:", self.cluster_settings.model_dump())
             self.comm_handler.barrier()
 
     def _sample_points(self) -> list:

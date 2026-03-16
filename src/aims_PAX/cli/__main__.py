@@ -71,7 +71,7 @@ def main():
     if not initial_ds.check_initial_ds_done():
         initial_ds.run()
 
-    if aimsPAX_settings.ACTIVE_LEARNING.converge_initial:
+    if aimsPAX_settings.INITIAL_DATASET_GENERATION.converge_initial:
         initial_ds.converge()
 
     if aimsPAX_settings.ACTIVE_LEARNING.parallel:

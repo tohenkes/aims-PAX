@@ -38,6 +38,10 @@ class ProjectBaseModel(BaseModel):
 
 class FMSettings(ProjectBaseModel):
     """Base class for foundational model settings."""
+    dispersion: bool = Field(default=False)
+    dispersion_xc: str = Field(default="pbe")
+    dispersion_cutoff: float = Field(default=12.0, gt=0.)
+    damping: str = Field(default="bj")
 
 
 class MaceFMSettings(FMSettings):
@@ -57,10 +61,6 @@ class So3lrFMSettings(FMSettings):
     r_max_lr: float | None = Field(
         default=None, description="Cutoff of long-range modules of `SO3LR`."
     )
-    dispersion: bool = Field(default=False)
-    dispersion_xc: str = Field(default="pbe")
-    dispersion_cutoff: float = Field(default=12.0, gt=0.)
-    damping: str = Field(default="bj")
     dispersion_lr_damping: float | None = Field(
         default=None,
         description="Damping parameter for dispersion interaction in `SO3LR`. Needed if `r_max_lr` is not `None`!",
@@ -196,6 +196,12 @@ class IDGSettings(ProjectBaseModel):
         self.foundational_model_settings = model_class(**self.foundational_model_settings)
         return self
 
+    @field_validator("foundational_model", mode="before")
+    @classmethod
+    def to_lower(cls, v: str) -> str:
+        return v.lower()
+
+
 class ALSettings(ProjectBaseModel):
     species_dir: str = Field(
         ...,
@@ -278,6 +284,9 @@ class ALSettings(ProjectBaseModel):
         default="full_dataset",
         description="Method for replaying data during training (e.g., 'full_dataset' or 'random_batch')."
     )
+    train_subset_size: int | None = None
+    valid_subset_size: int| None = None
+    update_md_checkpoints: bool = True
     # --- Convergence ---
     converge_al: bool = Field(
         default=True,

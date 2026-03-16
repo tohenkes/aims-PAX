@@ -424,7 +424,8 @@ class PrepareInitialDatasetProcedure:
             path_to_control (str): Path to the AIMS control file.
             species_dir (str): Path to the species directory of AIMS.
         """
-        if isinstance(control_source, str):
+
+        if isinstance(control_source, (str, Path)):
             aims_settings = self.control_parser(control_source)
             aims_settings["compute_forces"] = True
             aims_settings["species_dir"] = self.species_dir
@@ -636,7 +637,7 @@ class PrepareInitialDatasetProcedure:
                         model readable format.
         """
 
-        dyn.run(self.skip_step)
+        dyn.run(self.skip_step_initial)
         current_energy = np.array(atoms.get_potential_energy())
         current_forces = np.array(atoms.get_forces())
         current_point = atoms.copy()
@@ -713,7 +714,7 @@ class PrepareInitialDatasetProcedure:
                     list(self.ensemble.keys())[0]
                 ]["epoch"]
 
-            convergence_patience = self.idg_settings["convergence_patience"]
+            convergence_patience = self.idg_settings.convergence_patience
             no_improvement = 0
             ensemble_valid_losses = {
                 tag: np.inf for tag in self.ensemble.keys()
@@ -721,7 +722,7 @@ class PrepareInitialDatasetProcedure:
             for j in range(self.max_convergence_epochs):
                 for tag, model in self.ensemble.items():
                     logger = tools.MetricsLogger(
-                        directory=self.model_settings["GENERAL"]["loss_dir"],
+                        directory=self.model_settings.GENERAL.loss_dir,
                         tag=tag + "_train",
                     )
                     train_epoch(
@@ -764,9 +765,7 @@ class PrepareInitialDatasetProcedure:
                             ],
                             training_setups=self.training_setups_convergence,
                             logger=logger,
-                            log_errors=self.model_settings["MISC"][
-                                "error_table"
-                            ],
+                            log_errors=self.model_settings.MISC.error_table,
                             epoch=epoch,
                         )
                     )
@@ -789,12 +788,7 @@ class PrepareInitialDatasetProcedure:
                             with param_context:
                                 torch.save(
                                     model,
-                                    Path(
-                                        self.model_settings["GENERAL"][
-                                            "model_dir"
-                                        ]
-                                    )
-                                    / (tag + ".model"),
+                                    self.model_settings.GENERAL.model_dir / (tag + ".model"),
                                 )
                             save_checkpoint(
                                 checkpoint_handler=self.training_setups_convergence[
@@ -833,8 +827,8 @@ class ALConfiguration:
 
     def __init__(
         self,
-        model_settings: dict,
-        aimsPAX_settings: dict,
+        model_settings: ModelSettings,
+        aimsPAX_settings: AimsPAXSettings,
         path_to_control: str = "./control.in",
         path_to_geometry: str = "./geometry.in",
     ):
@@ -842,10 +836,10 @@ class ALConfiguration:
         self.path_to_control = path_to_control
         self.path_to_geometry = path_to_geometry
         self.aimsPAX_settings = aimsPAX_settings
-        self.al_settings = aimsPAX_settings["ACTIVE_LEARNING"]
-        self.md_settings_raw = aimsPAX_settings["MD"]
-        self.cluster_settings = aimsPAX_settings.get("CLUSTER", None)
-        self.misc = aimsPAX_settings.get("MISC", {})
+        self.al_settings = aimsPAX_settings.ACTIVE_LEARNING
+        self.md_settings_raw = aimsPAX_settings.MD
+        self.cluster_settings = aimsPAX_settings.CLUSTER
+        self.misc = aimsPAX_settings.MISC
 
         self._setup_model_configuration()
         self._setup_aimsPAX_configuration()
@@ -857,42 +851,35 @@ class ALConfiguration:
             target=self,
             model_settings=self.model_settings
         )
-        self.checkpoints_dir += "/al"
+        self.checkpoints_dir /= "al"
         
     def _setup_aimsPAX_configuration(self):
         """Setup active learning configuration."""
         # Training parameters
-        self.max_MD_steps = self.al_settings["max_MD_steps"]
-        self.epochs_per_worker = self.al_settings["epochs_per_worker"]
-        self.max_convergence_epochs = self.al_settings[
-            "max_convergence_epochs"
-        ]
-        self.intermediate_epochs_al = self.al_settings[
-            "intermediate_epochs_al"
-        ]
-        self.convergence_patience = self.al_settings[
-            "convergence_patience"
-        ]  # for convergence only
-        self.desired_accuracy = self.al_settings["desired_acc"]
-        self.margin = self.al_settings["margin"]  # for convergence only
+        self.max_MD_steps = self.al_settings.max_MD_steps
+        self.epochs_per_worker = self.al_settings.epochs_per_worker
+        self.max_convergence_epochs = self.al_settings.max_convergence_epochs
+        self.intermediate_epochs_al = self.al_settings.intermediate_epochs_al
+        self.convergence_patience = self.al_settings.convergence_patience  # for convergence only
+        self.desired_accuracy = self.al_settings.desired_acc
+        self.margin = self.al_settings.margin  # for convergence only
 
         # Data parameters
-        self.num_trajectories = self.al_settings["num_trajectories"]
-        self.skip_step = self.al_settings["skip_step_mlff"]
-        self.valid_skip = self.al_settings["valid_skip"]
-        self.analysis_skip = self.al_settings["analysis_skip"]
-        self.valid_ratio = self.al_settings["valid_ratio"]
-        self.max_train_set_size = self.al_settings["max_train_set_size"]
-        self.c_x = self.al_settings["c_x"]
-        self.extend_existing_final_ds = self.al_settings[
-            'extend_existing_final_ds'
-        ]
-        self.update_md_checkpoints = self.al_settings["update_md_checkpoints"]
+        self.num_trajectories = self.al_settings.num_trajectories
+        self.skip_step = self.al_settings.skip_step_mlff
+        self.valid_skip = self.al_settings.valid_skip
+        self.analysis_skip = self.al_settings.analysis_skip
+        self.valid_ratio = self.al_settings.valid_ratio
+        self.max_train_set_size = self.al_settings.max_train_set_size
+        self.c_x = self.al_settings.c_x
+        self.extend_existing_final_ds = self.al_settings.extend_existing_final_ds
+        self.update_md_checkpoints = self.al_settings.update_md_checkpoints
         
         # Training procedures (TODO: Move training methods from model file here)
-        self.replay_strategy = self.al_settings["replay_strategy"]
-        self.train_subset_size = self.al_settings["train_subset_size"]
-        self.valid_subset_size = self.al_settings["valid_subset_size"]
+        self.replay_strategy = self.al_settings.replay_strategy
+        self.train_subset_size = self.al_settings.train_subset_size
+        self.valid_subset_size = self.al_settings.valid_subset_size
+        # TODO: move the following lines should to validation
         if self.replay_strategy == "random_subset":
             assert self.train_subset_size is not None, (
                 "train_subset_size must be specified for random_subset "
@@ -900,10 +887,10 @@ class ALConfiguration:
             )
         
         # Paths
-        self.dataset_dir = Path(self.misc["dataset_dir"])
-        self.log_dir = self.misc["log_dir"]
-        self.species_dir = self.al_settings["species_dir"]
-        self.ASI_path = self.al_settings["aims_lib_path"]
+        self.dataset_dir = self.misc.dataset_dir
+        self.log_dir = self.misc.log_dir
+        self.species_dir = self.al_settings.species_dir
+        self.ASI_path = self.al_settings.aims_lib_path
 
         # Optional settings
         self.analysis = self.al_settings["analysis"]

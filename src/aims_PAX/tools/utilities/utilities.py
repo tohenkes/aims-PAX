@@ -17,6 +17,7 @@ from so3krates_torch.tools.multihead_utils import reduce_mh_model_to_sh
 from so3krates_torch.tools.finetune import setup_finetuning
 
 from aims_PAX.settings import ModelSettings
+from aims_PAX.settings.model import MACEArchitectureSettings, BaseArchitectureSettings
 from aims_PAX.settings.project import MDSettings, MiscSettings
 from aims_PAX.tools.model_tools.setup_MACE import setup_mace
 from aims_PAX.tools.model_tools.setup_so3 import setup_so3krates, setup_so3lr, setup_multihead_so3lr
@@ -914,9 +915,9 @@ def save_checkpoint(
 def save_models(
     ensemble: dict,
     training_setups: dict, 
-    model_dir: str, 
+    model_dir: Path,
     current_epoch: int,
-    model_settings: dict,
+    model_settings:  BaseArchitectureSettings,
     model_choice: str,
     save_state_dict: bool = True,
     convert_cueq_to_e3nn: bool = False
@@ -957,18 +958,15 @@ def save_models(
         )
         
         # save hyperparams
-        settings = {"ARCHITECTURE": None}
-        settings["ARCHITECTURE"] = model_settings.copy()
-        settings.pop("use_multihead_model", None)
-        settings.pop("num_multihead_heads", None)
-        settings.pop("model", None)
-        settings.pop("atomic_energies", None)
+        settings = model_settings.model_dump()
+        for k in ("model", "atomic_energies", "use_multihead_model", "num_multihead_heads"):
+            settings.pop(k, None)
         if model_choice == "mace":
-            settings["ARCHITECTURE"]["avg_num_neighbors"] = model.interactions[0].avg_num_neighbors
+            settings["avg_num_neighbors"] = model.interactions[0].avg_num_neighbors
         else:
-            settings["ARCHITECTURE"]["avg_num_neighbors"] = model.avg_num_neighbors
+            settings["avg_num_neighbors"] = model.avg_num_neighbors
         
-        
+        settings = {"ARCHITECTURE": settings}
         
         with open(
             Path(model_dir) / (tag + "_hyperparams.yaml"), "w"
