@@ -1376,14 +1376,10 @@ class ALDFTManagerPARSL(ALDFTManager):
             "properties": self.config.properties,
         }
         
-        if self.config.cluster_settings["executor"] == "mpi":
+        if self.config.cluster_settings.executor == "mpi":
         
-            num_nodes = self.config.cluster_settings["parsl_options"].get(
-                "nodes_per_block", 1
-            )
-            rank_per_nodes = self.config.cluster_settings.get(
-                "tasks_per_node", 1
-            )
+            num_nodes = self.config.cluster_settings.parsl_options.nodes_per_block
+            rank_per_nodes = self.config.cluster_settings.tasks_per_node
             num_ranks = num_nodes * rank_per_nodes
             self.parsl_resource_specification = {
                 "num_nodes": num_nodes,

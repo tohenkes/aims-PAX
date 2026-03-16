@@ -25,6 +25,7 @@ from aims_PAX.tools.utilities.utilities import (
     log_yaml_block,
 )
 from aims_PAX.tools.utilities.mpi_utils import CommHandler
+from ..settings import AimsPAXSettings, ModelSettings
 
 try:
     import parsl
@@ -41,8 +42,8 @@ class ALProcedure(PrepareALProcedure):
 
     def __init__(
         self,
-        model_settings: dict,
-        aimsPAX_settings: dict,
+        model_settings: ModelSettings,
+        aimsPAX_settings: AimsPAXSettings,
         path_to_control: str = "./control.in",
         path_to_geometry: str = "./geometry.in",
         use_mpi: bool = True,
@@ -1022,8 +1023,8 @@ class ALProcedurePARSL(ALProcedure):
 
     def __init__(
         self,
-        model_settings: dict,
-        aimsPAX_settings: dict,
+        model_settings: ModelSettings,
+        aimsPAX_settings: AimsPAXSettings,
         path_to_control: str = "./control.in",
         path_to_geometry: str = "./geometry.in",
     ):
@@ -1041,8 +1042,8 @@ class ALProcedurePARSL(ALProcedure):
             use_mpi=False,
         )
 
-        logging.info("Using followng settings for the HPC environment:")
-        log_yaml_block("CLUSTER:", self.config.aimsPAX_settings["CLUSTER"])
+        logging.info("Using following settings for the HPC environment:")
+        log_yaml_block("CLUSTER:", self.config.aimsPAX_settings.CLUSTER.model_dump())
         self.data_manager = ALDataManager(
             config=self.config,
             ensemble_manager=self.ensemble_manager,

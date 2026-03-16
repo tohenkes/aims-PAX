@@ -567,33 +567,29 @@ def setup_pretrained(
 
 def apply_finetuning_settings(
     model: torch.nn.Module,
-    model_settings: dict,
+    model_settings: ModelSettings,
     num_elements: int = 118
 ) -> torch.nn.Module:
     
     logging.info("Applying fine-tuning settings to pretrained model.")
-    training_settings = model_settings["TRAINING"]
-    architecture_settings = model_settings["ARCHITECTURE"]
-    misc_settings = model_settings["MISC"]
-    general_settings = model_settings["GENERAL"]
-    
-    finetune_choice = training_settings["finetuning_choice"].lower()
-    device_name = misc_settings["device"]
-    freeze_embedding = training_settings["freeze_embedding"]
-    freeze_zbl = training_settings["freeze_zbl"]
-    freeze_hirshfeld = training_settings["freeze_hirshfeld"]
-    freeze_partial_charges = training_settings["freeze_partial_charges"]
-    freeze_shifts = training_settings["freeze_shifts"]
-    freeze_scales = training_settings["freeze_scales"]
-    convert_to_lora = training_settings["convert_to_lora"]
-    lora_rank = training_settings["lora_rank"]
-    lora_alpha = training_settings["lora_alpha"]
-    lora_freeze_A = training_settings["lora_freeze_A"]
+
+    finetune_choice = model_settings.TRAINING.finetuning_choice
+    device_name = model_settings.MISC.device
+    freeze_embedding = model_settings.TRAINING.freeze_embedding
+    freeze_zbl = model_settings.TRAINING.freeze_zbl
+    freeze_hirshfeld = model_settings.TRAINING.freeze_hirshfeld
+    freeze_partial_charges = model_settings.TRAINING.freeze_partial_charges
+    freeze_shifts = model_settings.TRAINING.freeze_shifts
+    freeze_scales = model_settings.TRAINING.freeze_scales
+    convert_to_lora = model_settings.TRAINING.convert_to_lora
+    lora_rank = model_settings.TRAINING.lora_rank
+    lora_alpha = model_settings.TRAINING.lora_alpha
+    lora_freeze_A = model_settings.TRAINING.lora_freeze_A
     
     dora_scaling_to_one = True # TODO: remove dora
     
-    convert_to_multihead = training_settings["convert_to_multihead"]
-    seed = general_settings["seed"]    
+    convert_to_multihead = model_settings.TRAINING.convert_to_multihead
+    seed = model_settings.GENERAL.seed
     
     return setup_finetuning(
         model=model,
@@ -612,7 +608,7 @@ def apply_finetuning_settings(
         lora_freeze_A=lora_freeze_A,
         dora_scaling_to_one=dora_scaling_to_one,
         convert_to_multihead=convert_to_multihead,
-        architecture_settings=architecture_settings,
+        architecture_settings=model_settings.ARCHITECTURE.model_dump(),
         seed=seed,
         log=True
     )
@@ -661,8 +657,8 @@ def get_atomic_energies_from_ensemble(
 
 
 def get_atomic_energies_from_pt(
-    path_to_checkpoints: str,
-    z: np.array,
+    path_to_checkpoints: Path,
+    z: np.ndarray,
     seeds_tags_dict: dict,
     dtype: str,
     model_choice: str
@@ -691,7 +687,7 @@ def get_atomic_energies_from_pt(
     last_epoch = int(last_check_pt.split(".")[0].split("-")[-1])
     for tag in seeds_tags_dict.keys():
         check_pt = torch.load(
-            (path_to_checkpoints + "/" + tag + f"_epoch-{last_epoch}.pt")
+            path_to_checkpoints / (tag + f"_epoch-{last_epoch}.pt")
         )
         
         if model_choice == "mace":
@@ -1046,7 +1042,7 @@ def atoms_full_copy(atoms: ase.Atoms) -> ase.Atoms:
     return atoms_copy
 
 
-def list_latest_file(directory: str) -> str:
+def list_latest_file(directory: Path) -> str:
     """
     List the latest file in a directory based on the last modified time.
 

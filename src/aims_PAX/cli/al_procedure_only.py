@@ -5,10 +5,7 @@ from aims_PAX.procedures.active_learning import (
 )
 import argparse
 from aims_PAX.tools.utilities.input_utils import read_input_files
-import os
-import time
-import threading
-from time import perf_counter
+
 
 def main():
     parser = argparse.ArgumentParser(
@@ -36,14 +33,14 @@ def main():
         )
     )
 
-    if aimsPAX_settings["ACTIVE_LEARNING"].get("parallel", False):
+    if aimsPAX_settings.ACTIVE_LEARNING.parallel:
         al = ALProcedureParallel(
             model_settings=model_settings,
             aimsPAX_settings=aimsPAX_settings,
             path_to_control=path_to_control,
             path_to_geometry=path_to_geometry,
         )
-    elif aimsPAX_settings.get("CLUSTER", False):
+    elif aimsPAX_settings.CLUSTER:
         al = ALProcedurePARSL(
             model_settings=model_settings,
             aimsPAX_settings=aimsPAX_settings,
@@ -61,7 +58,7 @@ def main():
     if not al.check_al_done():
         al.run()
 
-    if aimsPAX_settings["ACTIVE_LEARNING"].get("converge_al", False):
+    if aimsPAX_settings.ACTIVE_LEARNING.converge_al:
         al.converge()
 
 
