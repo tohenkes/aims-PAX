@@ -1402,7 +1402,7 @@ class ALDFTManagerPARSL(ALDFTManager):
 
         logging.info("Launching DFT manager thread for PARSL.")
         self.ab_initio_queue = queue.Queue()
-        self.ab_intio_results = {}
+        self.ab_initio_results = {}
         self.ab_initio_counter = {
             idx: 0 for idx in range(self.config.num_trajectories)
         }
@@ -1476,10 +1476,10 @@ class ALDFTManagerPARSL(ALDFTManager):
                     if temp_result is None:
                         # if the result is None, it means the DFT calculation
                         # did not converge
-                        self.ab_intio_results[job_idx] = False
+                        self.ab_initio_results[job_idx] = False
                     else:
                         # the DFT calculation converged
-                        self.ab_intio_results[job_idx] = temp_result
+                        self.ab_initio_results[job_idx] = temp_result
                         logging.info(
                             f"DFT calculation number {job_no} "
                             f"for worker {job_idx} finished."

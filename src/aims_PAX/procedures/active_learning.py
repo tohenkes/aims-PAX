@@ -1104,7 +1104,7 @@ class ALProcedurePARSL(ALProcedure):
             return None
 
         # with self.results_lock:
-        job_result = self.dft_manager.ab_intio_results.get(idx, "not_done")
+        job_result = self.dft_manager.ab_initio_results.get(idx, "not_done")
 
         if job_result == "not_done":
             # if the job is not done, we return None and
@@ -1146,7 +1146,7 @@ class ALProcedurePARSL(ALProcedure):
                 )
             with self.dft_manager.results_lock:
                 # remove the job from the results dict to avoid double counting
-                del self.dft_manager.ab_intio_results[idx]
+                del self.dft_manager.ab_initio_results[idx]
 
     def _al_loop(self):
         super()._al_loop()
