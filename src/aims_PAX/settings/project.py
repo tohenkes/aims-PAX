@@ -325,6 +325,8 @@ class ALSettings(ProjectBaseModel):
     extend_existing_final_ds: bool = Field(
         default=False
     )
+    use_foundational: bool = False
+    foundational_model_settings: FMSettings | None = None
 
 
     @model_validator(mode="after")
@@ -622,7 +624,9 @@ class AimsPAXSettings(ProjectBaseModel):
         description="Active Learning settings"
     )
     MD: MDSettings = Field(..., description="Molecular Dynamics settings.")
-    CLUSTER: ClusterSettings = Field(..., description="PARSL/HPC infrastructure settings.")
+    CLUSTER: ClusterSettings | None = Field(
+        default=None,
+        description="PARSL/HPC infrastructure settings.")
     MISC: MiscSettings = Field(default_factory=MiscSettings)
 
     @model_validator(mode="after")
