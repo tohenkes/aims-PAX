@@ -9,6 +9,8 @@ import numpy as np
 import threading
 import queue
 import shutil
+
+from ase.md.md import MolecularDynamics
 from mace import tools
 from .preparation import (
     ALCalculatorMLFF,
@@ -371,7 +373,7 @@ class TrainingOrchestrator:
             session.training_setups[tag] = reset_model_optimizer(
                 model,
                 training_setup, 
-                self.config.model_settings["TRAINING"],
+                self.config.model_settings.TRAINING,
                 model_choice=self.config.model_choice,
             )
             self.state_manager.ensemble_reset_opt[tag] = False
@@ -379,7 +381,7 @@ class TrainingOrchestrator:
 
         if logger is None:
             logger = tools.MetricsLogger(
-                directory=self.config.model_settings["GENERAL"]["loss_dir"],
+                directory=self.config.model_settings.GENERAL.loss_dir.as_posix(),
                 tag=tag + "_train",
             )
 
@@ -454,7 +456,7 @@ class TrainingOrchestrator:
             ensemble=self.ensemble_manager.ensemble,
             training_setups=session.training_setups,
             logger=logger,
-            log_errors=self.config.model_settings["MISC"]["error_table"],
+            log_errors=self.config.model_settings.MISC.error_table,
             epoch=self._get_validation_epoch(session, trajectory_idx),
             valid_loaders=self.valid_loader,
             multihead=self.config.use_multihead_model,
@@ -996,10 +998,10 @@ class ALTrainingManager:
         save_models(
             ensemble=self.ensemble_manager.ensemble,
             training_setups=session.training_setups,
-            model_dir=self.config.model_settings["GENERAL"]["model_dir"],
+            model_dir=self.config.model_settings.GENERAL.model_dir,
             current_epoch=session.current_epoch,
             convert_cueq_to_e3nn=self.config.enable_cueq_train,
-            model_settings=self.config.model_settings["ARCHITECTURE"],
+            model_settings=self.config.model_settings.ARCHITECTURE,
             model_choice=self.config.model_choice
         )
         # save model(s) and datasets in final results directory
@@ -1015,7 +1017,7 @@ class ALTrainingManager:
             model_dir=Path("results"),
             current_epoch=self.state_manager.total_epoch,
             convert_cueq_to_e3nn=self.config.enable_cueq_train,
-            model_settings=self.config.model_settings["ARCHITECTURE"],
+            model_settings=self.config.model_settings.ARCHITECTURE,
             model_choice=self.config.model_choice
         )
 
@@ -1165,12 +1167,12 @@ class ALDFTManager:
             path_to_control (str): Path to the AIMS control file.
             species_dir (str): Path to the species directory of AIMS.
         """
-        if isinstance(control_source, str):
+        if isinstance(control_source, (str, Path)):
             aims_settings = self.control_parser(control_source)
             aims_settings["compute_forces"] = True
             aims_settings["species_dir"] = self.config.species_dir
             aims_settings["postprocess_anyway"] = (
-                True  # this is necesssary to check for convergence in ASI
+                True  # this is necessary to check for convergence in ASI
             )
             self.aims_settings = {
                 idx: aims_settings for idx in range(
@@ -1184,7 +1186,7 @@ class ALDFTManager:
                 aims_settings["compute_forces"] = True
                 aims_settings["species_dir"] = self.config.species_dir
                 aims_settings["postprocess_anyway"] = (
-                    True  # this is necesssary to check for convergence in ASI
+                    True  # this is necessary to check for convergence in ASI
                 )
                 if log:
                     logging.info(
@@ -1603,7 +1605,7 @@ class ALRunningManager:
         self,
         idx: int,
         md_manager: ALMD,
-        md_drivers: dict,
+        md_drivers: dict[int, MolecularDynamics],
         restart_manager: ALRestart,
         trajectories: dict,
     ):

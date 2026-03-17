@@ -302,9 +302,9 @@ class ALProcedure(PrepareALProcedure):
             save_models(
                 ensemble=self.ensemble,
                 training_setups=self.ensemble_manager.training_setups,
-                model_dir=self.config.model_settings["GENERAL"]["model_dir"],
+                model_dir=self.config.model_settings.GENERAL.model_dir,
                 current_epoch=self.state_manager.total_epoch,
-                model_settings=self.config.model_settings["ARCHITECTURE"].copy(),
+                model_settings=self.config.model_settings.ARCHITECTURE,
                 model_choice=self.config.model_choice
             )
 
@@ -321,7 +321,7 @@ class ALProcedure(PrepareALProcedure):
                     training_setups=self.ensemble_manager.training_setups,
                     model_dir=Path("results"),
                     current_epoch=self.state_manager.total_epoch,
-                    model_settings=self.config.model_settings["ARCHITECTURE"].copy(),
+                    model_settings=self.config.model_settings.ARCHITECTURE,
                     model_choice=self.config.model_choice
                 )
             #  else: handled in convergence call

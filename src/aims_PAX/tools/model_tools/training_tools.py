@@ -1,3 +1,5 @@
+from pathlib import Path
+
 import torch
 from typing import Optional, Tuple
 from torch_ema import ExponentialMovingAverage
@@ -179,7 +181,7 @@ def setup_ema(training_settings: TrainingSettings, model) -> Optional[Exponentia
 
 
 def setup_checkpoint(
-    checkpoints_dir: str,
+    checkpoints_dir: Path,
     tag: str,
     misc_settings: MiscSettings,
     training_settings: TrainingSettings,
@@ -210,13 +212,13 @@ def setup_checkpoint(
             epoch = 0
     else:
         checkpoint_handler = tools.CheckpointHandler(
-            directory=checkpoints_dir + "/convergence",
+            directory=(checkpoints_dir / "convergence").as_posix(),
             tag=tag + "_convergence",
             keep=misc_settings.keep_checkpoints,
             swa_start=training_settings.start_swa,
         )
 
-        if restart and os.path.exists(checkpoints_dir + "/convergence"):
+        if restart and (checkpoints_dir / "convergence").is_dir():
             epoch = checkpoint_handler.load_latest(
                 state=tools.CheckpointState(
                     model,
@@ -308,7 +310,7 @@ def create_mace_optimizer(
 def reset_model_optimizer(
     model: torch.nn.Module,
     training_setup: dict,
-    training_settings: dict,
+    training_settings: TrainingSettings,
     model_choice: str,
 ):
     if model_choice.lower() == "mace":
