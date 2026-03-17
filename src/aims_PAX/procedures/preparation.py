@@ -51,6 +51,7 @@ from aims_PAX.tools.model_tools.training_tools import (
 from aims_PAX.tools.utilities.mpi_utils import CommHandler
 import ase
 import logging
+from ase.calculators.aims import Aims, AimsProfile
 from ase.md.velocitydistribution import MaxwellBoltzmannDistribution
 from ase.md.langevin import Langevin
 from ase.md.nptberendsen import NPTBerendsen
@@ -376,7 +377,7 @@ class PrepareInitialDatasetProcedure:
     def _setup_aims_calculator(
         self,
         atoms: ase.Atoms,
-    ) -> ase.Atoms:
+    ) -> Aims:
         """
         Attaches the AIMS calculator to the atoms object.
         Uses the AIMS settings from the control.in to set up the calculator.
@@ -393,8 +394,6 @@ class PrepareInitialDatasetProcedure:
         aims_settings = self.aims_settings.copy()
 
         def init_via_ase(asi):
-            from ase.calculators.aims import Aims, AimsProfile
-
             aims_settings["profile"] = AimsProfile(
                 command="asi-doesnt-need-command"
             )
@@ -430,7 +429,7 @@ class PrepareInitialDatasetProcedure:
             aims_settings["compute_forces"] = True
             aims_settings["species_dir"] = self.species_dir
             aims_settings["postprocess_anyway"] = (
-                True  # this is necesssary to check for convergence in ASI
+                True  # this is necessary to check for convergence in ASI
             )
             self.aims_settings = {0: aims_settings}
         elif isinstance(control_source, dict):
@@ -440,7 +439,7 @@ class PrepareInitialDatasetProcedure:
                 aims_settings["compute_forces"] = True
                 aims_settings["species_dir"] = self.species_dir
                 aims_settings["postprocess_anyway"] = (
-                    True  # this is necesssary to check for convergence in ASI
+                    True  # this is necessary to check for convergence in ASI
                 )
                 if log:
                     logging.info(
@@ -1030,8 +1029,8 @@ class ALStateManager:
             self.ensemble_best_valid = {tag: np.inf for tag in tags}
 
     def _create_trajectories(
-        self, atoms: List[ase.Atoms], num_trajectories: int
-    ) -> dict:
+        self, atoms: dict[int, ase.Atoms], num_trajectories: int
+    ) -> dict[int, ase.Atoms]:
         """
         Creates a dictionary of trajectories with given starting
         geometries.
@@ -1060,7 +1059,6 @@ class ALStateManager:
         if len(atoms) == 1:
             for i in range(num_trajectories):
                 trajectories[i] = atoms[0].copy()
-            return trajectories
 
         elif len(atoms) > 1:
             if num_trajectories > len(atoms):
@@ -1083,7 +1081,7 @@ class ALStateManager:
             for i in range(num_trajectories):
                 trajectories[i] = atoms[i % len(atoms)].copy()
 
-            return trajectories
+        return trajectories
 
     def _initialize_analysis_state(self):
         """Initialize analysis-specific state."""

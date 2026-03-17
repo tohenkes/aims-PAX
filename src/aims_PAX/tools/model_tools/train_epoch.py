@@ -1,14 +1,13 @@
 import torch
 from contextlib import contextmanager
 import numpy as np
-from typing import Optional, Dict
 from torch.optim import LBFGS
 from mace.tools.train import valid_err_log
 from mace.tools.utils import MetricsLogger
 from torch.utils.data import DataLoader
 from torch_ema import ExponentialMovingAverage
 from mace.tools import torch_geometric
-from typing import Any, Dict, List, Optional, Tuple, Union
+from typing import Any, Dict, Optional, Tuple
 import time
 import logging
 from mace.tools.utils import to_numpy
@@ -261,7 +260,7 @@ def validate_epoch_multihead(
     logger: MetricsLogger,
     log_errors: str,
     epoch: int,
-) -> tuple[dict, float, dict]:
+) -> tuple[dict, float, dict, dict | None]:
     """
     Evaluates an multihead model on the validation set and returns
     average loss and metrics (over heads).
@@ -321,7 +320,7 @@ def validate_epoch_multihead(
                 valid_loader_name=valid_loader_name,
             )
 
-    valid_loss = np.mean(list(mh_valid_loss.values()))
+    valid_loss = np.mean(list(mh_valid_loss.values()), dtype=float)
     eval_metrics = {}
     for key in mh_eval_metrics[0]:
         if key not in ["mode", "epoch", "head"]:
@@ -342,7 +341,7 @@ def validate_epoch_ensemble(
     logger: MetricsLogger,
     log_errors: str,
     epoch: int,
-) -> tuple[dict, float, dict]:
+) -> tuple[dict, float, dict, dict | None]:
     """
     Evaluates an ensemble of models on the validation set and returns
     average loss and metrics (over members).
@@ -390,7 +389,7 @@ def validate_epoch_ensemble(
         ensemble_valid_loss[tag] = valid_loss
         ensemble_eval_metrics.append(eval_metrics)
 
-    valid_loss = np.mean(list(ensemble_valid_loss.values()))
+    valid_loss = np.mean(list(ensemble_valid_loss.values()), dtype=float)
     eval_metrics = {}
     for key in ensemble_eval_metrics[0]:
         if key not in ["mode", "epoch", "head"]:
@@ -421,7 +420,7 @@ def validate_epoch(
     log_errors: str,
     epoch: int,
     multihead: bool = False,
-) -> tuple[dict, float, dict]:
+) -> tuple[dict, float, dict, dict]:
     if multihead:
         return validate_epoch_multihead(
             model_dict=ensemble,

@@ -534,7 +534,7 @@ class InitialDatasetFoundational(InitialDatasetProcedure):
                 f"Unknown foundational model choice: {model_choice}"
             )
 
-    def _recalc_dft(self, current_point: ase.Atoms) -> ase.Atoms:
+    def _recalc_dft(self, current_point: ase.Atoms) -> ase.Atoms | None:
         """
         Recalculates the energies and forces of the current point using
         the AIMS calculator. If the SCF is converged, it saves the energy
