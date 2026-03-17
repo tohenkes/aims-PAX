@@ -966,11 +966,8 @@ class ALConfiguration:
         self.foundational_model_settings = self.al_settings.foundational_model_settings
 
         # teacher model usage during AL (replaces DFT with teacher model)
-        self.use_teacher_reference = self.al_settings["use_teacher_reference"]
-        self.teacher_reference_settings = self.al_settings[
-            "teacher_reference_settings"
-        ]
-
+        self.use_teacher_reference = self.al_settings.use_teacher_reference
+        self.teacher_reference_settings = self.al_settings.teacher_reference_settings
 
     def _setup_molecular_indices(self):
         """

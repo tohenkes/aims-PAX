@@ -174,6 +174,10 @@ class IDGSettings(ProjectBaseModel):
     initial_sampling: Literal["aimd", "foundational"] = Field(default="foundational")
     aims_lib_path: str | None = Field(default=None, description="Path to the compiled FHI-aims library for direct force and energy evaluation.")
     use_teacher_reference: bool = False
+    teacher_reference_settings: Union[Dict[str, Any], FMSettings] = Field(
+        default_factory=dict,
+        description="Teacher reference model settings"
+    )
 
     @model_validator(mode="after")
     def check_at_least_one_required(self) -> "IDGSettings":
@@ -329,6 +333,8 @@ class ALSettings(ProjectBaseModel):
     use_foundational: bool = False
     foundational_model_settings: FMSettings | None = None
 
+    use_teacher_reference: bool = False
+    teacher_reference_settings: FMSettings | None = None
 
     @model_validator(mode="after")
     def check_at_least_one_required(self) -> "ALSettings":

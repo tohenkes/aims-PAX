@@ -1389,23 +1389,12 @@ class ALReferenceManagerPARSL:
             handle_parsl_logger(log_dir=parsl_log_dir / "parsl_al.log")
             parsl.load(self.parsl_config)
 
-        executor = self.config.cluster_settings.get("executor", "workqueue")
+        executor = self.config.cluster_settings.executor
         if executor == "workqueue":
-            cores_per_job = self.config.cluster_settings.get(
-                "cores_per_job", None
-            )
+            cores_per_job = self.config.cluster_settings.cores_per_job
             if cores_per_job is not None:
-                memory_per_job = self.config.cluster_settings.get(
-                    "memory_per_job", None
-                )
-                if memory_per_job is None:
-                    raise ValueError(
-                        "memory_per_job must be set in CLUSTER settings "
-                        "when cores_per_job is set."
-                    )
-                disk_per_job = self.config.cluster_settings.get(
-                    "disk_per_job", 1000
-                )
+                memory_per_job = self.config.cluster_settings.memory_per_job
+                disk_per_job = self.config.cluster_settings.disk_per_job
                 self.workqueue_resource_spec = {
                     "cores": cores_per_job,
                     "memory": memory_per_job,
@@ -1568,13 +1557,9 @@ class ALDFTReferenceManagerPARSL(ALReferenceManagerPARSL):
             "properties": self.config.properties,
         }
 
-        if self.config.cluster_settings["executor"] == "mpi":
-            num_nodes = self.config.cluster_settings["parsl_options"].get(
-                "nodes_per_block", 1
-            )
-            rank_per_nodes = self.config.cluster_settings.get(
-                "tasks_per_node", 1
-            )
+        if self.config.cluster_settings.executor == "mpi":
+            num_nodes = self.config.cluster_settings.parsl_options.nodes_per_block
+            rank_per_nodes = self.config.cluster_settings.tasks_per_node
             num_ranks = num_nodes * rank_per_nodes
             self.parsl_resource_specification = {
                 "num_nodes": num_nodes,
@@ -1597,7 +1582,7 @@ class ALDFTReferenceManagerPARSL(ALReferenceManagerPARSL):
         """
         Parses the AIMS control file to get the settings.
         """
-        if isinstance(control_source, str):
+        if isinstance(control_source, (str, Path)):
             aims_settings = self.control_parser(control_source)
             aims_settings["compute_forces"] = True
             aims_settings["species_dir"] = self.config.species_dir
