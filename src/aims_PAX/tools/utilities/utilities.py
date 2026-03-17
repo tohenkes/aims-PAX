@@ -493,22 +493,22 @@ def setup_ensemble_dicts(
 
 
 def setup_pretrained(
-    model_settings: dict,
+    model_settings: ModelSettings,
     z_table: tools.AtomicNumberTable,
     atomic_energies_dict: dict,
     num_elements: int = 118
 ):
-    pretrained_model = model_settings["TRAINING"]["pretrained_model"]
-    pretrained_weights = model_settings["TRAINING"]["pretrained_weights"]
-    num_output_heads = model_settings["ARCHITECTURE"]["num_multihead_heads"]
-    device = model_settings["MISC"]["device"]
-    dtype = model_settings["GENERAL"]["default_dtype"]
+    pretrained_model = model_settings.TRAINING.pretrained_model
+    pretrained_weights = model_settings.TRAINING.pretrained_weights
+    num_output_heads = model_settings.ARCHITECTURE.num_multihead_heads
+    device = model_settings.MISC.device
+    dtype = model_settings.GENERAL.default_dtype
     
     if not pretrained_model and not pretrained_weights:
         return None
     
     if pretrained_model or pretrained_weights:
-        assert model_settings["ARCHITECTURE"]["use_multihead_model"], (
+        assert model_settings.ARCHITECTURE.use_multihead_model, (
             "Pretrained model or weights can only be used with multihead SO3LR."
         )
         logging.info("Using pretrained model or weights for multihead SO3LR.")
@@ -519,6 +519,7 @@ def setup_pretrained(
             " Otherwise, non-matching hyperparameters will be saved!"
         )
         
+    model = None
     if pretrained_model:
         model = torch.load(
             pretrained_model,
@@ -556,15 +557,15 @@ def setup_pretrained(
         
         model.load_state_dict(weights)
     
-    if model_settings["TRAINING"]["perform_finetuning"]:
+    if model_settings.TRAINING.perform_finetuning:
         model = apply_finetuning_settings(
             model=model,
             model_settings=model_settings,
             num_elements=num_elements
         )
 
-    if model_settings["GENERAL"]["model_choice"].lower() == "so3lr":
-        model.r_max_lr = model_settings["ARCHITECTURE"]["r_max_lr"]
+    if model_settings.GENERAL.model_choice == "so3lr":
+        model.r_max_lr = model_settings.ARCHITECTURE.r_max_lr
         logging.info(
             f"Set r_max_lr to {model.r_max_lr} for pretrained SO3LR model."
         )
