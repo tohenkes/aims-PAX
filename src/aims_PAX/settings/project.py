@@ -173,6 +173,7 @@ class IDGSettings(ProjectBaseModel):
     )
     initial_sampling: Literal["aimd", "foundational"] = Field(default="foundational")
     aims_lib_path: str | None = Field(default=None, description="Path to the compiled FHI-aims library for direct force and energy evaluation.")
+    use_teacher_reference: bool = False
 
     @model_validator(mode="after")
     def check_at_least_one_required(self) -> "IDGSettings":
@@ -551,6 +552,17 @@ class ClusterSettings(ProjectBaseModel):
         default=True,
         description="Whether to remove calculation directories after DFT computations."
     )
+    cores_per_job: int | None = None
+    memory_per_job: int | None = None
+    disk_per_job: int = 1000
+
+    @model_validator(mode="after")
+    def validate_cluster_settings(self) -> "ClusterSettings":
+        if self.cores_per_job is not None:
+            if self.memory_per_job is None:
+                raise ValueError("memory_per_job must be set in CLUSTER settings "
+                                 "when cores_per_job is set.")
+        return self
 
 
 PathOrIndexedPaths = Union[FilePath, Dict[int, FilePath]]
@@ -560,12 +572,17 @@ class MiscSettings(ProjectBaseModel):
         default=True,
         description="Whether to create restart files during the run."
     )
+    output_dir: Path = Field(
+        default=Path.cwd(),
+        description="Root directory where output files are saved."
+    )
+
     dataset_dir: Path = Field(
-        default=Path("./data"),
+        default=Path("data"),
         description="Directory where dataset files will be stored."
     )
     log_dir: Path = Field(
-        default=Path("./logs"),
+        default=Path("logs"),
         description="Directory where log files are saved."
     )
     path_to_control: PathOrIndexedPaths = Field(
@@ -595,6 +612,7 @@ class MiscSettings(ProjectBaseModel):
         default=None,
         description="Specific molecule indices to include/exclude."
     )
+    all_teacher: bool = False
 
     @model_validator(mode="after")
     def validate_indices_match(self) -> "MiscSettings":
@@ -610,6 +628,20 @@ class MiscSettings(ProjectBaseModel):
                 missing = geo_indices - ctrl_indices
                 raise ValueError(f"Geometry indices {missing} are missing corresponding control files.")
 
+        return self
+
+    @model_validator(mode="after")
+    def validate_directories(self) -> "MiscSettings":
+        """
+        Checks if directories are absolute. Creates them if they do not exist.
+        """
+        # Maybe put the validator on the parent folder?
+        if not self.dataset_dir.is_absolute():
+            self.dataset_dir = self.output_dir / self.dataset_dir
+        self.dataset_dir.mkdir(parents=True, exist_ok=True)
+        if not self.log_dir.is_absolute():
+            self.log_dir = self.output_dir / self.log_dir
+        self.log_dir.mkdir(parents=True, exist_ok=True)
         return self
 
 
@@ -643,4 +675,3 @@ class AimsPAXSettings(ProjectBaseModel):
                 "'ACTIVE_LEARNING' or 'INITIAL_DATASET_GENERATION', or both."
             )
         return self
-

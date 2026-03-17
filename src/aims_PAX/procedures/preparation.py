@@ -314,22 +314,20 @@ class PrepareInitialDatasetProcedure:
         self.md_settings_raw = aimsPAX_settings.MD
         self.cluster_settings = aimsPAX_settings.CLUSTER
 
-
-        self.output_dir = Path(self.misc.get("output_dir", "."))
+        self.output_dir = self.misc.output_dir
 
         def _r(p):
             p = Path(p)
             return p if p.is_absolute() else self.output_dir / p
 
-        self.checkpoints_dir = str(_r(self.checkpoints_dir))
-        self.model_settings["GENERAL"]["checkpoints_dir"] = (
+        self.checkpoints_dir = _r(self.checkpoints_dir)
+        self.model_settings.GENERAL.checkpoints_dir = (
             self.checkpoints_dir
         )
-        self.model_dir = str(_r(self.model_dir))
-        self.model_settings["GENERAL"]["model_dir"] = self.model_dir
-        self.model_settings["GENERAL"]["loss_dir"] = str(
-            _r(self.model_settings["GENERAL"]["loss_dir"])
-        )
+        self.model_dir = _r(self.model_dir)
+        self.model_settings.GENERAL.model_dir = self.model_dir
+
+        self.model_settings.GENERAL.loss_dir = _r(self.model_settings.GENERAL.loss_dir)
 
         self.initial_ds_restart_path = (
             self.output_dir
@@ -357,22 +355,8 @@ class PrepareInitialDatasetProcedure:
         if not self.idg_settings.scheduler_initial:
             self.model_settings.lr_scheduler = None
 
-        self.restart = os.path.exists(
-            "restart/initial_ds/initial_ds_restart.npy"
-        )
-        self.create_restart = self.misc.create_restart
-        self.initial_sampling = self.idg_settings["initial_sampling"]
-        self.foundational_model = self.idg_settings["foundational_model"]
-        self.foundational_model_settings = self.idg_settings[
-            "foundational_model_settings"
-        ]
-        self.use_teacher_reference = self.idg_settings["use_teacher_reference"]
-        self.teacher_reference_settings = self.idg_settings[
-            "teacher_reference_settings"
-        ]
-
         self.restart = self.initial_ds_restart_path.exists()
-        self.create_restart = self.misc["create_restart"]
+        self.create_restart = self.misc.create_restart
         if self.create_restart:
             self.init_ds_restart_dict = {
                 "trajectories": None,
