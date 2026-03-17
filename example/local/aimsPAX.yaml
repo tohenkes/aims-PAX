@@ -1,0 +1,52 @@
+INITIAL_DATASET_GENERATION:
+  desired_acc: 0.1
+  desired_acc_scale_idg: 3.
+  valid_ratio: 0.1
+  n_points_per_sampling_step_idg: 20
+  valid_skip: 5
+  intermediate_epochs_idg: 5
+  ensemble_size: 2
+  skip_step_initial: 1
+  initial_sampling: foundational
+  foundational_model: mace-mp
+  foundational_model_settings:
+    mace_model: small
+  use_teacher_reference: true
+  teacher_reference_settings:
+    model_type: mace-mp
+    mace_model: small
+
+ACTIVE_LEARNING:
+  desired_acc: 0.1
+  valid_ratio: 0.1
+  epochs_per_worker: 2
+  intermediate_epochs_al: 1
+  converge_al: True
+  converge_best: True
+  max_convergence_epochs: 50
+  convergence_patience: 50
+  valid_skip: 5
+  ensemble_size: 4
+  c_x: -0.1
+  skip_step_mlff: 25
+  num_trajectories: 2
+  use_teacher_reference: true
+  teacher_reference_settings:
+    model_type: mace-mp
+    mace_model: small
+
+MD:
+  stat_ensemble: NVT
+  thermostat: Langevin
+  temperature: 500
+  timestep: 1.
+  friction: 0.001
+  seed: 42
+
+MISC:
+  create_restart: True
+
+CLUSTER:
+  type: local
+  executor: local
+  max_workers: 1

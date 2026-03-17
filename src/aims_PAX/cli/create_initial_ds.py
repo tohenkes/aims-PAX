@@ -4,6 +4,7 @@ from aims_PAX.procedures.initial_dataset import (
     InitialDatasetAIMD,
     InitialDatasetFoundational,
     InitialDatasetPARSL,
+    InitialDatasetPARSLTeacher,
 )
 from aims_PAX.tools.utilities.input_utils import read_input_files
 
@@ -53,12 +54,22 @@ def main():
         == "foundational"
     ):
         if aimsPAX_settings.get("CLUSTER", False):
-            initial_ds = InitialDatasetPARSL(
-                model_settings=model_settings,
-                aimsPAX_settings=aimsPAX_settings,
-                path_to_control=path_to_control,
-                path_to_geometry=path_to_geometry,
-            )
+            if aimsPAX_settings["INITIAL_DATASET_GENERATION"].get(
+                "use_teacher_reference", False
+            ):
+                initial_ds = InitialDatasetPARSLTeacher(
+                    model_settings=model_settings,
+                    aimsPAX_settings=aimsPAX_settings,
+                    path_to_control=path_to_control,
+                    path_to_geometry=path_to_geometry,
+                )
+            else:
+                initial_ds = InitialDatasetPARSL(
+                    model_settings=model_settings,
+                    aimsPAX_settings=aimsPAX_settings,
+                    path_to_control=path_to_control,
+                    path_to_geometry=path_to_geometry,
+                )
         else:
             initial_ds = InitialDatasetFoundational(
                 model_settings=model_settings,

@@ -1,6 +1,7 @@
 import os
 from parsl.config import Config
 from parsl.executors import WorkQueueExecutor, MPIExecutor
+from parsl.executors import ThreadPoolExecutor as ParslThreadPoolExecutor
 from parsl.providers import SlurmProvider
 from parsl.launchers import SimpleLauncher
 from parsl import python_app
@@ -14,7 +15,9 @@ from typing import Optional
 from aims_PAX.settings.project import ClusterSettings
 
 
-def prepare_parsl(cluster_settings: ClusterSettings = None) -> dict:
+def prepare_parsl(
+    cluster_settings: ClusterSettings = None, output_dir: Path = Path(".")
+) -> dict:
     """
     Prepare the PARSL configuration and settings for running calculations.
     Creates the config file, sets the calculation directory, defines if
@@ -26,6 +29,9 @@ def prepare_parsl(cluster_settings: ClusterSettings = None) -> dict:
 
     Args:
         cluster_settings (ClusterSettings, optional): _description_. Defaults to None.
+        output_dir (Path, optional): Base output directory. Relative paths
+            for calc_dir and parsl_info_dir are resolved against this.
+            Defaults to Path(".").
 
     Raises:
         KeyError: Launch string not found in YAML file.
@@ -41,7 +47,9 @@ def prepare_parsl(cluster_settings: ClusterSettings = None) -> dict:
     )
     launch_str = cluster_settings.launch_str
 
-    config = create_parsl_config(cluster_settings=cluster_settings)
+    config = create_parsl_config(
+        cluster_settings=cluster_settings, output_dir=output_dir
+    )
     # get the path to the directory where the calculations will be run
     # if none is provided use the current working directory
     calc_dir = cluster_settings.calc_dir
@@ -57,7 +65,7 @@ def prepare_parsl(cluster_settings: ClusterSettings = None) -> dict:
     }
 
 
-def create_parsl_config(cluster_settings: ClusterSettings) -> Config:
+def create_parsl_config(cluster_settings: ClusterSettings, output_dir: Path = Path(".")) -> Config:
     """
     Reads in CLUSTER settings as a Pydantic model (provided in the yaml file).
     The information is then used to create a PARSL configuration object.
@@ -103,6 +111,26 @@ def create_parsl_config(cluster_settings: ClusterSettings) -> Config:
         Config: A PARSL configuration object with the specified settings.
     """
 
+    executor = cluster_settings.executor
+
+    if executor == "local":
+        parsl_info_dir = output_dir / "parsl_info"
+        if not os.path.exists(parsl_info_dir):
+            os.makedirs(parsl_info_dir)
+        run_dir = parsl_info_dir / "run_dir"
+        config = Config(
+            executors=[
+                ParslThreadPoolExecutor(
+                    label="local",
+                    max_threads=cluster_settings.get("max_workers", 4),
+                )
+            ],
+            run_dir=str(run_dir),
+            app_cache=False,
+            initialize_logging=False,
+            retries=0,
+        )
+        return config
     parsl_options = cluster_settings.parsl_options
 
     nodes_per_block = parsl_options.nodes_per_block
@@ -130,7 +158,7 @@ def create_parsl_config(cluster_settings: ClusterSettings) -> Config:
         raise KeyError("Partition not found in slurm options string.")
 
     config = None
-    if cluster_settings.executor == "workqueue":
+    if executor == "workqueue":
         config = Config(
             executors=[
                 WorkQueueExecutor(
@@ -153,9 +181,9 @@ def create_parsl_config(cluster_settings: ClusterSettings) -> Config:
             run_dir=str(run_dir),
             app_cache=False,
             initialize_logging=False,
-            retries=3
+            retries=3,
         )
-    elif cluster_settings.executor == "mpi":
+    elif executor == "mpi":
         config = Config(
             executors=[
                 MPIExecutor(
@@ -177,7 +205,7 @@ def create_parsl_config(cluster_settings: ClusterSettings) -> Config:
             run_dir=str(run_dir),
             app_cache=False,
             initialize_logging=False,
-            retries=3
+            retries=3,
         )
     return config
 
@@ -204,7 +232,7 @@ def recalc_dft_parsl(
     directory: str = "./",
     properties: list = ["energy", "forces"],
     aims_output_file: str = "aims.out",
-    **kwargs
+    **kwargs,
 ):
     """
     PARSL app that runs the DFT calculations using ASE AIMS calculator.
@@ -231,6 +259,7 @@ def recalc_dft_parsl(
     from aims_PAX.tools.utilities.utilities import get_free_vols
     import os
     from ase import Atoms
+    from ase.io import ParseError
 
     # Convert inputs to ASE Atoms object
     atoms = Atoms(
@@ -251,6 +280,10 @@ def recalc_dft_parsl(
         command = ase_aims_command
 
     os.environ["ASE_AIMS_COMMAND"] = command
+    os.environ["PARSL_RESOURCE_SPECIFICATION"] = str(kwargs.get("resource_specification", ""))
+
+    for var in ["UCX_NUM_EPS",]:
+        os.environ.pop(var, None)
 
     calc = Aims(
         profile=AimsProfile(command=os.environ["ASE_AIMS_COMMAND"]),
@@ -279,4 +312,112 @@ def recalc_dft_parsl(
         logging.warning(
             f"DFT calculation failed in directory {directory}: {str(e)}"
         )
+        return None
+
+
+@python_app
+def recalc_teacher_model_parsl(
+    positions: np.ndarray,
+    species: np.ndarray,
+    cell: np.ndarray,
+    pbc: bool,
+    model_type: str,
+    model_path: str = None,
+    model_settings: dict = None,
+    properties: list = ["energy", "forces"],
+    **kwargs,
+):
+    """
+    PARSL app that runs a teacher model for reference calculations.
+    The calculator is constructed inside the app to avoid PyTorch
+    pickling issues. The function needs all necessary modules as
+    the PARSL worker is running completely independently of the
+    main process.
+
+    Args:
+        positions (np.ndarray): Geometry of the system.
+        species (np.ndarray): Elements in the system.
+        cell (np.ndarray): Unit cell of the system.
+        pbc (bool): Periodic boundary conditions.
+        model_type (str): Type of the teacher model.
+            One of "mace-mp", "mace", "so3lr", "so3krates".
+        model_path (str, optional): Path to a trained model file.
+            Required for "mace", "so3lr", "so3krates".
+        model_settings (dict, optional): Additional model settings
+            (e.g. mace_model size, device, dtype, etc.).
+        properties (list, optional): Which properties to calculate.
+                                    Defaults to ["energy", "forces"].
+    Returns:
+        dict: Results of the teacher model calculation, or None on failure.
+    """
+    from ase import Atoms
+    import logging
+
+    if model_settings is None:
+        model_settings = {}
+
+    atoms = Atoms(
+        positions=positions,
+        symbols=species,
+        cell=cell,
+        pbc=pbc,
+    )
+
+    device = model_settings.get("device", "cpu")
+    default_dtype = model_settings.get("default_dtype", "float64")
+    compute_stress = "stress" in properties
+
+    try:
+        if model_type == "mace-mp":
+            from mace.calculators import mace_mp
+
+            mace_model = model_settings.get("mace_model", "small")
+            dispersion = model_settings.get("dispersion", False)
+            damping = model_settings.get("damping", "bj")
+            dispersion_xc = model_settings.get("dispersion_xc", "pbe")
+            dispersion_cutoff = model_settings.get("dispersion_cutoff", 12.0)
+            calc = mace_mp(
+                model=mace_model,
+                dispersion=dispersion,
+                default_dtype=default_dtype,
+                device=device,
+                damping=damping,
+                dispersion_xc=dispersion_xc,
+                dispersion_cutoff=dispersion_cutoff,
+            )
+        elif model_type == "mace":
+            from mace.calculators import MACECalculator
+
+            calc = MACECalculator(
+                model_paths=model_path,
+                device=device,
+                default_dtype=default_dtype,
+            )
+        elif model_type in ["so3lr", "so3krates"]:
+
+            r_max_lr = model_settings.get("r_max_lr", None)
+            dispersion_lr_damping = model_settings.get(
+                "dispersion_lr_damping", None
+            )
+
+            from so3krates_torch.calculator.so3 import TorchkratesCalculator
+
+            calc = TorchkratesCalculator(
+                model_paths=model_path,
+                compute_stress=compute_stress,
+                device=device,
+                default_dtype=default_dtype,
+                r_max_lr=r_max_lr,
+                dispersion_lr_damping=dispersion_lr_damping,
+            )
+        else:
+            raise ValueError(
+                f"Unknown teacher model type: {model_type}. "
+                "Supported types: 'mace-mp', 'mace', 'so3lr', 'so3krates'."
+            )
+
+        calc.calculate(atoms=atoms, properties=properties)
+        return calc.results
+    except Exception as e:
+        logging.warning(f"Teacher model calculation failed: {str(e)}")
         return None

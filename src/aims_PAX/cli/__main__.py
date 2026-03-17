@@ -2,6 +2,7 @@ from aims_PAX.procedures.initial_dataset import (
     InitialDatasetAIMD,
     InitialDatasetFoundational,
     InitialDatasetPARSL,
+    InitialDatasetPARSLTeacher,
 )
 from aims_PAX.procedures.active_learning import (
     ALProcedureSerial,
@@ -44,22 +45,31 @@ def main():
         )
     )
 
-    if aimsPAX_settings.INITIAL_DATASET_GENERATION.initial_sampling.lower() == "aimd":
+    if aimsPAX_settings.INITIAL_DATASET_GENERATION.initial_sampling == "aimd":
         initial_ds = InitialDatasetAIMD(
             model_settings=model_settings,
             aimsPAX_settings=aimsPAX_settings,
             path_to_control=path_to_control,
             path_to_geometry=path_to_geometry,
         )
-    elif aimsPAX_settings.INITIAL_DATASET_GENERATION.initial_sampling.lower() == "foundational":
+    elif aimsPAX_settings.INITIAL_DATASET_GENERATION.initial_sampling == "foundational":
         if "CLUSTER" in aimsPAX_settings.model_fields_set:
-            initial_ds = InitialDatasetPARSL(
-                model_settings=model_settings,
-                aimsPAX_settings=aimsPAX_settings,
-                path_to_control=path_to_control,
-                path_to_geometry=path_to_geometry,
-                close_parsl=False,
-            )
+            if aimsPAX_settings.INITIAL_DATASET_GENERATION.use_teacher_reference:
+                initial_ds = InitialDatasetPARSLTeacher(
+                    model_settings=model_settings,
+                    aimsPAX_settings=aimsPAX_settings,
+                    path_to_control=path_to_control,
+                    path_to_geometry=path_to_geometry,
+                    close_parsl=False,
+                )
+            else:
+                initial_ds = InitialDatasetPARSL(
+                    model_settings=model_settings,
+                    aimsPAX_settings=aimsPAX_settings,
+                    path_to_control=path_to_control,
+                    path_to_geometry=path_to_geometry,
+                    close_parsl=False,
+                )
         else:
             initial_ds = InitialDatasetFoundational(
                 model_settings=model_settings,

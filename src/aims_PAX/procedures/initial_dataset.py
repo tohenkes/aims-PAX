@@ -18,6 +18,7 @@ from aims_PAX.tools.utilities.utilities import (
 )
 from aims_PAX.tools.utilities.parsl_utils import (
     recalc_dft_parsl,
+    recalc_teacher_model_parsl,
     handle_parsl_logger,
     prepare_parsl,
 )
@@ -265,7 +266,7 @@ class InitialDatasetProcedure(PrepareInitialDatasetProcedure):
                     if self.create_restart:
                         self._update_restart_dict()
                         np.save(
-                            "restart/initial_ds/initial_ds_restart.npy",
+                            self.initial_ds_restart_path,
                             self.init_ds_restart_dict,
                         )
                     if (
@@ -322,7 +323,7 @@ class InitialDatasetProcedure(PrepareInitialDatasetProcedure):
         self,
         valid_loss: float,
         ensemble_valid_losses: dict,
-        save_path: str = "analysis/initial_losses.npz",
+        save_path=None,
     ):
         """
         Collects number of epochs, average validation loss and
@@ -333,9 +334,13 @@ class InitialDatasetProcedure(PrepareInitialDatasetProcedure):
             valid_loss (float): Averaged validation loss over the ensemble.
             ensemble_valid_losses (dict): Per ensemble member
                                                     validation losses.
-            save_path (str, optional): Path to save the analysis data.
-                    Defaults to "analysis/initial_losses.npz".
+            save_path (str or Path, optional): Path to save the analysis
+                data. Defaults to output_dir/analysis/initial_losses.npz.
         """
+        if save_path is None:
+            save_path = (
+                self.output_dir / "analysis" / "initial_losses.npz"
+            )
         self.collect_losses["epoch"].append(self.epoch)
         self.collect_losses["avg_losses"].append(valid_loss)
         self.collect_losses["ensemble_losses"].append(ensemble_valid_losses)
@@ -406,7 +411,7 @@ class InitialDatasetProcedure(PrepareInitialDatasetProcedure):
                 self._update_restart_dict()
                 self.init_ds_restart_dict["initial_ds_done"] = True
                 np.save(
-                    "restart/initial_ds/initial_ds_restart.npy",
+                    self.initial_ds_restart_path,
                     self.init_ds_restart_dict,
                 )
         self.logger.handlers.clear()
@@ -627,7 +632,7 @@ class InitialDatasetFoundational(InitialDatasetProcedure):
         """
         self._md_w_foundational()
         if self.rank == 0:
-            logging.info("Recalculating energies and forces with DFT.")
+            logging.info("Recalculating energies and forces with reference method.")
         recalculated_points = []
         for idx in self.trajectories.keys():
             for atoms in self.sampled_points[idx]:
@@ -959,7 +964,7 @@ class InitialDatasetFoundationalParallel(InitialDatasetFoundational):
                     ):
                         logging.info(
                             f"Computed {len(temp_sampled_energies)} points "
-                            "with DFT and sending them to training worker."
+                            "with reference method and sending them to training worker."
                         )
 
                         # TODO: create loop or package data in one
@@ -1021,6 +1026,7 @@ class InitialDatasetPARSL(InitialDatasetFoundational):
             use_mpi=False,
         )
         self.close_parsl = close_parsl
+        self.workqueue_resource_spec = None
 
         if parsl is None:
             raise ImportError(
@@ -1031,7 +1037,8 @@ class InitialDatasetPARSL(InitialDatasetFoundational):
         if self.rank == 0:
             logging.info("Setting up PARSL for initial dataset generation.")
             parsl_setup_dict = prepare_parsl(
-                cluster_settings=self.cluster_settings
+                cluster_settings=self.cluster_settings,
+                output_dir=self.output_dir,
             )
             self.config = parsl_setup_dict["config"]
             self.calc_dir = parsl_setup_dict["calc_dir"]
@@ -1058,13 +1065,104 @@ class InitialDatasetPARSL(InitialDatasetFoundational):
                 self.parsl_func_input["parsl_resource_specification"] = (
                     self.parsl_resource_specification
                 )
-                
+
+            if self.cluster_settings.get("executor", "workqueue") == "workqueue":
+                cores_per_job = self.cluster_settings.get(
+                    "cores_per_job", None
+                )
+                if cores_per_job is not None:
+                    memory_per_job = self.cluster_settings.get(
+                        "memory_per_job", None
+                    )
+                    if memory_per_job is None:
+                        raise ValueError(
+                            "memory_per_job must be set in CLUSTER settings "
+                            "when cores_per_job is set."
+                        )
+                    disk_per_job = self.cluster_settings.get(
+                        "disk_per_job", 1000
+                    )
+                    self.workqueue_resource_spec = {
+                        "cores": cores_per_job,
+                        "memory": memory_per_job,
+                        "disk": disk_per_job,
+                    }
+                else:
+                    self.workqueue_resource_spec = None
+            if self.workqueue_resource_spec is not None:
+                self.parsl_func_input["parsl_resource_specification"] = (
+                    self.workqueue_resource_spec
+                )
+
             handle_parsl_logger(
                 log_dir=self.log_dir / "parsl_initial_dataset.log",
             )
             logging.info("Using following settings for the HPC environment:")
             log_yaml_block("CLUSTER:", self.cluster_settings.model_dump())
             self.comm_handler.barrier()
+
+    def _submit_reference_job(self, atoms, idx):
+        """
+        Submits a single reference calculation job via PARSL.
+        Override this method in subclasses to change the reference
+        calculation backend (e.g. teacher model instead of DFT).
+
+        Args:
+            atoms (ase.Atoms): Atoms object for the calculation.
+            idx (int): System index (for multi-system settings).
+
+        Returns:
+            AppFuture: A PARSL future for the reference calculation.
+        """
+        self.calc_idx += 1
+        directory = self.calc_dir / f"initial_calc_{self.calc_idx}"
+        # if there is only one entry in aims_settings the same
+        # settings are used for all systems
+        settings_idx = idx if len(self.aims_settings) > 1 else 0
+
+        # Create a local copy to avoid shared-dict mutation across futures
+        func_input = dict(self.parsl_func_input)
+        func_input.update(
+            {
+                "positions": atoms.get_positions(),
+                "species": atoms.get_chemical_symbols(),
+                "cell": atoms.get_cell(),
+                "pbc": atoms.pbc,
+                "aims_settings": self.aims_settings[settings_idx],
+                "directory": directory,
+            }
+        )
+
+        return recalc_dft_parsl(**func_input)
+
+    def _process_reference_result(self, result_dict, current_point):
+        """
+        Post-processes the result of a reference calculation and
+        stores data on the Atoms object.
+        Override this method in subclasses to change post-processing
+        (e.g. skip DFT-only fields like hirshfeld_ratios).
+
+        Args:
+            result_dict (dict): Calculator results dict from the PARSL app.
+            current_point (ase.Atoms): The sampled Atoms object.
+
+        Returns:
+            ase.Atoms: The Atoms object with reference data attached,
+                       or None if the calculation failed.
+        """
+        if result_dict is None:
+            return None
+        current_point.info["REF_energy"] = result_dict["energy"]
+        current_point.arrays["REF_forces"] = result_dict["forces"]
+        if self.compute_stress:
+            current_point.info["REF_stress"] = result_dict["stress"]
+        if "hirshfeld_ratios" in result_dict:
+            current_point.arrays["REF_hirshfeld_ratios"] = result_dict[
+                "hirshfeld_ratios"
+            ]
+        if "dipole" in result_dict:
+            current_point.info["REF_dipole"] = result_dict["dipole"]
+        return current_point
 
     def _sample_points(self) -> list:
         """
@@ -1078,35 +1176,14 @@ class InitialDatasetPARSL(InitialDatasetFoundational):
         self._md_w_foundational()
         recalculated_points = []
         if self.rank == 0:
-            logging.info("Recalculating energies and forces with DFT.")
+            logging.info("Recalculating energies and forces with reference method.")
             job_results = {idx: {} for idx in self.sampled_points.keys()}
             calc_launched = 0
             # loop over different systems
             for idx in self.sampled_points.keys():
                 # loop over geometries of different systems
                 for i, atoms in enumerate(self.sampled_points[idx]):
-                    self.calc_idx += 1
-                    # launches a parsl app and returns a future
-                    # that can be used to get the result later
-                    directory = self.calc_dir / f"initial_calc_{self.calc_idx}"
-                    # if there is only one entry in aims_settings the same
-                    # settings are used for all systems
-                    settings_idx = idx if len(self.aims_settings) > 1 else 0
-                    
-                    self.parsl_func_input.update(
-                        {
-                            "positions": atoms.get_positions(),
-                            "species": atoms.get_chemical_symbols(),
-                            "cell": atoms.get_cell(),
-                            "pbc": atoms.pbc,
-                            "aims_settings": self.aims_settings[settings_idx],
-                            "directory": directory,
-                        }
-                    )
-                    
-                    temp_result = recalc_dft_parsl(
-                        **self.parsl_func_input
-                    )
+                    temp_result = self._submit_reference_job(atoms, idx)
                     job_results[idx][i] = temp_result
                     calc_launched += 1
 
@@ -1116,33 +1193,16 @@ class InitialDatasetPARSL(InitialDatasetFoundational):
                         result = job_results[idx][i]
                         if result.done():
                             temp = result.result()
-                            if temp is None:
-                                logging.warning(
-                                    f"SCF not converged for point {i}. Skipping."
-                                )
-                                del job_results[idx][i]
-                                calc_launched -= 1
-                                continue
                             current_point = self.sampled_points[idx][i]
-                            current_point.info["REF_energy"] = temp["energy"]
-                            current_point.arrays["REF_forces"] = temp["forces"]
-                            if self.compute_stress:
-                                current_point.info["REF_stress"] = temp["stress"]
-                            if "hirshfeld_ratios" in temp.keys():
-                                current_point.arrays[
-                                    "REF_hirshfeld_ratios"
-                                ] = temp["hirshfeld_ratios"]
-                            if "dipole" in temp.keys():
-                                current_point.info["REF_dipole"] = temp["dipole"]
-                            recalculated_points.append(current_point)
-
-                            #if (
-                            #    len(recalculated_points)
-                            #    % self.idg_progress_dft_update
-                            #) == 0 or (
-                            #    len(recalculated_points)
-                            #    == len(self.sampled_points)
-                            #):
+                            processed = self._process_reference_result(
+                                temp, current_point
+                            )
+                            if processed is None:
+                                logging.warning(
+                                    f"Reference calculation failed for point {i}. Skipping."
+                                )
+                            else:
+                                recalculated_points.append(processed)
                             logging.info(
                                 f"Recalculated {len(recalculated_points)} points."
                             )
@@ -1199,3 +1259,122 @@ class InitialDatasetPARSL(InitialDatasetFoundational):
             logging.info(
                 "Not closing PARSL. Please close it manually if needed."
             )
+
+
+class InitialDatasetPARSLTeacher(InitialDatasetPARSL):
+    """
+    Variant of InitialDatasetPARSL that uses a teacher ML model
+    (instead of DFT) as the reference calculation backend.
+
+    Supports MACE, MACE-MP, SO3krates, and SO3LR as teacher backends.
+    The foundational model for MD sampling is inherited from the parent.
+    """
+
+    def __init__(
+        self,
+        model_settings: dict,
+        aimsPAX_settings: dict,
+        path_to_control: str = "./control.in",
+        path_to_geometry: str = "./geometry.in",
+        close_parsl: bool = True,
+    ):
+        super().__init__(
+            model_settings=model_settings,
+            aimsPAX_settings=aimsPAX_settings,
+            path_to_control=path_to_control,
+            path_to_geometry=path_to_geometry,
+            close_parsl=close_parsl,
+        )
+
+        idg_settings = aimsPAX_settings["INITIAL_DATASET_GENERATION"]
+        self.teacher_reference_settings = idg_settings[
+            "teacher_reference_settings"
+        ]
+        if self.rank == 0:
+            logging.info(
+                "Using teacher model for reference calculations "
+                f"(type: {self.teacher_reference_settings['model_type']})."
+            )
+            log_yaml_block(
+                "teacher_reference_settings:",
+                self.teacher_reference_settings,
+            )
+
+    def _submit_reference_job(self, atoms, idx):
+        """
+        Submits a single reference calculation job using the teacher
+        model via PARSL.
+
+        Args:
+            atoms (ase.Atoms): Atoms object for the calculation.
+            idx (int): System index (unused for teacher model).
+
+        Returns:
+            AppFuture: A PARSL future for the teacher model calculation.
+        """
+        self.calc_idx += 1
+        model_type = self.teacher_reference_settings["model_type"]
+        model_path = self.teacher_reference_settings.get("model_path", None)
+        model_settings = {
+            k: v
+            for k, v in self.teacher_reference_settings.items()
+            if k not in ("model_type", "model_path")
+        }
+        # Propagate device/dtype from the main settings if not overridden
+        model_settings.setdefault("device", self.device)
+        model_settings.setdefault("default_dtype", self.dtype)
+
+        kwargs = {}
+        if self.workqueue_resource_spec is not None:
+            kwargs["parsl_resource_specification"] = self.workqueue_resource_spec
+        return recalc_teacher_model_parsl(
+            positions=atoms.get_positions(),
+            species=atoms.get_chemical_symbols(),
+            cell=atoms.get_cell(),
+            pbc=atoms.pbc,
+            model_type=model_type,
+            model_path=model_path,
+            model_settings=model_settings,
+            properties=self.properties,
+            **kwargs,
+        )
+
+    def _process_reference_result(self, result_dict, current_point):
+        """
+        Post-processes the result of a teacher model reference
+        calculation. Same as DFT but skips hirshfeld_ratios
+        (DFT-only) and SCF convergence logging.
+
+        Args:
+            result_dict (dict): Calculator results from the teacher model.
+            current_point (ase.Atoms): The sampled Atoms object.
+
+        Returns:
+            ase.Atoms: The Atoms object with reference data, or None.
+        """
+        if result_dict is None:
+            return None
+        current_point.info["REF_energy"] = result_dict["energy"]
+        current_point.arrays["REF_forces"] = result_dict["forces"]
+        if self.compute_stress and "stress" in result_dict:
+            current_point.info["REF_stress"] = result_dict["stress"]
+        if "dipole" in result_dict:
+            current_point.info["REF_dipole"] = result_dict["dipole"]
+        return current_point
+
+    def _setup_calcs(self) -> None:
+        """
+        Sets up only the foundational model for MD sampling.
+        No AIMS / DFT settings are needed for teacher mode.
+        """
+        if self.rank == 0:
+            logging.info(
+                "Initial dataset generation with foundational "
+                f"model: {self.foundational_model}."
+            )
+            foundational_calc = self._setup_foundational(
+                model_choice=self.foundational_model,
+                foundational_model_settings=self.foundational_model_settings,
+            )
+            for idx in self.trajectories.keys():
+                self.trajectories[idx].calc = foundational_calc

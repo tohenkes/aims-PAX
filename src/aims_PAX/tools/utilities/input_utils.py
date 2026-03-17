@@ -37,8 +37,19 @@ def read_input_files(
     aimsPAX_settings = AimsPAXSettings.from_file(path_to_aimsPAX_settings)
     model_settings = ModelSettings.from_file(path_to_model_settings)
 
-    path_to_control = aimsPAX_settings.MISC.path_to_control
-    path_to_geometry = aimsPAX_settings.MISC.path_to_geometry
+    model_settings = check_model_settings(model_settings)
+
+    all_teacher = aimsPAX_settings["MISC"].get("all_teacher", False)
+    if all_teacher:
+        path_to_control = None
+    else:
+        path_to_control = aimsPAX_settings["MISC"].get(
+            "path_to_control", "./control.in"
+        )
+    path_to_geometry = aimsPAX_settings["MISC"].get(
+        "path_to_geometry", "./geometry.in"
+    )
+
     return (
         model_settings,
         aimsPAX_settings,
@@ -53,14 +64,14 @@ def read_geometry(
 ) -> dict[int, ase.Atoms]:
     """
     Reads geometry data from various sources and returns a dictionary of ASE Atoms objects.
-    
+
     Args:
-        geometry_source (Union[str, dict]): Either a path to a file/directory or a 
+        geometry_source (Union[str, dict]): Either a path to a file/directory or a
             dictionary mapping integers to file paths.
             - If string and directory: reads all ASE-readable files in the directory
             - If string and file: reads the single file
             - If dict: reads files specified by the dictionary values
-        log (bool, optional): Whether to log information about loaded geometries. 
+        log (bool, optional): Whether to log information about loaded geometries.
             Defaults to False.
 
     Returns:
@@ -68,7 +79,7 @@ def read_geometry(
 
     Raises:
         ValueError: If no valid ASE readable files are found in a directory.
-        TypeError: If geometry_source is neither string nor dictionary, or if 
+        TypeError: If geometry_source is neither string nor dictionary, or if
             dictionary values are not strings or keys are not integers.
         Exception: If individual files cannot be read by ASE.
     """
@@ -100,8 +111,12 @@ def read_geometry(
     elif isinstance(geometry_source, dict):
         atoms_dict = {}
         for key, value in geometry_source.items():
-            assert type(value) is str, "All entries in the geometry dictionary must be strings."
-            assert type(key) is int, "All keys in the geometry dictionary must be integers."
+            assert (
+                type(value) is str
+            ), "All entries in the geometry dictionary must be strings."
+            assert (
+                type(key) is int
+            ), "All keys in the geometry dictionary must be integers."
             try:
                 atoms = read(value)
                 atoms_dict[key] = atoms
@@ -112,7 +127,8 @@ def read_geometry(
             except Exception as e:
                 logging.error(f"Failed to read geometry file {value}: {e}")
     else:
-        raise TypeError("The geometry source must be a string or a dictionary.")
-    
-    return atoms_dict
+        raise TypeError(
+            "The geometry source must be a string or a dictionary."
+        )
 
+    return atoms_dict

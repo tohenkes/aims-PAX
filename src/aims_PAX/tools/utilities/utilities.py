@@ -374,7 +374,7 @@ def get_ensemble_training_setups(
 def create_seeds_tags_dict(
     seeds: np.ndarray,
     model_settings: ModelSettings,
-    misc_settings: MiscSettings,
+    dataset_dir,
     save_seeds_tags_dict: str = "seeds_tags_dict.npz",
 ) -> dict:
     """
@@ -385,7 +385,7 @@ def create_seeds_tags_dict(
         seeds (np.array): Array of seeds for the ensemble.
         model_settings (ModelSettings): Model settings dictionary containing
                               the experiment name.
-        misc_settings (MiscSettings): Project miscellaneous settings.
+        dataset_dir: Path to the dataset directory where the dict is saved.
         save_seeds_tags_dict (str, optional): Name of the resulting dict.
                                 Defaults to "seeds_tags_dict.npz".
 
@@ -398,7 +398,7 @@ def create_seeds_tags_dict(
         seeds_tags_dict[tag] = seed
     if save_seeds_tags_dict:
         np.savez(
-            misc_settings.dataset_dir / save_seeds_tags_dict,
+            dataset_dir / save_seeds_tags_dict,
             **seeds_tags_dict,
         )
     return seeds_tags_dict
@@ -561,6 +561,12 @@ def setup_pretrained(
             model=model,
             model_settings=model_settings,
             num_elements=num_elements
+        )
+
+    if model_settings["GENERAL"]["model_choice"].lower() == "so3lr":
+        model.r_max_lr = model_settings["ARCHITECTURE"]["r_max_lr"]
+        logging.info(
+            f"Set r_max_lr to {model.r_max_lr} for pretrained SO3LR model."
         )
     return model
 
@@ -1591,14 +1597,27 @@ def setup_logger(
     logger = logging.getLogger()
     logger.setLevel(logging.DEBUG)  # Set to DEBUG to capture all levels
 
+    # Clear existing handlers and filters to prevent duplication
+    for handler in logger.handlers[:]:
+        logger.removeHandler(handler)
+    logger.filters.clear()
+
     # Create formatters
     formatter = logging.Formatter(
         "%(asctime)s.%(msecs)03d %(levelname)s: %(message)s",
         datefmt="%Y-%m-%d %H:%M:%S",
     )
 
-    # Add filter for rank
-    logger.addFilter(lambda _: rank == 0)
+    # Messages from third-party libraries that are noisy and not useful
+    _NOISY_MESSAGES = {"Using CPU"}
+
+    # Add filter for rank and to suppress noisy third-party messages
+    logger.addFilter(
+        lambda record: rank == 0
+        and not any(
+            msg in record.getMessage() for msg in _NOISY_MESSAGES
+        )
+    )
 
     # Create console handler
     ch = logging.StreamHandler(stream=sys.stdout)

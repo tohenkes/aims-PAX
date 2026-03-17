@@ -305,7 +305,7 @@ class ReCalculatorPARSL:
                     del job_results[i]
                     if calcs_done % self.save_interval == 0:
                         logging.info(
-                            f"Recalculated point {i+1} with DFT."
+                            f"Recalculated point {i+1} with reference method."
                         )
                         write(
                             "recalculated_data_parsl.xyz",

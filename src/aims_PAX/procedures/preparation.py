@@ -6,8 +6,10 @@ from typing import Union, List
 import numpy as np
 from mace import tools
 from mace.calculators import MACECalculator
-from so3krates_torch.calculator.so3 import TorchkratesCalculator, MultiHeadSO3LRCalculator
-
+from so3krates_torch.calculator.so3 import (
+    TorchkratesCalculator,
+    MultiHeadSO3LRCalculator,
+)
 from aims_PAX.settings import ModelSettings, AimsPAXSettings
 from aims_PAX.tools.uncertainty import (
     HandleUncertainty,
@@ -45,9 +47,7 @@ from aims_PAX.tools.model_tools.train_epoch import (
     train_epoch,
     validate_epoch_ensemble,
 )
-from aims_PAX.tools.model_tools.training_tools import (
-    setup_model_training
-)
+from aims_PAX.tools.model_tools.training_tools import setup_model_training
 from aims_PAX.tools.utilities.mpi_utils import CommHandler
 import ase
 import logging
@@ -101,6 +101,8 @@ class PrepareInitialDatasetProcedure:
         self.log_dir = Path(aimsPAX_settings.MISC.log_dir)
         logger_level = getattr(logging, model_settings.MISC.log_level, logging.INFO)
 
+        for handler in logging.root.handlers[:]:
+            logging.root.removeHandler(handler)
         self.logger = setup_logger(
             level=logger_level,
             tag="initial_dataset",
@@ -124,7 +126,10 @@ class PrepareInitialDatasetProcedure:
             log_yaml_block(self.model_choice.upper(), model_settings.model_dump())
 
         self._handle_settings(aimsPAX_settings)
-        self._handle_aims_settings(path_to_control)
+        if not self.use_teacher_reference:
+            self._handle_aims_settings(path_to_control)
+        else:
+            self.aims_settings = {}
         self._create_folders()
 
         if self.restart:
@@ -134,13 +139,13 @@ class PrepareInitialDatasetProcedure:
                 )
             try:
                 self.init_ds_restart_dict = np.load(
-                    "restart/initial_ds/initial_ds_restart.npy",
+                    self.initial_ds_restart_path,
                     allow_pickle=True,
                 ).item()
             except FileNotFoundError:
                 logging.error(
-                    "Restart file under 'restart/initial_ds/"
-                    "initial_ds_restart.npy' not found."
+                    f"Restart file under '{self.initial_ds_restart_path}'"
+                    " not found."
                 )
                 raise
             self.trajectories = self.init_ds_restart_dict["trajectories"]
@@ -157,15 +162,15 @@ class PrepareInitialDatasetProcedure:
         self.num_trajectories = len(self.trajectories)
         self.md_settings, _ = normalize_md_settings(
             md_settings=self.md_settings_raw,
-            num_trajectories=self.num_trajectories
+            num_trajectories=self.num_trajectories,
         )
-        
+
         if self.rank == 0:
             logging.info(
                 "Running Initial Dataset Procedure with "
                 f"{len(self.trajectories)} geometries."
             )
-            
+
         if self.model_choice == "mace":
             self.z = Z_from_geometry(self.trajectories)
         elif self.model_choice in ["so3lr", "so3krates"]:
@@ -175,11 +180,11 @@ class PrepareInitialDatasetProcedure:
         self.md_drivers = {idx: None for idx in self.trajectories.keys()}
 
         self._setup_seeds()
-        
+
         self.seeds_tags_dict = create_seeds_tags_dict(
             seeds=self.ensemble_seeds,
             model_settings=self.model_settings,
-            misc_settings=self.misc,
+            dataset_dir=self.dataset_dir,
         )
 
         self._handle_atomic_energies()
@@ -237,30 +242,24 @@ class PrepareInitialDatasetProcedure:
 
             else:
                 self.ensemble_ase_sets = {
-                        tag: {"train": [], "valid": []}
-                        for tag in self.ensemble.keys()
-                    }
+                    tag: {"train": [], "valid": []}
+                    for tag in self.ensemble.keys()
+                }
 
                 if self.use_multihead_model:
                     self.ensemble_model_sets = {
-                            tag: {"train": [], "valid": {}}
-                            for tag in self.ensemble.keys()
-                        }
+                        tag: {"train": [], "valid": {}}
+                        for tag in self.ensemble.keys()
+                    }
                     for head in self.all_heads:
                         for tag in self.ensemble.keys():
-                            self.ensemble_model_sets[tag]["valid"][
-                                head
-                            ] = []
+                            self.ensemble_model_sets[tag]["valid"][head] = []
                 else:
                     self.ensemble_model_sets = {
-                            tag: {"train": [], "valid": {
-                                "Default": []
-                            }}
-                            for tag in self.ensemble.keys()
-                        }
-                
+                        tag: {"train": [], "valid": {"Default": []}}
+                        for tag in self.ensemble.keys()
+                    }
 
-                        
         if self.analysis:
             if self.restart:
                 self.collect_losses = self.init_ds_restart_dict[
@@ -292,10 +291,7 @@ class PrepareInitialDatasetProcedure:
             model_settings (ModelSettings): Dictionary containing the model settings.
         """
 
-        apply_model_settings(
-            target=self,
-            model_settings=model_settings
-        )
+        apply_model_settings(target=self, model_settings=model_settings)
         # No CuEQ training during initial dataset generation
         # (because avg_num_neighbors, mean, std, atomic energies etc
         # are changing all the time; not possible to modify with CuEQ)
@@ -317,6 +313,30 @@ class PrepareInitialDatasetProcedure:
         self.misc = aimsPAX_settings.MISC
         self.md_settings_raw = aimsPAX_settings.MD
         self.cluster_settings = aimsPAX_settings.CLUSTER
+
+
+        self.output_dir = Path(self.misc.get("output_dir", "."))
+
+        def _r(p):
+            p = Path(p)
+            return p if p.is_absolute() else self.output_dir / p
+
+        self.checkpoints_dir = str(_r(self.checkpoints_dir))
+        self.model_settings["GENERAL"]["checkpoints_dir"] = (
+            self.checkpoints_dir
+        )
+        self.model_dir = str(_r(self.model_dir))
+        self.model_settings["GENERAL"]["model_dir"] = self.model_dir
+        self.model_settings["GENERAL"]["loss_dir"] = str(
+            _r(self.model_settings["GENERAL"]["loss_dir"])
+        )
+
+        self.initial_ds_restart_path = (
+            self.output_dir
+            / "restart"
+            / "initial_ds"
+            / "initial_ds_restart.npy"
+        )
 
         for field_name, value in self.idg_settings:
             setattr(self, field_name, value)
@@ -341,6 +361,18 @@ class PrepareInitialDatasetProcedure:
             "restart/initial_ds/initial_ds_restart.npy"
         )
         self.create_restart = self.misc.create_restart
+        self.initial_sampling = self.idg_settings["initial_sampling"]
+        self.foundational_model = self.idg_settings["foundational_model"]
+        self.foundational_model_settings = self.idg_settings[
+            "foundational_model_settings"
+        ]
+        self.use_teacher_reference = self.idg_settings["use_teacher_reference"]
+        self.teacher_reference_settings = self.idg_settings[
+            "teacher_reference_settings"
+        ]
+
+        self.restart = self.initial_ds_restart_path.exists()
+        self.create_restart = self.misc["create_restart"]
         if self.create_restart:
             self.init_ds_restart_dict = {
                 "trajectories": None,
@@ -361,18 +393,23 @@ class PrepareInitialDatasetProcedure:
         """
         Creates the necessary directories for saving the datasets.
         """
-        self.dataset_dir = self.misc.dataset_dir
+        _raw = self.misc.dataset_dir
+        self.dataset_dir = (
+            _raw if _raw.is_absolute() else self.output_dir / _raw
+        )
         (self.dataset_dir / "initial" / "training").mkdir(
             parents=True, exist_ok=True
         )
         (self.dataset_dir / "initial" / "validation").mkdir(
             parents=True, exist_ok=True
         )
-        os.makedirs("model", exist_ok=True)
+        (self.output_dir / "model").mkdir(parents=True, exist_ok=True)
         if self.analysis:
-            os.makedirs("analysis", exist_ok=True)
+            (self.output_dir / "analysis").mkdir(parents=True, exist_ok=True)
         if self.create_restart:
-            os.makedirs("restart/initial_ds", exist_ok=True)
+            self.initial_ds_restart_path.parent.mkdir(
+                parents=True, exist_ok=True
+            )
 
     def _setup_aims_calculator(
         self,
@@ -411,10 +448,8 @@ class PrepareInitialDatasetProcedure:
         return calc
 
     def _handle_aims_settings(
-            self,
-            control_source: Union[str, dict[int, str]],
-            log: bool = False
-            ):
+        self, control_source: Union[str, dict[int, str]], log: bool = False
+    ):
         """
         Parses the AIMS control file to get the settings for the AIMS
         calculator.
@@ -442,11 +477,9 @@ class PrepareInitialDatasetProcedure:
                     True  # this is necessary to check for convergence in ASI
                 )
                 if log:
-                    logging.info(
-                        f"Control file for geometry {key}: {value}."
-                    )
+                    logging.info(f"Control file for geometry {key}: {value}.")
                 self.aims_settings[key] = aims_settings
-        
+
     def setup_md(self, atoms: ase.Atoms, md_settings: dict):
         """
         Sets up the ASE molecular dynamics object for the atoms object.
@@ -500,7 +533,8 @@ class PrepareInitialDatasetProcedure:
                     "atoms": atoms,
                     "timestep": md_settings["timestep"] * units.fs,
                     "temperature_K": md_settings["temperature"],
-                    "externalstress": md_settings["pressure"] * units.Pascal
+                    "externalstress": md_settings["pressure"]
+                    * units.Pascal
                     * units.bar,
                     "ttime": md_settings["ttime"] * units.fs,
                     "pfactor": md_settings["pfactor"] * units.fs,
@@ -523,7 +557,7 @@ class PrepareInitialDatasetProcedure:
                     "tloop": md_settings["tloop"],
                     "ploop": md_settings["ploop"],
                 }
-                
+
                 dyn = MTKNPT(**npt_settings)
 
         return dyn
@@ -551,7 +585,7 @@ class PrepareInitialDatasetProcedure:
                         z=self.z,
                         seeds_tags_dict=self.seeds_tags_dict,
                         dtype=self.dtype,
-                        model_choice=self.model_choice
+                        model_choice=self.model_choice,
                     )
                 else:
 
@@ -884,10 +918,29 @@ class ALConfiguration:
                 "train_subset_size must be specified for random_subset "
                 "replay strategy."
             )
-        
+
         # Paths
-        self.dataset_dir = self.misc.dataset_dir
-        self.log_dir = self.misc.log_dir
+        self.output_dir = self.misc.output_dir
+        self.output_dir.mkdir(parents=True, exist_ok=True)
+
+        def _r(p):
+            p = Path(p)
+            return p if p.is_absolute() else self.output_dir / p
+
+        self.dataset_dir = _r(self.misc.dataset_dir)
+        self.log_dir = _r(self.misc.log_dir)
+        self.checkpoints_dir = _r(self.checkpoints_dir)
+        self.model_settings.GENERAL.checkpoints_dir = (
+            self.checkpoints_dir
+        )
+        self.model_dir = _r(self.model_dir)
+        self.model_settings.GENERAL.model_dir = self.model_dir
+        self.model_settings.GENERAL.loss_dir = _r(self.model_settings.GENERAL.loss_dir)
+
+        self.al_restart_path = (
+            self.output_dir / "restart" / "al" / "al_restart.npy"
+        )
+
         self.species_dir = self.al_settings.species_dir
         self.ASI_path = self.al_settings.aims_lib_path
 
@@ -920,14 +973,19 @@ class ALConfiguration:
         self._setup_molecular_indices()
 
         # Restart handling
-        self.restart = os.path.exists("restart/al/al_restart.npy")
+        self.restart = self.al_restart_path.exists()
         self.create_restart = self.misc.create_restart
 
-        # foundational model usage during AL
         # FIXME: If one can use foundational model in AL as well, then it would be better
         #        to have the model name (mace/so3lr) in the model settings
         self.use_foundational = self.al_settings.use_foundational
         self.foundational_model_settings = self.al_settings.foundational_model_settings
+
+        # teacher model usage during AL (replaces DFT with teacher model)
+        self.use_teacher_reference = self.al_settings["use_teacher_reference"]
+        self.teacher_reference_settings = self.al_settings[
+            "teacher_reference_settings"
+        ]
 
 
     def _setup_molecular_indices(self):
@@ -1174,7 +1232,7 @@ class ALEnsemble:
             self.z = Z_from_geometry(atoms)
         elif self.config.model_choice in ["so3lr", "so3krates"]:
             self.z = np.array([i for i in range(1, 119)])
-            
+
         self.z_table = create_ztable(self.z)
 
     def _load_seeds_tags_dict(self):
@@ -1211,9 +1269,7 @@ class ALEnsemble:
             assert self.config.model_choice not in [
                 "so3lr",
                 "so3krates",
-            ], (
-                "CuEQ is not supported for So3krates/SO3LR."
-            )
+            ], "CuEQ is not supported for So3krates/SO3LR."
         self.ensemble = ensemble_from_folder(
             path_to_models=self.config.model_dir,
             device=self.config.device,
@@ -1237,10 +1293,12 @@ class ALEnsemble:
 
     def _setup_datasets(self):
         """Setup initial datasets (rank 0 only)."""
-        dataset_subdir = "final" if (
-            self.config.restart or self.config.extend_existing_final_ds
-        ) else "initial"
-        
+        dataset_subdir = (
+            "final"
+            if (self.config.restart or self.config.extend_existing_final_ds)
+            else "initial"
+        )
+
         log_message = (
             "Loading datasets from checkpoint."
             if self.config.restart
@@ -1251,9 +1309,7 @@ class ALEnsemble:
 
         self.ensemble_ase_sets = load_ensemble_sets_from_folder(
             ensemble=self.ensemble,
-            path_to_folder=Path(
-                self.config.misc.dataset_dir / dataset_subdir
-            ),
+            path_to_folder=self.config.dataset_dir / dataset_subdir,
         )
 
         self.ensemble_model_sets = ase_to_model_ensemble_sets(
@@ -1269,9 +1325,7 @@ class ALEnsemble:
         self.train_dataset_len = len(
             self.ensemble_ase_sets[list(self.ensemble.keys())[0]]["train"]
         )
-        logging.info(
-            f'Length of training set: {self.train_dataset_len}'
-        )
+        logging.info(f"Length of training set: {self.train_dataset_len}")
 
     def _broadcast_dataset_info(self):
         """Broadcast dataset information to all ranks."""
@@ -1282,31 +1336,32 @@ class ALEnsemble:
         self.comm_handler.barrier()
 
     def _check_subset_size(self, data_set, set_subset_size):
-        
+
         subset_size = (
-                len(data_set)
-                if len(data_set)
-                < set_subset_size
-                else set_subset_size
-            )
+            len(data_set)
+            if len(data_set) < set_subset_size
+            else set_subset_size
+        )
         return subset_size
 
     def create_training_subset(
-            self, 
-            model_point,
-            idx: int, 
-            ):
+        self,
+        model_point,
+        idx: int,
+    ):
         """
         Creates a single batch of specified size. It includes the newly sampled
         point and a random selection of points from the current training set.
         """
-        
+
         assert self.config.train_subset_size is not None, (
             f"train_subset_size must be specified when using replay strategy "
             f"{self.config.replay_strategy}."
         )
         set_valid_size = (
-            self.config.valid_subset_size if self.config.valid_subset_size is not None else np.inf
+            self.config.valid_subset_size
+            if self.config.valid_subset_size is not None
+            else np.inf
         )
 
         for tag in self.ensemble_ase_sets.keys():
@@ -1316,17 +1371,16 @@ class ALEnsemble:
             if self.config.replay_strategy == "random_subset":
                 train_subset_size = self._check_subset_size(
                     data_set=self.ensemble_model_sets[tag]["train"],
-                    set_subset_size=self.config.train_subset_size
+                    set_subset_size=self.config.train_subset_size,
                 )
                 valid_subset_sizes = {}
-                for head_name, head_data in self.ensemble_model_sets[
-                    tag
-                ]["valid"].items():
+                for head_name, head_data in self.ensemble_model_sets[tag][
+                    "valid"
+                ].items():
                     valid_subset_sizes[head_name] = self._check_subset_size(
-                        data_set=head_data,
-                        set_subset_size=set_valid_size
-                        )
-                   
+                        data_set=head_data, set_subset_size=set_valid_size
+                    )
+
                 train_batch_size = min(
                     self.config.set_batch_size, train_subset_size
                 )
@@ -1338,21 +1392,21 @@ class ALEnsemble:
                     for head_name in valid_subset_sizes.keys()
                 ]
                 valid_batch_size = min(valid_batch_sizes)
-                
+
             random_sample_train = random.sample(
                 self.ensemble_model_sets[tag]["train"],
                 train_subset_size - 1,
             )
-            
+
             random_samples_valid = {}
-            for head_name, head_data in self.ensemble_model_sets[
-                tag
-            ]["valid"].items():
+            for head_name, head_data in self.ensemble_model_sets[tag][
+                "valid"
+            ].items():
                 random_samples_valid[head_name] = random.sample(
                     head_data,
                     valid_subset_sizes[head_name],
                 )
-                
+
             train_set = random_sample_train + model_point
             valid_set = random_samples_valid
             (
@@ -1364,12 +1418,20 @@ class ALEnsemble:
                 train_batch_size,
                 valid_batch_size,
             )
-            
-        logging.info(f"Using replay strategy: \"{self.config.replay_strategy}\". Sample sizes:")
-        logging.info(f'Training set has {train_subset_size} point(s) with {len(self.ensemble_model_sets[tag]["train_subset"][idx])} batch(es).')
-        
-        for head_name, head_data in self.ensemble_model_sets[tag]["valid_subset"][idx].items():
-            logging.info(f'Validation set for head "{head_name}" has {valid_subset_sizes[head_name]} point(s) with {len(head_data)} batch(es).')
+
+        logging.info(
+            f'Using replay strategy: "{self.config.replay_strategy}". Sample sizes:'
+        )
+        logging.info(
+            f'Training set has {train_subset_size} point(s) with {len(self.ensemble_model_sets[tag]["train_subset"][idx])} batch(es).'
+        )
+
+        for head_name, head_data in self.ensemble_model_sets[tag][
+            "valid_subset"
+        ][idx].items():
+            logging.info(
+                f'Validation set for head "{head_name}" has {valid_subset_sizes[head_name]} point(s) with {len(head_data)} batch(es).'
+            )
 
 
 class ALCalculatorMLFF:
@@ -1389,6 +1451,7 @@ class ALCalculatorMLFF:
         # model calculator
         self.models = None
         self.mlff_calc = None
+        self.mlff_calc_ensemble = None  # only set when use_foundational=True
 
         # Atomic energies handling
         self.update_atomic_energies = False
@@ -1484,33 +1547,85 @@ class ALCalculatorMLFF:
 
         if self.config.use_foundational:
             logging.info("Using foundational model for MD.")
-            foundational_model_settings = self.config.foundational_model_settings
-            mace_model = foundational_model_settings['mace_model']
+            foundational_model_settings = (
+                self.config.foundational_model_settings
+            )
+            model_type = foundational_model_settings.get(
+                "model_type", "mace-mp"
+            )
+            model_path = foundational_model_settings.get("model_path", None)
             # for propagation
-            self.mlff_calc = mace_mp(
-                model=mace_model,
-                dispersion=False,
-                default_dtype=self.config.dtype,
-                device=self.config.device,
-                enable_cueq=self.config.enable_cueq,
+            if model_type == "mace-mp":
+                mace_model = foundational_model_settings["mace_model"]
+                self.mlff_calc = mace_mp(
+                    model=mace_model,
+                    dispersion=False,
+                    default_dtype=self.config.dtype,
+                    device=self.config.device,
+                    enable_cueq=self.config.enable_cueq,
+                )
+            elif model_type == "mace":
+                self.mlff_calc = MACECalculator(
+                    model_paths=model_path,
+                    device=self.config.device,
+                    default_dtype=self.config.dtype,
+                    enable_cueq=self.config.enable_cueq,
+                )
+            elif model_type in ["so3lr", "so3krates"]:
+                self.mlff_calc = TorchkratesCalculator(
+                    model_paths=model_path,
+                    compute_stress=self.config.compute_stress,
+                    device=self.config.device,
+                    default_dtype=self.config.dtype,
+                    r_max_lr=foundational_model_settings.get("r_max_lr"),
+                    dispersion_energy_cutoff_lr_damping=(
+                        foundational_model_settings.get(
+                            "dispersion_lr_damping"
+                        )
+                    ),
+                )
+            logging.info(
+                f"Foundational model type: {model_type}, "
+                f"path: {model_path}"
             )
             # for uncertainty estimation
-            model_paths = list_files_in_directory(self.config.model_dir)
+            ensemble_paths = list_files_in_directory(self.config.model_dir)
             self.models = [
                 torch.load(
-                    f=model_path,
+                    f=p,
                     map_location=self.config.device,
                     weights_only=False,
                 )
-                for model_path in model_paths
+                for p in ensemble_paths
+                if p.endswith(".model")
             ]
-            self.mlff_calc_ensemble = MACECalculator(
-                models=self.models,
-                device=self.config.device,
-                default_dtype=self.config.dtype,
-                enable_cueq=self.config.enable_cueq,
-            )
-            
+            if self.config.model_choice == "mace":
+                self.mlff_calc_ensemble = MACECalculator(
+                    models=self.models,
+                    device=self.config.device,
+                    default_dtype=self.config.dtype,
+                    enable_cueq=self.config.enable_cueq,
+                )
+            elif self.config.model_choice in ["so3lr", "so3krates"]:
+                if self.config.use_multihead_model:
+                    self.mlff_calc_ensemble = MultiHeadSO3LRCalculator(
+                        model=self.models,
+                        device=self.config.device,
+                        default_dtype=self.config.dtype,
+                        r_max_lr=self.config.r_max_lr,
+                        dispersion_energy_cutoff_lr_damping=self.config.dispersion_energy_cutoff_lr_damping,
+                        compute_stress=self.config.compute_stress,
+                    )
+                else:
+                    self.mlff_calc_ensemble = TorchkratesCalculator(
+                        models=self.models,
+                        device=self.config.device,
+                        default_dtype=self.config.dtype,
+                        r_max_lr=self.config.r_max_lr,
+                        dispersion_energy_cutoff_lr_damping=self.config.dispersion_energy_cutoff_lr_damping,
+                        compute_stress=self.config.compute_stress,
+                    )
+
         else:
             logging.info("Using custom model for MD.")
             model_paths = list_files_in_directory(self.config.model_dir)
@@ -1520,7 +1635,8 @@ class ALCalculatorMLFF:
                     map_location=self.config.device,
                     weights_only=False,
                 )
-                for model_path in model_paths if model_path.endswith('.model')
+                for model_path in model_paths
+                if model_path.endswith(".model")
             ]
             if self.config.model_choice == "mace":
                 self.mlff_calc = MACECalculator(
@@ -1538,7 +1654,6 @@ class ALCalculatorMLFF:
                         r_max_lr=self.config.r_max_lr,
                         dispersion_energy_cutoff_lr_damping=self.config.dispersion_energy_cutoff_lr_damping,
                         compute_stress=self.config.compute_stress,
-                        
                     )
                 else:
                     self.mlff_calc = TorchkratesCalculator(
@@ -1571,14 +1686,9 @@ class ALMD:
             num_trajectories=self.config.num_trajectories,
         )
         if self.rank == 0:
-            logging.info(
-                f'Using following settings for MDs:'
-            )
-            log_yaml_block(
-                "MD_SETTINGS",
-                self.md_settings
-            )
-            
+            logging.info(f"Using following settings for MDs:")
+            log_yaml_block("MD_SETTINGS", self.md_settings)
+
         self.md_drivers = {}
 
         # Setup MD modification if configured
@@ -1609,7 +1719,9 @@ class ALMD:
         """Setup ASE molecular dynamics object for given atoms."""
         stat_ensemble = md_settings["stat_ensemble"].lower()
         self._initialize_velocities(atoms, md_settings)
-        dyn = self._create_dynamics_engine(atoms, md_settings, stat_ensemble, idx)
+        dyn = self._create_dynamics_engine(
+            atoms, md_settings, stat_ensemble, idx
+        )
         return dyn
 
     def _create_dynamics_engine(
@@ -1698,7 +1810,7 @@ class ALMD:
             "ploop": md_settings["ploop"],
         }
         return MTKNPT(**npt_settings)
-    
+
     def _initialize_velocities(self, atoms: ase.Atoms, md_settings: dict):
         """
         Initialize Maxwell-Boltzmann velocity distribution
@@ -1874,7 +1986,7 @@ class ALRestart:
         logging.info("Restarting active learning procedure from checkpoint.")
 
         self.al_restart_dict = np.load(
-            "restart/al/al_restart.npy", allow_pickle=True
+            self.config.al_restart_path, allow_pickle=True
         ).item()
 
         # Load all available keys from restart dict
@@ -1887,16 +1999,18 @@ class ALRestart:
         # Special handling for uncertainty_checks
         if self.config.analysis and self.config.mol_idxs is not None:
             self.state_manager.uncertainty_checks = []
-            
+
         # Special handling for subset data sets if applies
-        if self.config.replay_strategy in [
-            "random_subset"
-            ]:
+        if self.config.replay_strategy in ["random_subset"]:
             for idx in range(self.config.num_trajectories):
-                self.ensemble_manager.create_training_subset(
-                    model_point=self.state_manager.last_point_added[idx],
-                    idx=idx,
-                )
+                if (
+                    self.state_manager.last_point_added
+                    and idx in self.state_manager.last_point_added
+                ):
+                    self.ensemble_manager.create_training_subset(
+                        model_point=self.state_manager.last_point_added[idx],
+                        idx=idx,
+                    )
 
     def _broadcast_restart_state(self):
         """Broadcast restart state from rank 0 to all processes."""
@@ -2063,13 +2177,13 @@ class PrepareALProcedure:
             log_yaml_block(
                 "ACTIVE_LEARNING", aimsPAX_settings.ACTIVE_LEARNING.model_dump()
             )
-            logging.info(f"Using following settings for {self.config.model_choice}:")
+            logging.info(
+                f"Using following settings for {self.config.model_choice}:"
+            )
             log_yaml_block(self.config.model_choice, model_settings.model_dump())
         # Initialize all managers
         self.state_manager = ALStateManager(self.config, self.comm_handler)
-        self.ensemble_manager = ALEnsemble(
-            self.config, self.comm_handler
-        )
+        self.ensemble_manager = ALEnsemble(self.config, self.comm_handler)
         self.mlff_manager = ALCalculatorMLFF(
             self.config, self.ensemble_manager, self.comm_handler
         )
@@ -2081,7 +2195,7 @@ class PrepareALProcedure:
             self.state_manager,
             self.comm_handler,
             self.md_manager,
-            self.ensemble_manager
+            self.ensemble_manager,
         )
 
         # Set random seed
@@ -2157,10 +2271,14 @@ class PrepareALProcedure:
         )
 
         if self.config.analysis:
-            os.makedirs("analysis", exist_ok=True)
+            (self.config.output_dir / "analysis").mkdir(
+                parents=True, exist_ok=True
+            )
 
         if self.config.create_restart:
-            os.makedirs("restart/al", exist_ok=True)
+            self.config.al_restart_path.parent.mkdir(
+                parents=True, exist_ok=True
+            )
 
     def check_al_done(self) -> bool:
         """Check if active learning is done."""

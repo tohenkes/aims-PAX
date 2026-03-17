@@ -27,6 +27,15 @@ ACTIVE_LEARNING:
   skip_step_mlff: 25 
   num_trajectories: 8
   species_dir: "path/to/FHIaims/species_defaults/defaults_2020/light"
+  # use_foundational: true          # Use a pre-trained model for MD propagation;
+  #                                  # the trained ensemble is used only for
+  #                                  # uncertainty estimation and re-training.
+  # foundational_model_settings:
+  #   model_type: mace-mp            # mace-mp | mace | so3lr | so3krates
+  #   mace_model: small              # for model_type: mace-mp (small/medium/large)
+  #   model_path: null               # required for model_type: mace | so3lr | so3krates
+  #   r_max_lr: null                 # for model_type: so3lr | so3krates
+  #   dispersion_lr_damping: null    # for model_type: so3lr | so3krates
 
 
 MD:
@@ -38,6 +47,10 @@ MD:
   seed: 42
 
 MISC:
+  # Base directory for ALL output (logs, data, models, checkpoints, analysis,
+  # results, restart, PARSL scratch). Relative sub-paths (dataset_dir, log_dir,
+  # model_dir, checkpoints_dir) are resolved against this directory.
+  output_dir: "."
   create_restart: True
 
 CLUSTER:
@@ -70,5 +83,15 @@ CLUSTER:
 
   launch_str: srun path/to/aims.x >> aims.out
   calc_dir: "path/to/working/dir/calc"
+  # cores_per_job: 32    # Optional. Reserves N cores per reference job in WorkQueue
+  #                      # scheduler, enabling multiple concurrent jobs per node.
+  #                      # E.g. cores_per_job: 32 on a 128-core node allows 4
+  #                      # concurrent jobs. Must match MPI rank count in launch_str
+  #                      # (e.g. "srun -n 32 aims.x") for DFT calculations.
+  #                      # Applies to both DFT and teacher model reference calculations.
+  #                      # Requires memory_per_job to also be set.
+  # memory_per_job: 64000 # Memory in MB reserved per reference job (required when
+  #                      # cores_per_job is set). E.g. 64000 MB = 62.5 GB per job.
+  # disk_per_job: 1000   # Disk in MB reserved per reference job (default: 1000 MB).
 
   
