@@ -205,31 +205,57 @@ class DFDataManager:
         # Ensure every head has at least one valid point
         valid_set = self._ensure_valid_not_empty(valid_set, train_set)
 
-        batch_size = min(
-            config.set_batch_size, len(train_set)
-        )
         valid_batch_size = config.set_valid_batch_size
 
-        train_loader, valid_loaders = create_dataloader(
-            train_set,
-            valid_set,
-            batch_size,
-            valid_batch_size,
-        )
-
         if config.replay_strategy == "random_subset":
-            # For random_subset we mimic the AL pattern by storing under
-            # "train_subset" / "valid_subset" dicts keyed by trajectory 0
+            assert config.train_subset_size is not None, (
+                "train_subset_size must be set when "
+                "replay_strategy='random_subset'."
+            )
+            train_n = min(config.train_subset_size, len(train_set))
+            sampled_train = random.sample(model_set["train"], train_n)
+
+            set_valid_size = (
+                config.valid_subset_size
+                if config.valid_subset_size is not None
+                else float("inf")
+            )
+            sampled_valid = {}
+            for head_name, head_data in valid_set.items():
+                valid_n = min(int(set_valid_size), len(head_data))
+                sampled_valid[head_name] = random.sample(
+                    head_data, valid_n
+                )
+
+            batch_size = min(config.set_batch_size, train_n)
+            train_loader, valid_loaders = create_dataloader(
+                sampled_train, sampled_valid, batch_size, valid_batch_size
+            )
             model_set["train_subset"] = {0: train_loader}
             model_set["valid_subset"] = {0: valid_loaders}
+            logging.info(
+                f"Dataloaders prepared (random_subset): "
+                f"{train_n}/{len(train_set)} train,"
+                f" batch_size={batch_size}."
+            )
+            for head_name, head_data in valid_loaders.items():
+                logging.info(
+                    f'Validation set for head "{head_name}" has '
+                    f"{len(sampled_valid[head_name])} point(s) "
+                    f"with {len(head_data)} batch(es)."
+                )
         else:
+            batch_size = min(config.set_batch_size, len(train_set))
+            train_loader, valid_loaders = create_dataloader(
+                train_set, valid_set, batch_size, valid_batch_size
+            )
             model_set["train_loader"] = train_loader
             model_set["valid_loader"] = valid_loaders
-
-        logging.info(
-            f"Dataloaders prepared: {len(train_set)} train,"
-            f" {len(valid_set)} valid (batch_size={batch_size})."
-        )
+            n_valid = sum(len(v) for v in valid_set.values())
+            logging.info(
+                f"Dataloaders prepared: {len(train_set)} train,"
+                f" {n_valid} valid (batch_size={batch_size})."
+            )
 
     # -----------------------------------------------------------------------
     # Private helpers
