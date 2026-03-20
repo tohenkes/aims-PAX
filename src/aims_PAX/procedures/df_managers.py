@@ -86,9 +86,10 @@ class DFThresholdManager:
                 c_x=self.config.c_x,
             )
             sm.threshold[head_name] = float(new_threshold)
-            logging.debug(
-                f"Updated threshold for {head_name}: "
-                f"{sm.threshold[head_name]:.6f}"
+            logging.info(
+                f"Threshold updated for {head_name}: "
+                f"{sm.threshold[head_name]:.6f} "
+                f"({len(sm.batch_errors[head_name])} error samples)"
             )
         else:
             sm.batch_errors.extend(batch_errors)
@@ -102,7 +103,10 @@ class DFThresholdManager:
                 c_x=self.config.c_x,
             )
             sm.threshold = float(new_threshold)
-            logging.debug(f"Updated threshold: {sm.threshold:.6f}")
+            logging.info(
+                f"Threshold updated: {sm.threshold:.6f} "
+                f"({len(sm.batch_errors)} error samples)"
+            )
 
     def get_threshold_for_dataset(self, dataset_idx: int) -> float:
         """Return the current threshold for the given dataset."""
@@ -172,6 +176,12 @@ class DFDataManager:
             if max_reached:
                 return True
 
+        sm = self.state_manager
+        logging.info(
+            f"Dataset {dataset_idx}: added {len(atoms_list)} point(s). "
+            f"Total: train={sm.train_points_added},"
+            f" valid={sm.valid_points_added}."
+        )
         return False
 
     def prepare_dataloaders(self) -> None:
@@ -215,6 +225,11 @@ class DFDataManager:
         else:
             model_set["train_loader"] = train_loader
             model_set["valid_loader"] = valid_loaders
+
+        logging.info(
+            f"Dataloaders prepared: {len(train_set)} train,"
+            f" {len(valid_set)} valid (batch_size={batch_size})."
+        )
 
     # -----------------------------------------------------------------------
     # Private helpers
@@ -490,6 +505,12 @@ class DFWorkerManager:
             threshold = self._get_threshold(dataset_idx)
             head_index = dataset_idx
             multihead = config.use_multihead_model
+
+            logging.info(
+                f"Worker {worker_id} (dataset {dataset_idx}): submitting"
+                f" indices {current_offset}–{batch_end - 1}"
+                f" (threshold={threshold:.6f})"
+            )
 
             if self._use_parsl:
                 from aims_PAX.tools.utilities.parsl_utils import (
