@@ -567,9 +567,7 @@ def evaluate_batch_parsl(
         mini_batch = mini_batch.to(_device)
         n_structs = mini_batch.num_graphs
 
-        # Gradients must stay enabled: SO3LR computes forces as -dE/dr
-        with torch.enable_grad():
-            output = model(mini_batch.to_dict())
+        output = model(mini_batch.to_dict())
 
         force_errors = None
         energy_errors = None

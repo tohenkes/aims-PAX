@@ -531,7 +531,7 @@ class DFWorkerManager:
                     head_index=head_index,
                     multihead=multihead,
                     eval_batch_size=config.eval_batch_size,
-                    device=config.device,
+                    device=config.worker_device,
                 )
             else:
                 future = self._executor.submit(

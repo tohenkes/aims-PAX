@@ -56,6 +56,8 @@ MISC:
 # CLUSTER:
 #   type: slurm
 #   project_name: 'filter_example'
+#   worker_device: cpu   # Device for evaluation workers (default: cpu).
+#                        # Set to cuda if worker nodes have GPUs.
 #   parsl_options:
 #     nodes_per_block: 1
 #     init_blocks: 1

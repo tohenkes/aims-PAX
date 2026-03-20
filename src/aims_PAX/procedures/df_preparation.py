@@ -132,6 +132,14 @@ class DFConfiguration:
         self.save_xyz: bool = df["save_xyz"]
         self.shuffle_dataset: bool = df["shuffle_dataset"]
 
+        # Worker device — PARSL workers are typically CPU-only nodes even
+        # when the main process trains on GPU.
+        self.worker_device: str = (
+            self.cluster_settings.get("worker_device", "cpu")
+            if self.cluster_settings is not None
+            else self.device
+        )
+
         # Paths (all resolved relative to output_dir)
         self.output_dir = Path(self.misc.get("output_dir", ".")).resolve()
         self.output_dir.mkdir(parents=True, exist_ok=True)
