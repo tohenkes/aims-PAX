@@ -323,6 +323,10 @@ class DFTrainingManager:
             md_manager=None,  # not needed; orchestrator stores but never calls
         )
         self.orchestrator.save_restart = False
+        # Skip XYZ writing during intermediate training — atoms loaded from
+        # HDF5 may have None-valued arrays that crash ASE's atoms.copy().
+        # Final output is handled by DataFilteringProcedure._finalize().
+        self.orchestrator._save_training_artifacts = lambda: None
 
     def perform_training(self) -> None:
         """
