@@ -469,9 +469,13 @@ class DFWorkerManager:
                         "memory_per_job must be set in CLUSTER settings "
                         "when cores_per_job is set."
                     )
+                disk = config.cluster_settings.get(
+                    "disk_per_job", 1000
+                )
                 self.workqueue_resource_spec = {
                     "cores": cores,
                     "memory": memory,
+                    "disk": disk,
                 }
 
     # -----------------------------------------------------------------------
