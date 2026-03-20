@@ -612,6 +612,7 @@ class DFWorkerManager:
                 future,
                 dataset_idx,
                 batch_indices,
+                batch_end,
             )
 
     def collect_completed(
@@ -627,7 +628,7 @@ class DFWorkerManager:
         completed = []
         done_workers = []
 
-        for worker_id, (future, dataset_idx, batch_indices) in list(
+        for worker_id, (future, dataset_idx, batch_indices, batch_end) in list(
             self._futures.items()
         ):
             if self._use_parsl:
@@ -650,8 +651,11 @@ class DFWorkerManager:
                         "head_index": dataset_idx,
                     }
 
-                # Advance worker offset
-                sm.worker_offsets[worker_id] = batch_indices[-1] + 1
+                # Advance worker offset to the next chunk position.
+                # batch_end is the chunk-position end (not an HDF5 index),
+                # stored at submit time to avoid confusion with the shuffled
+                # HDF5 indices in batch_indices.
+                sm.worker_offsets[worker_id] = batch_end
 
                 # Check if worker is done
                 _, end = sm.worker_chunks[worker_id]

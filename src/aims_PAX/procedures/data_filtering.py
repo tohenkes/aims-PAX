@@ -155,6 +155,12 @@ class DataFilteringProcedure:
             if _best_ckpt is not None:
                 self.model_manager.load_from_checkpoint(_best_ckpt)
 
+        # Reload collected atoms from incremental HDF5 if available.
+        # Must come after setup_model() (z_table / model sets ready)
+        # and after load_from_checkpoint() (model weights restored).
+        if config.restart and self.state_manager.total_points_added > 0:
+            self._reload_filtered_dataset()
+
         # ---------------------------------------------------------------
         # 7. Manager classes
         # ---------------------------------------------------------------
@@ -209,75 +215,135 @@ class DataFilteringProcedure:
 
         max_reached = False
 
-        while not wm.all_done() and not max_reached:
-            # 1. Submit jobs for idle workers
-            wm.submit_batch_jobs()
+        while not max_reached:
+            # ----------------------------------------------------------
+            # Inner loop: process one full pass through the dataset
+            # ----------------------------------------------------------
+            while not wm.all_done() and not max_reached:
+                # 1. Submit jobs for idle workers
+                wm.submit_batch_jobs()
 
-            # 2. Collect completed results (poll with a short sleep)
-            completed = wm.collect_completed()
+                # 2. Collect completed results (poll with a short sleep)
+                completed = wm.collect_completed()
 
-            if not completed:
-                time.sleep(0.5)
-                continue
+                if not completed:
+                    time.sleep(0.5)
+                    continue
 
-            for worker_id, dataset_idx, result in completed:
-                exceeding = result.get("exceeding_indices", [])
-                batch_errors = result.get("batch_errors", [])
-                mean_err = result.get("mean_batch_error", 0.0)
+                for worker_id, dataset_idx, result in completed:
+                    exceeding = result.get("exceeding_indices", [])
+                    batch_errors = result.get("batch_errors", [])
+                    mean_err = result.get("mean_batch_error", 0.0)
 
-                logging.info(
-                    f"Worker {worker_id} (dataset {dataset_idx}): "
-                    f"{len(exceeding)}/{len(batch_errors)} points exceeded "
-                    f"threshold. Mean batch error: {mean_err:.6f}"
-                )
-
-                # 3. Update threshold
-                if batch_errors:
-                    self.threshold_manager.update_threshold(
-                        dataset_idx, batch_errors
+                    logging.info(
+                        f"Worker {worker_id} (dataset {dataset_idx}): "
+                        f"{len(exceeding)}/{len(batch_errors)} points exceeded "
+                        f"threshold. Mean batch error: {mean_err:.6f}"
                     )
 
-                # 4. Add exceeding points to dataset
-                if exceeding:
-                    max_reached = dm.load_and_add_points(dataset_idx, exceeding)
-
-                    # 5. Prepare dataloaders & train
-                    if sm.train_points_added > 0:
-                        dm.prepare_dataloaders()
-                        tm.perform_training()
-
-                        # Check desired accuracy after training
-                        if (
-                            sm.current_valid_error <= config.desired_accuracy
-                            and config.desired_accuracy > 0.0
-                        ):
-                            logging.info(
-                                f"Desired accuracy {config.desired_accuracy} "
-                                f"reached (valid error = "
-                                f"{sm.current_valid_error:.6f}). Stopping."
-                            )
-                            max_reached = True
-
-                        # Save updated model for workers
-                        wm.save_model_for_workers()
-
-                        # Analysis bookkeeping
-                        if config.analysis:
-                            self._record_analysis(mean_err)
-
-                    if max_reached:
-                        logging.info(
-                            "Max train set size reached. Stopping workers."
+                    # 3. Update threshold
+                    if batch_errors:
+                        self.threshold_manager.update_threshold(
+                            dataset_idx, batch_errors
                         )
-                        break
 
-                # 6. Save restart checkpoint after each batch
-                if config.create_restart:
-                    rm.save()
+                    # 4. Add exceeding points to dataset
+                    if exceeding:
+                        max_reached = dm.load_and_add_points(
+                            dataset_idx, exceeding
+                        )
 
-            # Resubmit jobs (handles workers that just finished)
-            if not max_reached:
-                wm.submit_batch_jobs()
+                        # 5. Prepare dataloaders & train
+                        if sm.train_points_added > 0:
+                            dm.prepare_dataloaders()
+                            tm.perform_training()
+
+                            # Check desired accuracy after training
+                            if (
+                                sm.current_valid_error
+                                <= config.desired_accuracy
+                                and config.desired_accuracy > 0.0
+                            ):
+                                logging.info(
+                                    f"Desired accuracy "
+                                    f"{config.desired_accuracy} reached "
+                                    f"(valid error = "
+                                    f"{sm.current_valid_error:.6f}). "
+                                    "Stopping."
+                                )
+                                max_reached = True
+
+                            # Save updated model for workers
+                            wm.save_model_for_workers()
+
+                            # Incrementally persist collected dataset
+                            if config.create_restart:
+                                self._save_incremental_dataset()
+
+                            # Analysis bookkeeping
+                            if config.analysis:
+                                self._record_analysis(mean_err)
+
+                        if max_reached:
+                            logging.info(
+                                "Max train set size reached. "
+                                "Stopping workers."
+                            )
+                            break
+
+                    # 6. Save restart checkpoint after each batch
+                    if config.create_restart:
+                        rm.save()
+
+                # Resubmit jobs (handles workers that just finished)
+                if not max_reached:
+                    wm.submit_batch_jobs()
+
+            # ----------------------------------------------------------
+            # End of pass — check whether to loop or stop
+            # ----------------------------------------------------------
+            if max_reached:
+                break
+
+            # Targets not met; decide whether to loop through data again
+            if not config.loop_exhausted_data:
+                logging.warning(
+                    f"Data exhausted after pass {sm.current_pass}: all "
+                    "dataset chunks evaluated but neither the desired "
+                    "accuracy nor the max training set size was reached. "
+                    f"Final validation error: "
+                    f"{sm.current_valid_error:.6f} "
+                    f"(target: {config.desired_accuracy}), "
+                    f"training points collected: {sm.train_points_added} "
+                    f"(target: {config.max_train_set_size})."
+                )
+                break
+
+            sm.current_pass += 1
+            if (
+                config.max_data_passes > 0
+                and sm.current_pass > config.max_data_passes
+            ):
+                logging.warning(
+                    f"Data exhausted after {config.max_data_passes} "
+                    "pass(es) without reaching targets. "
+                    f"Final validation error: "
+                    f"{sm.current_valid_error:.6f} "
+                    f"(target: {config.desired_accuracy}), "
+                    f"training points collected: {sm.train_points_added} "
+                    f"(target: {config.max_train_set_size})."
+                )
+                break
+
+            logging.info(
+                f"Data exhausted (pass {sm.current_pass - 1} complete). "
+                f"Re-shuffling dataset for pass {sm.current_pass}."
+            )
+            sm.initialize_workers(
+                self._dataset_sizes, pass_num=sm.current_pass
+            )
+            if config.create_restart:
+                rm.save()
 
         # Mark run complete and save final checkpoint
         rm.df_done = True
@@ -376,33 +442,29 @@ class DataFilteringProcedure:
             "for convergence."
         )
 
-    def _finalize(self) -> None:
+    def _save_incremental_dataset(self) -> None:
         """
-        Save the filtered dataset.
+        Write currently-collected atoms to the output HDF5 file(s).
 
-        Always saves per-dataset HDF5 files (and optionally a combined
-        one for multi-head runs).
-        When config.save_xyz is True, also saves XYZ.
+        Called after each training step (when create_restart=True) so
+        the filtered dataset is always recoverable from disk after a
+        crash.  Uses the same paths as _finalize(); the final write is
+        an overwrite of identical data.
         """
         config = self.config
         mm = self.model_manager
         tag = "model_seed_1"
         ase_sets = mm.ensemble_ase_sets[tag]
 
-        all_train: List = ase_sets["train"]
-        all_valid: List = ase_sets["valid"]
-        all_atoms = all_train + all_valid
-
+        all_atoms = ase_sets["train"] + ase_sets["valid"]
         if not all_atoms:
-            logging.warning("No data collected; nothing to save.")
             return
 
-        # Build a key_specification without "head": the HDF5 writer stores
-        # head separately in config_metadata/head and _detect_prop_meta would
-        # fail trying to cast the string value to float64.
         ks = config.key_specification
         save_keyspec = KeySpecification(
-            info_keys={k: v for k, v in ks.info_keys.items() if k != "head"},
+            info_keys={
+                k: v for k, v in ks.info_keys.items() if k != "head"
+            },
             arrays_keys=dict(ks.arrays_keys),
         )
 
@@ -418,10 +480,35 @@ class DataFilteringProcedure:
                 output_path=output_path,
                 key_specification=save_keyspec,
             )
-            logging.info(
-                f"Filtered dataset saved to {output_path} "
-                f"({len(all_atoms)} structures)."
-            )
+        logging.debug(
+            f"Incremental dataset saved: {len(all_atoms)} structures."
+        )
+
+    def _finalize(self) -> None:
+        """
+        Save the filtered dataset.
+
+        Always saves per-dataset HDF5 files (and optionally a combined
+        one for multi-head runs).
+        When config.save_xyz is True, also saves XYZ.
+        """
+        config = self.config
+        mm = self.model_manager
+        tag = "model_seed_1"
+        ase_sets = mm.ensemble_ase_sets[tag]
+
+        all_atoms = ase_sets["train"] + ase_sets["valid"]
+
+        if not all_atoms:
+            logging.warning("No data collected; nothing to save.")
+            return
+
+        # Write HDF5 (reuses the same logic as incremental saving)
+        self._save_incremental_dataset()
+        logging.info(
+            f"Filtered dataset saved to {config.dataset_dir} "
+            f"({len(all_atoms)} structures)."
+        )
 
         # Optional XYZ output
         if config.save_xyz:

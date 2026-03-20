@@ -131,6 +131,10 @@ class DFConfiguration:
         # Output
         self.save_xyz: bool = df["save_xyz"]
         self.shuffle_dataset: bool = df["shuffle_dataset"]
+        self.loop_exhausted_data: bool = df.get(
+            "loop_exhausted_data", True
+        )
+        self.max_data_passes: int = df.get("max_data_passes", 0)
 
         # Worker device — PARSL workers are typically CPU-only nodes even
         # when the main process trains on GPU.
@@ -239,6 +243,9 @@ class DFStateManager:
         # Shuffle maps — per-dataset index permutation (set by initialize_workers)
         self.shuffle_maps: dict = {}
 
+        # Pass counter (incremented each time data is exhausted and re-looped)
+        self.current_pass: int = 1
+
         # Analysis
         if config.analysis:
             self.collect_losses = {
@@ -248,7 +255,9 @@ class DFStateManager:
             }
             self.collect_thresholds = []
 
-    def initialize_workers(self, dataset_sizes: List[int]):
+    def initialize_workers(
+        self, dataset_sizes: List[int], pass_num: int = 1
+    ):
         """
         Distribute num_chunks across datasets proportionally to their
         size and partition each dataset into contiguous chunks.
@@ -296,9 +305,12 @@ class DFStateManager:
                 if start >= ds_size:
                     break
 
-        rng = np.random.default_rng(self.config.seed)
+        # Pass 1 uses seed as-is; subsequent passes offset the seed so each
+        # pass produces a different permutation. On pass 2+, always shuffle
+        # regardless of shuffle_dataset so looping is not identical.
+        rng = np.random.default_rng(self.config.seed + pass_num - 1)
         for ds_idx, ds_size in enumerate(dataset_sizes):
-            if self.config.shuffle_dataset:
+            if self.config.shuffle_dataset or pass_num > 1:
                 self.shuffle_maps[ds_idx] = rng.permutation(ds_size)
             else:
                 self.shuffle_maps[ds_idx] = np.arange(ds_size)
@@ -307,7 +319,11 @@ class DFStateManager:
             f"Initialised {worker_id} workers across "
             f"{num_datasets} dataset(s). "
             f"Workers per dataset: {workers_per_dataset}"
-            + (" (shuffled)" if self.config.shuffle_dataset else "")
+            + (
+            f" (shuffled, pass {pass_num})"
+            if (self.config.shuffle_dataset or pass_num > 1)
+            else ""
+        )
         )
 
 
@@ -492,6 +508,7 @@ class DFRestart:
         "ensemble_best_valid",
         "trajectory_intermediate_epochs",
         "trajectory_total_epochs",
+        "current_pass",
     ]
 
     def save(self):
