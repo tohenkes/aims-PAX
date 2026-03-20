@@ -458,6 +458,22 @@ class DFWorkerManager:
                 max_workers=config.num_chunks
             )
 
+        # WorkQueue resource spec — allows concurrent tasks within a block
+        self.workqueue_resource_spec = None
+        if self._use_parsl:
+            cores = config.cluster_settings.get("cores_per_job", None)
+            if cores is not None:
+                memory = config.cluster_settings.get("memory_per_job", None)
+                if memory is None:
+                    raise ValueError(
+                        "memory_per_job must be set in CLUSTER settings "
+                        "when cores_per_job is set."
+                    )
+                self.workqueue_resource_spec = {
+                    "cores": cores,
+                    "memory": memory,
+                }
+
     # -----------------------------------------------------------------------
     # Public API
     # -----------------------------------------------------------------------
@@ -517,6 +533,11 @@ class DFWorkerManager:
                     evaluate_batch_parsl,
                 )
 
+                kwargs = {}
+                if self.workqueue_resource_spec is not None:
+                    kwargs["parsl_resource_specification"] = (
+                        self.workqueue_resource_spec
+                    )
                 future = evaluate_batch_parsl(
                     model_path=self.model_save_path,
                     hdf5_path=hdf5_path,
@@ -532,6 +553,7 @@ class DFWorkerManager:
                     multihead=multihead,
                     eval_batch_size=config.eval_batch_size,
                     device=config.worker_device,
+                    **kwargs,
                 )
             else:
                 future = self._executor.submit(
