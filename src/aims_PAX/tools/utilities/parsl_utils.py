@@ -467,6 +467,7 @@ def evaluate_batch_parsl(
     multihead: bool = False,
     eval_batch_size: int = 32,
     device: str = "cpu",
+    **kwargs,
 ):
     """
     PARSL app that evaluates a batch of structures from a raw HDF5 dataset.
