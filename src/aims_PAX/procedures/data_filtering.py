@@ -110,20 +110,28 @@ class DataFilteringProcedure:
         # ---------------------------------------------------------------
         self._parsl_settings = None
         if config.cluster_settings is not None:
-            try:
-                from aims_PAX.tools.utilities.parsl_utils import (
-                    prepare_parsl,
-                )
+            import parsl
+            from aims_PAX.tools.utilities.parsl_utils import (
+                handle_parsl_logger,
+                prepare_parsl,
+            )
 
-                self._parsl_settings = prepare_parsl(
-                    cluster_settings=config.cluster_settings,
-                    output_dir=config.output_dir,
+            self._parsl_settings = prepare_parsl(
+                cluster_settings=config.cluster_settings,
+                output_dir=config.output_dir,
+            )
+            try:
+                parsl.dfk()
+                logging.info(
+                    "PARSL already initialised; reusing existing context."
                 )
-                logging.info("PARSL initialised for data-filtering workers.")
-            except Exception as exc:
-                logging.warning(
-                    f"PARSL setup failed ({exc}); falling back to local "
-                    "worker mode."
+            except parsl.errors.NoDataFlowKernelError:
+                handle_parsl_logger(
+                    log_dir=Path(config.log_dir) / "parsl_df.log"
+                )
+                parsl.load(self._parsl_settings["config"])
+                logging.info(
+                    "PARSL loaded for data-filtering workers."
                 )
 
         # ---------------------------------------------------------------
