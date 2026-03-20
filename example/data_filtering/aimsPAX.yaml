@@ -45,6 +45,9 @@ DATA_FILTERING:
   margin: 0.002               # Minimum improvement to reset patience counter.
 
   # --- Output ---
+  compact_logging: False  # Set True to suppress per-batch worker/threshold/
+                          # dataloader detail (demoted to DEBUG). Only points-
+                          # added and epoch-result lines remain as INFO.
   save_xyz: False    # Also write filtered dataset as XYZ (HDF5 is always saved).
   analysis: False    # Collect per-batch losses and thresholds for analysis.
 

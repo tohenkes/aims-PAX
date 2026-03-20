@@ -86,7 +86,12 @@ class DFThresholdManager:
                 c_x=self.config.c_x,
             )
             sm.threshold[head_name] = float(new_threshold)
-            logging.info(
+            _log = (
+                logging.debug
+                if self.config.compact_logging
+                else logging.info
+            )
+            _log(
                 f"Threshold updated for {head_name}: "
                 f"{sm.threshold[head_name]:.6f} "
                 f"({len(sm.batch_errors[head_name])} error samples)"
@@ -103,7 +108,12 @@ class DFThresholdManager:
                 c_x=self.config.c_x,
             )
             sm.threshold = float(new_threshold)
-            logging.info(
+            _log = (
+                logging.debug
+                if self.config.compact_logging
+                else logging.info
+            )
+            _log(
                 f"Threshold updated: {sm.threshold:.6f} "
                 f"({len(sm.batch_errors)} error samples)"
             )
@@ -233,13 +243,16 @@ class DFDataManager:
             )
             model_set["train_subset"] = {0: train_loader}
             model_set["valid_subset"] = {0: valid_loaders}
-            logging.info(
+            _log = (
+                logging.debug if config.compact_logging else logging.info
+            )
+            _log(
                 f"Dataloaders prepared (random_subset): "
                 f"{train_n}/{len(train_set)} train,"
                 f" batch_size={batch_size}."
             )
             for head_name, head_data in valid_loaders.items():
-                logging.info(
+                _log(
                     f'Validation set for head "{head_name}" has '
                     f"{len(sampled_valid[head_name])} point(s) "
                     f"with {len(head_data)} batch(es)."
@@ -252,10 +265,51 @@ class DFDataManager:
             model_set["train_loader"] = train_loader
             model_set["valid_loader"] = valid_loaders
             n_valid = sum(len(v) for v in valid_set.values())
-            logging.info(
+            _log = (
+                logging.debug if config.compact_logging else logging.info
+            )
+            _log(
                 f"Dataloaders prepared: {len(train_set)} train,"
                 f" {n_valid} valid (batch_size={batch_size})."
             )
+
+    def prepare_convergence_dataloaders(self) -> None:
+        """
+        Build full-dataset dataloaders for convergence training.
+
+        Always uses the complete train/valid sets regardless of
+        replay_strategy, and stores them under "train_loader" /
+        "valid_loader" so that TrainingOrchestrator can find them.
+        """
+        config = self.config
+        mm = self.model_manager
+        tag = "model_seed_1"
+        model_set = mm.ensemble_model_sets[tag]
+
+        train_set = model_set["train"]
+        valid_set = model_set["valid"]
+
+        if not train_set:
+            logging.warning(
+                "prepare_convergence_dataloaders: training set is empty."
+            )
+            return
+
+        valid_set = self._ensure_valid_not_empty(valid_set, train_set)
+
+        batch_size = min(config.set_batch_size, len(train_set))
+        valid_batch_size = config.set_valid_batch_size
+        train_loader, valid_loaders = create_dataloader(
+            train_set, valid_set, batch_size, valid_batch_size
+        )
+        model_set["train_loader"] = train_loader
+        model_set["valid_loader"] = valid_loaders
+
+        n_valid = sum(len(v) for v in valid_set.values())
+        logging.info(
+            f"Convergence dataloaders: {len(train_set)} train, "
+            f"{n_valid} valid (batch_size={batch_size})."
+        )
 
     # -----------------------------------------------------------------------
     # Private helpers
@@ -556,9 +610,12 @@ class DFWorkerManager:
             head_index = dataset_idx
             multihead = config.use_multihead_model
 
-            logging.info(
+            _log = (
+                logging.debug if config.compact_logging else logging.info
+            )
+            _log(
                 f"Worker {worker_id} (dataset {dataset_idx}): submitting"
-                f" indices {current_offset}–{batch_end - 1}"
+                f" indices {current_offset}-{batch_end - 1}"
                 f" (threshold={threshold:.6f})"
             )
 

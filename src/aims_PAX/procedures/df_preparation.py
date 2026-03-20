@@ -135,6 +135,7 @@ class DFConfiguration:
             "loop_exhausted_data", True
         )
         self.max_data_passes: int = df.get("max_data_passes", 0)
+        self.compact_logging: bool = df.get("compact_logging", False)
 
         # Worker device — PARSL workers are typically CPU-only nodes even
         # when the main process trains on GPU.

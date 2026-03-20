@@ -9,10 +9,23 @@ DataFilteringProcedure orchestrates:
   5. Optional final convergence pass
 """
 
+import contextlib
 import logging
 import time
 from pathlib import Path
 from typing import List, Optional
+
+
+@contextlib.contextmanager
+def _quiet_so3lr():
+    """Temporarily suppress INFO logs from so3krates_torch I/O helpers."""
+    logger = logging.getLogger("so3krates_torch")
+    prev = logger.level
+    logger.setLevel(logging.WARNING)
+    try:
+        yield
+    finally:
+        logger.setLevel(prev)
 
 import h5py
 import numpy as np
@@ -235,7 +248,12 @@ class DataFilteringProcedure:
                     batch_errors = result.get("batch_errors", [])
                     mean_err = result.get("mean_batch_error", 0.0)
 
-                    logging.info(
+                    _log = (
+                        logging.debug
+                        if config.compact_logging
+                        else logging.info
+                    )
+                    _log(
                         f"Worker {worker_id} (dataset {dataset_idx}): "
                         f"{len(exceeding)}/{len(batch_errors)} points exceeded "
                         f"threshold. Mean batch error: {mean_err:.6f}"
@@ -373,8 +391,8 @@ class DataFilteringProcedure:
             # Reload them from the saved filtered HDF5 files.
             self._reload_filtered_dataset()
 
-        # Ensure dataloaders are ready
-        self.data_manager.prepare_dataloaders()
+        # Ensure full-dataset dataloaders are ready for convergence
+        self.data_manager.prepare_convergence_dataloaders()
         self.training_manager.converge()
 
         # Save converged model
@@ -417,7 +435,8 @@ class DataFilteringProcedure:
             return
 
         logging.info(f"Reloading filtered dataset from {hdf5_path}.")
-        all_atoms = load_atoms_from_hdf5(str(hdf5_path))
+        with _quiet_so3lr():
+            all_atoms = load_atoms_from_hdf5(str(hdf5_path))
 
         # Split into train / valid using the same ratio as the original run
         n = len(all_atoms)
@@ -475,11 +494,12 @@ class DataFilteringProcedure:
             self._save_multihead_hdf5(all_atoms, dataset_dir, save_keyspec)
         else:
             output_path = str(dataset_dir / "filtered_dataset.h5")
-            save_atoms_to_hdf5(
-                atoms_iter=all_atoms,
-                output_path=output_path,
-                key_specification=save_keyspec,
-            )
+            with _quiet_so3lr():
+                save_atoms_to_hdf5(
+                    atoms_iter=all_atoms,
+                    output_path=output_path,
+                    key_specification=save_keyspec,
+                )
         logging.debug(
             f"Incremental dataset saved: {len(all_atoms)} structures."
         )
@@ -552,11 +572,12 @@ class DataFilteringProcedure:
             ds_idx = int(head_name.split("_")[-1])
             src_stem = Path(config.hdf5_paths[ds_idx]).stem
             output_path = str(dataset_dir / f"filtered_{src_stem}.h5")
-            save_atoms_to_hdf5(
-                atoms_iter=atoms_list,
-                output_path=output_path,
-                key_specification=save_keyspec,
-            )
+            with _quiet_so3lr():
+                save_atoms_to_hdf5(
+                    atoms_iter=atoms_list,
+                    output_path=output_path,
+                    key_specification=save_keyspec,
+                )
             logging.info(
                 f"  {head_name}: {len(atoms_list)} structures → "
                 f"{output_path}"
@@ -565,11 +586,12 @@ class DataFilteringProcedure:
 
         # Combined HDF5
         combined_path = str(dataset_dir / "filtered_combined.h5")
-        save_atoms_to_hdf5(
-            atoms_iter=all_atoms,
-            output_path=combined_path,
-            key_specification=save_keyspec,
-        )
+        with _quiet_so3lr():
+            save_atoms_to_hdf5(
+                atoms_iter=all_atoms,
+                output_path=combined_path,
+                key_specification=save_keyspec,
+            )
         logging.info(
             f"Combined filtered dataset: {total} structures → "
             f"{combined_path}"
