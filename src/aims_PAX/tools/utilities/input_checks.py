@@ -993,9 +993,9 @@ def check_aimsPAX_settings(settings: dict, procedure: str = "full") -> dict:
                 f"but got `{md_setting['stat_ensemble']}`!"
             )
         if md_setting["stat_ensemble"].lower() == "npt":
-            if md_setting["barostat"].lower() not in ["berendsen", "mtk"]:
+            if md_setting["barostat"].lower() not in ["berendsen", "mtk", "isomtk"]:
                 raise ValueError(
-                    f"The `barostat` must be either `berendsen` or `mtk`, "
+                    f"The `barostat` must be either `berendsen`, `mtk`, or `isomtk`, "
                     f"but got `{md_setting['barostat']}`!"
                 )
             if md_setting["barostat"].lower() == "berendsen":
@@ -1003,7 +1003,7 @@ def check_aimsPAX_settings(settings: dict, procedure: str = "full") -> dict:
                 for k in SCHEME["optional_berendsen"]:
                     if k not in md_setting:
                         md_setting[k] = SCHEME["optional_berendsen"][k]
-            elif md_setting["barostat"].lower() == "mtk":
+            elif md_setting["barostat"].lower() in ["mtk", "isomtk"]:
                 # check if optional mtk keys, values are missing and put defaults
                 for k in SCHEME["optional_mtk"]:
                     if k not in md_setting:
@@ -1039,11 +1039,11 @@ def check_aimsPAX_settings(settings: dict, procedure: str = "full") -> dict:
         elif md_setting["stat_ensemble"].lower() == "npt":
             if md_setting["barostat"].lower() == "berendsen":
                 md_scheme_key = "optional_berendsen"
-            elif md_setting["barostat"].lower() == "mtk":
+            elif md_setting["barostat"].lower() in ["mtk", "isomtk"]:
                 md_scheme_key = "optional_mtk"
             else:
                 raise ValueError(
-                    f"The `barostat` must be either `berendsen` or `mtk`, "
+                    f"The `barostat` must be either `berendsen`, `mtk`, or `isomtk`, "
                     f"but got `{md_setting['barostat']}`!"
                 )
         else:
