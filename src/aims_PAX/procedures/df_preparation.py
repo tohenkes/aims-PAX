@@ -133,7 +133,7 @@ class DFConfiguration:
         self.shuffle_dataset: bool = df["shuffle_dataset"]
 
         # Paths (all resolved relative to output_dir)
-        self.output_dir = Path(self.misc.get("output_dir", "."))
+        self.output_dir = Path(self.misc.get("output_dir", ".")).resolve()
         self.output_dir.mkdir(parents=True, exist_ok=True)
 
         def _r(p):
