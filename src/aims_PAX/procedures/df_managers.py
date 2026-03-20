@@ -481,7 +481,10 @@ class DFWorkerManager:
                 continue
 
             batch_end = min(current_offset + config.eval_stride, end)
-            batch_indices = list(range(current_offset, batch_end))
+            shuffle_map = sm.shuffle_maps[dataset_idx]
+            batch_indices = shuffle_map[
+                current_offset:batch_end
+            ].tolist()
 
             hdf5_path = config.hdf5_paths[dataset_idx]
             threshold = self._get_threshold(dataset_idx)

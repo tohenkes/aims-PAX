@@ -212,6 +212,7 @@ SCHEME = {
         "analysis": False,
         "margin": 0.002,
         "save_xyz": False,
+        "shuffle_dataset": True,
     },
     "conflicts": {
         "parallel": "CLUSTER",
@@ -342,6 +343,7 @@ SCHEME_DTYPES = {
         "update_md_checkpoints",
         "use_teacher_reference",
         "save_xyz",
+        "shuffle_dataset",
     ],
     "lists": ["mol_idxs"],
     "optional_lists": [],

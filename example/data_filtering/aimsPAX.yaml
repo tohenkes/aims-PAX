@@ -6,6 +6,9 @@ DATA_FILTERING:
     - "/path/to/large_dataset.h5"
 
   # --- Evaluation ---
+  shuffle_dataset: True  # Shuffle dataset indices before chunking to avoid
+                         # sampling bias from inherent dataset structure (e.g.
+                         # MD frames grouped by system or sorted by energy).
   num_chunks: 8          # Dataset is split into this many sequential chunks;
                          # each chunk is evaluated in one pass.
   eval_stride: 500       # Structures evaluated per evaluation step.

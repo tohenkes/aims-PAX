@@ -130,6 +130,7 @@ class DFConfiguration:
 
         # Output
         self.save_xyz: bool = df["save_xyz"]
+        self.shuffle_dataset: bool = df["shuffle_dataset"]
 
         # Paths (all resolved relative to output_dir)
         self.output_dir = Path(self.misc.get("output_dir", "."))
@@ -227,6 +228,9 @@ class DFStateManager:
         self.trajectory_intermediate_epochs = {0: 0}
         self.trajectory_total_epochs = {0: 0}
 
+        # Shuffle maps — per-dataset index permutation (set by initialize_workers)
+        self.shuffle_maps: dict = {}
+
         # Analysis
         if config.analysis:
             self.collect_losses = {
@@ -284,10 +288,18 @@ class DFStateManager:
                 if start >= ds_size:
                     break
 
+        rng = np.random.default_rng(self.config.seed)
+        for ds_idx, ds_size in enumerate(dataset_sizes):
+            if self.config.shuffle_dataset:
+                self.shuffle_maps[ds_idx] = rng.permutation(ds_size)
+            else:
+                self.shuffle_maps[ds_idx] = np.arange(ds_size)
+
         logging.info(
             f"Initialised {worker_id} workers across "
             f"{num_datasets} dataset(s). "
             f"Workers per dataset: {workers_per_dataset}"
+            + (" (shuffled)" if self.config.shuffle_dataset else "")
         )
 
 
@@ -459,6 +471,7 @@ class DFRestart:
         "worker_chunks",
         "workers_done",
         "worker_dataset_idx",
+        "shuffle_maps",
         "threshold",
         "batch_errors",
         "total_points_added",
