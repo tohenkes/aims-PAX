@@ -11,16 +11,8 @@ DataFilteringProcedure orchestrates:
 
 import logging
 import time
-import warnings
 from pathlib import Path
 from typing import List, Optional
-
-# MACE warns about using 'forces' as forces_key since ASE 3.23 — this is
-# cosmetic for data filtering where we read directly from HDF5.
-warnings.filterwarnings(
-    "ignore",
-    message=".*forces_key.*no longer safe.*",
-)
 
 import h5py
 import numpy as np

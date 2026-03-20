@@ -267,33 +267,35 @@ def load_from_atoms(
     original_forces_key = forces_key
     original_stress_key = stress_key
     if energy_key == "energy":
-        logging.warning(
-            "Since ASE version 3.23.0b1, using energy_key 'energy' is no "
-            "longer safe when communicating between MACE and ASE. We recommend "
-            "using a different key, rewriting 'energy' to 'REF_energy'. You "
-            "need to use --energy_key='REF_energy' to specify the chosen key "
-            "name."
+        logging.debug(
+            "Rewriting energy_key 'energy' -> 'REF_energy' for MACE "
+            "compatibility."
         )
         key_specification.info_keys["energy"] = "REF_energy"
         for atoms in atoms_list:
-            try:
-                # print("OK")
-                atoms.info["REF_energy"] = atoms.get_potential_energy()
-                # print("atoms.info['REF_energy']:", atoms.info["REF_energy"])
-            except Exception as e:  # pylint: disable=W0703
-                logging.error(f"Failed to extract energy: {e}")
-                atoms.info["REF_energy"] = None
+            if original_energy_key in atoms.info:
+                atoms.info["REF_energy"] = atoms.info[original_energy_key]
+            else:
+                try:
+                    atoms.info["REF_energy"] = atoms.get_potential_energy()
+                except Exception as e:  # pylint: disable=W0703
+                    logging.error(f"Failed to extract energy: {e}")
+                    atoms.info["REF_energy"] = None
     if forces_key == "forces":
-        logging.warning(
-            "Since ASE version 3.23.0b1, using forces_key 'forces' is no longer safe when communicating between MACE and ASE. We recommend using a different key, rewriting 'forces' to 'REF_forces'. You need to use --forces_key='REF_forces' to specify the chosen key name."
+        logging.debug(
+            "Rewriting forces_key 'forces' -> 'REF_forces' for MACE "
+            "compatibility."
         )
         key_specification.arrays_keys["forces"] = "REF_forces"
         for atoms in atoms_list:
-            try:
-                atoms.arrays["REF_forces"] = atoms.get_forces()
-            except Exception as e:  # pylint: disable=W0703
-                logging.error(f"Failed to extract forces: {e}")
-                atoms.arrays["REF_forces"] = None
+            if original_forces_key in atoms.arrays:
+                atoms.arrays["REF_forces"] = atoms.arrays[original_forces_key]
+            else:
+                try:
+                    atoms.arrays["REF_forces"] = atoms.get_forces()
+                except Exception as e:  # pylint: disable=W0703
+                    logging.error(f"Failed to extract forces: {e}")
+                    atoms.arrays["REF_forces"] = None
     if stress_key == "stress":
         logging.warning(
             "Since ASE version 3.23.0b1, using stress_key 'stress' is no longer safe when communicating between MACE and ASE. We recommend using a different key, rewriting 'stress' to 'REF_stress'. You need to use --stress_key='REF_stress' to specify the chosen key name."
