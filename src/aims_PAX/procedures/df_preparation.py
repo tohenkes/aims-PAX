@@ -212,14 +212,14 @@ class DFStateManager:
         self.workers_done: dict = {}
         self.worker_dataset_idx: dict = {}
 
-        # Threshold state — per-dataset when multi-head, scalar otherwise
+        # Threshold state — per-dataset when multi-head, scalar otherwise.
+        # Initialised to 0 so the first batch always adds points and
+        # immediately bootstraps training.
         if config.use_multihead_model:
-            self.threshold = {
-                h: np.inf for h in config.all_heads
-            }
+            self.threshold = {h: 0.0 for h in config.all_heads}
             self.batch_errors = {h: [] for h in config.all_heads}
         else:
-            self.threshold = np.inf
+            self.threshold = 0.0
             self.batch_errors = []
 
         # Global counters
