@@ -44,6 +44,14 @@ def read_input_files(
 
     model_settings = check_model_settings(model_settings)
 
+    if procedure == "data-filtering":
+        return (
+            model_settings,
+            aimsPAX_settings,
+            None,
+            None,
+        )
+
     all_teacher = aimsPAX_settings["MISC"].get("all_teacher", False)
     if all_teacher:
         path_to_control = None

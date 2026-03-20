@@ -1,0 +1,71 @@
+DATA_FILTERING:
+  # Path(s) to raw HDF5 v2.0 dataset(s) to filter.
+  # Single path  → regular SO3LR model.
+  # Multiple paths → MultiHeadSO3LR (one output head per dataset).
+  hdf5_paths:
+    - "/path/to/large_dataset.h5"
+
+  # --- Evaluation ---
+  num_chunks: 8          # Dataset is split into this many sequential chunks;
+                         # each chunk is evaluated in one pass.
+  eval_stride: 500       # Structures evaluated per evaluation step.
+  eval_batch_size: null  # Batch size inside each evaluation step (null = auto).
+  error_type: forces     # Filtering metric: forces | energy | both.
+
+  # --- Stopping criteria ---
+  desired_acc: 0.05      # Stop when validation MAE (eV/Å) drops below this.
+                         # Set to 0.0 to disable.
+  max_train_set_size: 10000  # Stop after collecting this many training structures.
+
+  # --- Threshold ---
+  c_x: 0.0              # Threshold adjustment factor (negative = tighten,
+                         # positive = loosen, same meaning as in active learning).
+  freeze_threshold_dataset: .inf  # Freeze threshold once this many training
+                                  # structures are collected.
+
+  # --- Training ---
+  epochs_per_batch: 50   # Training epochs each time new points are added.
+  valid_ratio: 0.1       # Fraction of collected structures reserved for validation.
+  valid_skip: 1          # Validate every N epochs.
+  replay_strategy: full_dataset  # full_dataset | random_subset.
+  # train_subset_size: null  # Required when replay_strategy = random_subset.
+  # valid_subset_size: null  # Validation subset size for random_subset replay.
+
+  # --- Convergence ---
+  converge_best: True         # Final convergence pass on the collected dataset.
+  convergence_patience: 50    # Epochs without improvement before stopping.
+  max_convergence_epochs: 500 # Hard limit on convergence epochs.
+  margin: 0.002               # Minimum improvement to reset patience counter.
+
+  # --- Output ---
+  save_xyz: False    # Also write filtered dataset as XYZ (HDF5 is always saved).
+  analysis: False    # Collect per-batch losses and thresholds for analysis.
+
+MISC:
+  # All output (logs, models, checkpoints, filtered datasets) goes here.
+  output_dir: "./filter_output"
+  create_restart: True
+
+# Optional: submit evaluation workers to a Slurm cluster via PARSL.
+# Remove this section entirely to run locally (ProcessPoolExecutor).
+# Note: launch_str (DFT command) is NOT needed for data filtering.
+#
+# CLUSTER:
+#   type: slurm
+#   project_name: 'filter_example'
+#   parsl_options:
+#     nodes_per_block: 1
+#     init_blocks: 1
+#     min_blocks: 1
+#     max_blocks: 8
+#     label: 'filter_example'
+#   slurm_str: |
+#     #SBATCH --job-name=filter_example
+#     #SBATCH --partition=gpu
+#     #SBATCH --nodes=1
+#     #SBATCH --ntasks-per-node=1
+#     #SBATCH --gres=gpu:1
+#     #SBATCH --time=24:00:00
+#     #SBATCH --account=XXX
+#   worker_str: |
+#     source path/to/your/conda/bin/activate my_env

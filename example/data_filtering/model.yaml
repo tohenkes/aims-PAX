@@ -1,0 +1,20 @@
+GENERAL:
+  name_exp: filter_example
+  model_choice: so3lr
+
+ARCHITECTURE:
+  r_max: 4.5          # Short-range cutoff (Å)
+  r_max_lr: 7.0       # Long-range cutoff (Å); set equal to r_max to disable LR
+  num_features: 64
+  num_radial_basis_fn: 16
+  num_layers: 3
+  degrees: [1, 2, 3]
+
+TRAINING:
+  batch_size: 8
+  valid_batch_size: 8
+  lr: 0.001
+
+MISC:
+  device: cuda        # Use cpu if no GPU is available
+  compute_stress: false

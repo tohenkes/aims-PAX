@@ -449,3 +449,193 @@ def recalc_teacher_model_parsl(
     except Exception as e:
         logging.warning(f"Teacher model calculation failed: {str(e)}")
         return None
+
+
+@python_app
+def evaluate_batch_parsl(
+    model_path: str,
+    hdf5_path: str,
+    batch_indices: list,
+    threshold: float,
+    r_max: float,
+    r_max_lr,
+    error_type: str,
+    energy_key: str,
+    forces_key: str,
+    z_table_zs: list,
+    head_index: int = 0,
+    multihead: bool = False,
+    eval_batch_size: int = 32,
+    device: str = "cpu",
+):
+    """
+    PARSL app that evaluates a batch of structures from a raw HDF5 dataset.
+    Loads the model, loads structures by index, computes prediction error
+    vs reference labels. Returns indices that exceed the threshold.
+
+    Structures are processed in mini-batches via a DataLoader for
+    efficiency. Gradients must remain enabled because SO3LR computes
+    forces via autograd differentiation of the energy.
+
+    Args:
+        model_path: Path to saved model file on shared filesystem.
+        hdf5_path: Path to raw HDF5 v2.0 dataset.
+        batch_indices: Global HDF5 indices to evaluate.
+        threshold: Error threshold for filtering.
+        r_max: Short-range cutoff radius.
+        r_max_lr: Long-range cutoff radius (None if not used).
+        error_type: Which error to compute: "forces", "energy", or "both".
+        energy_key: Key for energy in HDF5 (e.g. "REF_energy").
+        forces_key: Key for forces in HDF5 (e.g. "REF_forces").
+        z_table_zs: List of atomic numbers for the z_table.
+        head_index: Which output head to use for multi-head models.
+        multihead: Whether the model is a MultiHeadSO3LR model.
+        eval_batch_size: Mini-batch size for the internal DataLoader.
+        device: Device string for model inference ("cpu", "cuda", "cuda:0", …).
+
+    Returns:
+        dict with keys:
+            "exceeding_indices": list of int — indices that exceeded threshold
+            "batch_errors": list of float — error per structure
+            "mean_batch_error": float — mean error over batch
+            "head_index": int — the head_index used
+    """
+    import torch
+    import numpy as np
+    from so3krates_torch.data.hdf5_utils import load_atoms_from_hdf5
+    from so3krates_torch.data.atomic_data import AtomicData
+    from so3krates_torch.data.utils import (
+        KeySpecification,
+        config_from_atoms,
+    )
+    from so3krates_torch.tools.utils import AtomicNumberTable
+    from so3krates_torch.tools import torch_geometric as so3_torch_geometric
+
+    _device = torch.device(device)
+    z_table = AtomicNumberTable(z_table_zs)
+    key_spec = KeySpecification(
+        info_keys={"energy": energy_key},
+        arrays_keys={"forces": forces_key},
+    )
+
+    model = torch.load(model_path, map_location=_device)
+    model.eval()
+    if multihead and hasattr(model, "select_heads"):
+        model.select_heads = True
+
+    atoms_list = load_atoms_from_hdf5(hdf5_path, index=batch_indices)
+    if not isinstance(atoms_list, list):
+        atoms_list = [atoms_list]
+
+    all_heads = [f"head_{i}" for i in range(model.num_output_heads)] \
+        if multihead else None
+
+    # When r_max_lr is None, SO3LR still needs edge_index_lr (electrostatics
+    # / dispersion are enabled by default). Fall back to r_max so the graph
+    # is always built with a valid cutoff.
+    _cutoff_lr = r_max_lr if r_max_lr is not None else r_max
+
+    # Build AtomicData list, tagging each entry with its global HDF5 index
+    data_list = []
+    for local_i, atoms in enumerate(atoms_list):
+        config = config_from_atoms(atoms, key_specification=key_spec)
+        data = AtomicData.from_config(
+            config,
+            z_table=z_table,
+            cutoff=r_max,
+            cutoff_lr=_cutoff_lr,
+            heads=all_heads,
+        )
+        if multihead:
+            data.head = torch.tensor([head_index], dtype=torch.long)
+        data.global_idx = torch.tensor(
+            [batch_indices[local_i]], dtype=torch.long
+        )
+        data_list.append(data)
+
+    loader = so3_torch_geometric.dataloader.DataLoader(
+        dataset=data_list,
+        batch_size=eval_batch_size,
+        shuffle=False,
+        drop_last=False,
+    )
+
+    exceeding_indices = []
+    batch_errors = []
+
+    for mini_batch in loader:
+        mini_batch = mini_batch.to(_device)
+        n_structs = mini_batch.num_graphs
+
+        # Gradients must stay enabled: SO3LR computes forces as -dE/dr
+        with torch.enable_grad():
+            output = model(mini_batch.to_dict())
+
+        force_errors = None
+        energy_errors = None
+
+        if error_type in ("forces", "both"):
+            ref_forces = mini_batch.forces
+            pred_forces = output.get("forces")
+            if ref_forces is not None and pred_forces is not None:
+                per_atom_abs = (
+                    torch.abs(pred_forces - ref_forces)
+                    .mean(dim=-1)
+                    .detach()
+                )
+                force_errors = torch.zeros(n_structs, device=_device)
+                counts = torch.zeros(n_structs, device=_device)
+                force_errors.scatter_add_(
+                    0, mini_batch.batch, per_atom_abs
+                )
+                counts.scatter_add_(
+                    0,
+                    mini_batch.batch,
+                    torch.ones(
+                        per_atom_abs.shape[0], device=_device
+                    ),
+                )
+                force_errors = force_errors / counts.clamp(min=1)
+
+        if error_type in ("energy", "both"):
+            ref_energy = mini_batch.energy
+            pred_energy = output.get("energy")
+            if ref_energy is not None and pred_energy is not None:
+                n_atoms = torch.bincount(
+                    mini_batch.batch, minlength=n_structs
+                ).float()
+                energy_errors = (
+                    torch.abs(
+                        pred_energy.squeeze(-1) - ref_energy.squeeze(-1)
+                    )
+                    / n_atoms.clamp(min=1)
+                ).detach()
+
+        errors = torch.zeros(n_structs, device=_device)
+        n_terms = 0
+        if force_errors is not None:
+            errors += force_errors
+            n_terms += 1
+        if energy_errors is not None:
+            errors += energy_errors
+            n_terms += 1
+        if n_terms > 0:
+            errors = errors / n_terms
+
+        errors_np = errors.cpu().numpy()
+        global_idxs = mini_batch.global_idx.cpu().numpy()
+
+        for err, gidx in zip(errors_np, global_idxs):
+            err_float = float(err)
+            batch_errors.append(err_float)
+            if err_float > threshold:
+                exceeding_indices.append(int(gidx))
+
+    mean_batch_error = float(np.mean(batch_errors)) if batch_errors else 0.0
+
+    return {
+        "exceeding_indices": exceeding_indices,
+        "batch_errors": batch_errors,
+        "mean_batch_error": mean_batch_error,
+        "head_index": head_index,
+    }

@@ -9,7 +9,7 @@ SCHEME = {
         "ACTIVE_LEARNING",
         "INITIAL_DATASET_GENERATION",
     ],
-    "optional_global": ["MISC"],
+    "optional_global": ["MISC", "DATA_FILTERING"],
     "required_al": [
         "species_dir",
         "num_trajectories",
@@ -190,6 +190,29 @@ SCHEME = {
         "total_charge_key": "total_charge",
         "total_spin_key": "total_spin",
     },
+    "required_df": ["hdf5_paths"],
+    "optional_df": {
+        "num_chunks": 4,
+        "eval_stride": 1000,
+        "error_type": "forces",
+        "desired_acc": 0.0,
+        "max_train_set_size": np.inf,
+        "c_x": 0.0,
+        "epochs_per_batch": 50,
+        "valid_ratio": 0.1,
+        "valid_skip": 1,
+        "replay_strategy": "full_dataset",
+        "train_subset_size": None,
+        "valid_subset_size": None,
+        "eval_batch_size": None,
+        "freeze_threshold_dataset": np.inf,
+        "convergence_patience": 50,
+        "max_convergence_epochs": 500,
+        "converge_best": True,
+        "analysis": False,
+        "margin": 0.002,
+        "save_xyz": False,
+    },
     "conflicts": {
         "parallel": "CLUSTER",
         "NVT": "NPT",
@@ -218,6 +241,9 @@ SCHEME_DTYPES = {
     ],
     "ints": [
         "num_trajectories",
+        "num_chunks",
+        "eval_stride",
+        "epochs_per_batch",
         "nodes_per_block",
         "init_blocks",
         "min_blocks",
@@ -278,6 +304,7 @@ SCHEME_DTYPES = {
         "total_charge_key",
         "total_spin_key",
         "replay_strategy",
+        "error_type",
     ],
     "optional_strings": [  # Fields that can be None or string
         "species_dir",
@@ -314,6 +341,7 @@ SCHEME_DTYPES = {
         "dispersion",
         "update_md_checkpoints",
         "use_teacher_reference",
+        "save_xyz",
     ],
     "lists": ["mol_idxs"],
     "optional_lists": [],
@@ -661,6 +689,108 @@ def check_dtypes(
     return settings
 
 
+def _check_data_filtering_settings(settings: dict) -> dict:
+    """Handle full settings validation for data-filtering procedure."""
+    valid_df_top_keys = {"DATA_FILTERING", "MISC", "CLUSTER"}
+    for k in settings.keys():
+        assert k in valid_df_top_keys, (
+            f"The keyword `{k}` is not valid for `data-filtering` procedure!"
+        )
+
+    # Check DATA_FILTERING section
+    settings = check_df_settings(settings)
+
+    # Handle optional MISC settings
+    misc_settings = settings.get("MISC", {})
+    for k in SCHEME["optional_misc"]:
+        if k not in misc_settings:
+            misc_settings[k] = SCHEME["optional_misc"][k]
+    misc_settings["all_teacher"] = True  # no DFT
+    settings["MISC"] = misc_settings
+
+    # Handle optional CLUSTER settings
+    cluster_settings = settings.get("CLUSTER", None)
+    if cluster_settings is not None:
+        for k in SCHEME["optional_cluster"]:
+            if k not in cluster_settings:
+                cluster_settings[k] = SCHEME["optional_cluster"][k]
+        settings["CLUSTER"] = cluster_settings
+
+    return settings
+
+
+def check_df_settings(settings: dict) -> dict:
+    """
+    Validates and fills defaults for DATA_FILTERING settings.
+
+    Args:
+        settings (dict): The DATA_FILTERING settings to check.
+
+    Returns:
+        dict: The checked and updated settings.
+    """
+    df_settings = settings.get("DATA_FILTERING")
+    assert df_settings is not None, (
+        "The `DATA_FILTERING` settings are not provided!"
+    )
+
+    # Check required keys
+    for k in SCHEME["required_df"]:
+        if k not in df_settings:
+            raise ValueError(
+                f"The keyword `{k}` is required in the "
+                f"`DATA_FILTERING` settings!"
+            )
+
+    # Validate hdf5_paths
+    hdf5_paths = df_settings["hdf5_paths"]
+    assert isinstance(hdf5_paths, list), (
+        "`hdf5_paths` must be a list of file paths!"
+    )
+    assert len(hdf5_paths) > 0, (
+        "`hdf5_paths` must contain at least one path!"
+    )
+    for p in hdf5_paths:
+        assert os.path.isfile(p), (
+            f"HDF5 path not found: `{p}`"
+        )
+
+    # Fill optional defaults
+    for k in SCHEME["optional_df"]:
+        if k not in df_settings:
+            df_settings[k] = SCHEME["optional_df"][k]
+
+    # Type checks
+    df_settings = check_dtypes(
+        settings=df_settings,
+        scheme_key="optional_df",
+        scheme=SCHEME,
+        scheme_dtype=SCHEME_DTYPES,
+    )
+
+    # Validate error_type
+    valid_error_types = ["forces", "energy", "both"]
+    assert df_settings["error_type"] in valid_error_types, (
+        f"`error_type` must be one of {valid_error_types}, "
+        f"got `{df_settings['error_type']}`!"
+    )
+
+    # Validate replay_strategy
+    valid_replay_strategies = ["full_dataset", "random_subset"]
+    assert df_settings["replay_strategy"] in valid_replay_strategies, (
+        f"`replay_strategy` must be one of {valid_replay_strategies}, "
+        f"got `{df_settings['replay_strategy']}`!"
+    )
+    if df_settings["replay_strategy"] == "random_subset":
+        assert df_settings["train_subset_size"] is not None, (
+            "`train_subset_size` must be specified for "
+            "`random_subset` replay strategy!"
+        )
+
+    settings["DATA_FILTERING"] = df_settings
+    return settings
+
+
 def check_aimsPAX_settings(settings: dict, procedure: str = "full") -> dict:
     """
     Takes the user active learning settings and checks if they are
@@ -675,6 +805,9 @@ def check_aimsPAX_settings(settings: dict, procedure: str = "full") -> dict:
     Returns:
         dict: The checked and updated active learning settings.
     """
+
+    if procedure == "data-filtering":
+        return _check_data_filtering_settings(settings)
 
     for k in settings.keys():
         # check global structure
