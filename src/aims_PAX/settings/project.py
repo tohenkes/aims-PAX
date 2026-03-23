@@ -76,7 +76,7 @@ MODEL_MAP = {
 class IDGSettings(ProjectBaseModel):
     """Pydantic settings for Initial Dataset Generation"""
 
-    species_dir: DirectoryPath = Field(
+    species_dir: Path = Field(
         ...,
         description="Path to the directory containing the FHI AIMS species defaults.",
     )
@@ -208,7 +208,7 @@ class IDGSettings(ProjectBaseModel):
 
 
 class ALSettings(ProjectBaseModel):
-    species_dir: str = Field(
+    species_dir: Path = Field(
         ...,
         description="Path to the directory containing the FHI-aims species defaults."
     )
@@ -370,7 +370,7 @@ class LangevinNVT(TrajectoryMDBase):
         default=0.001,
         description="Friction coefficient for Langevin dynamics (in fs<sup>-1</sup>)."
     )
-    MD_seed: int = Field(
+    seed: int = Field(
         default=42,
         description="Random number generator seed for Langevin dynamics."
     )
