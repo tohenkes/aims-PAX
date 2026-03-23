@@ -4,7 +4,8 @@ import numpy as np
 from typing import Optional, Dict
 from torch.optim import LBFGS
 from so3krates_torch.tools.train import valid_err_log
-#from mace.tools.train import valid_err_log
+
+# from mace.tools.train import valid_err_log
 from mace.tools.utils import MetricsLogger
 from torch.utils.data import DataLoader
 from torch_ema import ExponentialMovingAverage
@@ -75,7 +76,7 @@ def train_epoch(
             else:
                 # ExponentialLR and other schedulers don't need metrics
                 lr_scheduler.step()
-                
+
     total_loss = 0.0
     batches = 0
     for batch in train_loader:
@@ -240,8 +241,6 @@ def take_step_lbfgs(
 
         return total_loss
 
-
-
     loss = optimizer.step(closure)
 
     if ema is not None:
@@ -283,7 +282,7 @@ def validate_epoch_multihead(
     """
     tag = list(model_dict.keys())[0]
     model = model_dict[tag]
-    
+
     mh_valid_loss, mh_eval_metrics = {}, []
 
     ema = training_setups[tag]["ema"]
@@ -309,7 +308,7 @@ def validate_epoch_multihead(
                 output_args=output_args,
                 device=device,
             )
-        
+
         mh_valid_loss[valid_loader_name] = valid_loss
         mh_eval_metrics.append(eval_metrics)
         if logger is not None:
@@ -326,12 +325,17 @@ def validate_epoch_multihead(
     eval_metrics = {}
     for key in mh_eval_metrics[0]:
         if key not in ["mode", "epoch", "head"]:
-            eval_metrics[key] = np.mean(
-                [m[key] for m in mh_eval_metrics]
-            )
+            eval_metrics[key] = np.mean([m[key] for m in mh_eval_metrics])
         eval_metrics["mode"] = "eval"
         eval_metrics["epoch"] = epoch
-    average_mh_mae_f = eval_metrics['mae_f'] * 1000
+
+    # Per-head force MAE for validation-based threshold updates
+    eval_metrics["per_head_mae_f"] = {
+        head_name: float(mh_eval_metrics[i]["mae_f"])
+        for i, head_name in enumerate(valid_loaders.keys())
+    }
+
+    average_mh_mae_f = eval_metrics["mae_f"] * 1000
     logging.info(f"Average multi-head MAE_F: {average_mh_mae_f:.2f}  meV / A")
     return {tag: valid_loss}, valid_loss, eval_metrics, mh_valid_loss
 
@@ -362,7 +366,7 @@ def validate_epoch_ensemble(
     Returns:
         tuple[dict, float, dict]: Ensemble validation loss, average loss, and metrics.
     """
-    
+
     ensemble_valid_loss, ensemble_eval_metrics = {}, []
     for tag, model in ensemble.items():
 
@@ -472,6 +476,7 @@ def evaluate(
     metrics.reset()
 
     return avg_loss, aux
+
 
 @contextmanager
 def preserve_grad_state(model):

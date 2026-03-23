@@ -22,7 +22,7 @@ from aims_PAX.tools.utilities.data_handling import (
     create_dataloader,
     save_datasets,
     create_model_dataset,
-    ase_to_model_ensemble_sets
+    ase_to_model_ensemble_sets,
 )
 from aims_PAX.tools.utilities.utilities import (
     update_model_auxiliaries,
@@ -106,15 +106,13 @@ class ALDataManager:
             True if max dataset size is reached, False otherwise
         """
         if self.config.use_multihead_model:
-            self.current_head_name = random.choice(
-                self.config.all_heads
-            )
+            self.current_head_name = random.choice(self.config.all_heads)
             logging.info(f"Adding to head: {self.current_head_name}.")
-            
+
         else:
             self.current_head_name = "Default"
-        
-        received_point.info['head_name'] = self.current_head_name
+
+        received_point.info["head_name"] = self.current_head_name
         model_point = create_model_dataset(
             data=[received_point],
             z_table=self.ensemble_manager.z_table,
@@ -147,10 +145,9 @@ class ALDataManager:
                     model_point,
                     idx,
                 )
-            
+
             if max_size_reached:
                 return True
-            
 
         self.state_manager.total_points_added += 1
         return False
@@ -182,11 +179,9 @@ class ALDataManager:
                 self.ensemble_manager.ensemble_ase_sets[tag]["valid"].append(
                     received_point
                 )
-                self.ensemble_manager.ensemble_model_sets[
-                    tag
-                ][
-                    "valid"
-                ][self.current_head_name] += model_point
+                self.ensemble_manager.ensemble_model_sets[tag]["valid"][
+                    self.current_head_name
+                ] += model_point
 
         if self.rank == 0:
             self._log_dataset_sizes(tag)
@@ -305,50 +300,45 @@ class TrainingOrchestrator:
         self.restart_manager = restart_manager
         self.md_manager = md_manager
         self.train_loader_key = (
-            "train_subset" if self.config.replay_strategy in [
-                "random_subset"
-            ]
+            "train_subset"
+            if self.config.replay_strategy in ["random_subset"]
             else "train_loader"
         )
         self.valid_loader_key = (
-            "valid_subset" if self.config.replay_strategy in [
-                "random_subset"
-            ]
+            "valid_subset"
+            if self.config.replay_strategy in ["random_subset"]
             else "valid_loader"
         )
 
-    def _get_loaders(self, session: TrainingSession, tag: str, idx: int = None):
+    def _get_loaders(
+        self, session: TrainingSession, tag: str, idx: int = None
+    ):
 
-        if self.train_loader_key == "train_subset" and not session.is_convergence:
-            self.train_loader = session.ensemble_model_sets[
-                tag
-            ][
+        if (
+            self.train_loader_key == "train_subset"
+            and not session.is_convergence
+        ):
+            self.train_loader = session.ensemble_model_sets[tag][
                 self.train_loader_key
-                ][idx]
-            self.valid_loader = session.ensemble_model_sets[
-                tag
-            ][
+            ][idx]
+            self.valid_loader = session.ensemble_model_sets[tag][
                 self.valid_loader_key
-                ][idx]
+            ][idx]
         else:
-            self.train_loader = session.ensemble_model_sets[
-                tag
-            ][
+            self.train_loader = session.ensemble_model_sets[tag][
                 self.train_loader_key
             ]
-            self.valid_loader = session.ensemble_model_sets[
-                tag
-            ][
+            self.valid_loader = session.ensemble_model_sets[tag][
                 self.valid_loader_key
-            ] 
+            ]
 
     def train_single_epoch(
-        self, 
-        session: TrainingSession, 
-        tag: str, 
-        model, 
-        idx: int = None, 
-        logger=None
+        self,
+        session: TrainingSession,
+        tag: str,
+        model,
+        idx: int = None,
+        logger=None,
     ):
         """
         Train a single epoch for a specific model in the ensemble.
@@ -371,7 +361,7 @@ class TrainingOrchestrator:
             logging.info(f"Resetting optimizer for model {tag}.")
             session.training_setups[tag] = reset_model_optimizer(
                 model,
-                training_setup, 
+                training_setup,
                 self.config.model_settings["TRAINING"],
                 model_choice=self.config.model_choice,
             )
@@ -394,12 +384,8 @@ class TrainingOrchestrator:
         elif hasattr(self, "use_scheduler") and self.use_scheduler:
             lr_scheduler = training_setup["lr_scheduler"]
 
-        self._get_loaders(
-            session,
-            tag,
-            idx
-        )
-        
+        self._get_loaders(session, tag, idx)
+
         train_epoch(
             model=model,
             train_loader=self.train_loader,
@@ -451,14 +437,16 @@ class TrainingOrchestrator:
             return False
 
         # Perform validation
-        ensemble_valid_loss, valid_loss, metrics, mh_valid_loss = validate_epoch(
-            ensemble=self.ensemble_manager.ensemble,
-            training_setups=session.training_setups,
-            logger=logger,
-            log_errors=self.config.model_settings["MISC"]["error_table"],
-            epoch=self._get_validation_epoch(session, trajectory_idx),
-            valid_loaders=self.valid_loader,
-            multihead=self.config.use_multihead_model,
+        ensemble_valid_loss, valid_loss, metrics, mh_valid_loss = (
+            validate_epoch(
+                ensemble=self.ensemble_manager.ensemble,
+                training_setups=session.training_setups,
+                logger=logger,
+                log_errors=self.config.model_settings["MISC"]["error_table"],
+                epoch=self._get_validation_epoch(session, trajectory_idx),
+                valid_loaders=self.valid_loader,
+                multihead=self.config.use_multihead_model,
+            )
         )
 
         # Update session state
@@ -479,7 +467,7 @@ class TrainingOrchestrator:
                 ensemble_valid_loss,
                 metrics,
                 trajectory_idx,
-                mh_valid_loss
+                mh_valid_loss,
             )
 
     def _should_validate(
@@ -607,6 +595,12 @@ class TrainingOrchestrator:
 
         # Update current validation error
         self.state_manager.current_valid_error = metrics["mae_f"]
+
+        # Store per-head validation errors when available (multi-head)
+        if "per_head_mae_f" in metrics:
+            self.state_manager.current_valid_errors_per_head = metrics[
+                "per_head_mae_f"
+            ]
 
         # Check for improvement
         self._process_member_improvement(ensemble_valid_loss)
@@ -811,17 +805,14 @@ class ALTrainingManager:
 
     def _setup_mh_to_sh_convergence(self):
         """Setup convergence training configuration for MH to SH conversion."""
-        logging.info(
-            "Converging single-head model from multi-head model."
-        )
-        
+        logging.info("Converging single-head model from multi-head model.")
+
         # get best idx using name
         best_head_idx = int(self.best_member.split("_")[-1])
-        
+
         atomic_energies_dict = list(
-            self.mlff_manager.ensemble_atomic_energies_dict
-            .values()
-            )[0]
+            self.mlff_manager.ensemble_atomic_energies_dict.values()
+        )[0]
         tag = list(self.ensemble_manager.ensemble.keys())[0]
         mh_model = list(self.ensemble_manager.ensemble.values())[0]
         avg_num_neighbors = mh_model.avg_num_neighbors
@@ -831,7 +822,7 @@ class ALTrainingManager:
         settings.pop("num_multihead_heads", None)
         settings.pop("model", None)
         settings.pop("atomic_energies", None)
-        
+
         # convert mh model to sh model
         sh_model = mh_to_sh_model(
             mh_model_state_dict=mh_model.state_dict(),
@@ -841,26 +832,22 @@ class ALTrainingManager:
             avg_num_neighbors=avg_num_neighbors,
             head_idx=best_head_idx,
             device=self.config.device,
-            dtype=self.config.dtype
+            dtype=self.config.dtype,
         )
         # replace ensemble with single head model
-        self.ensemble_manager.ensemble = {
-            tag: sh_model
-        }
+        self.ensemble_manager.ensemble = {tag: sh_model}
         self.config.use_multihead_model = False
         self.config.all_heads = None
-    
+
     def _setup_sh_convergence(self):
         logging.info(
             f"Converging best model ({self.best_member}) on "
             f"acquired dataset."
         )
         self.ensemble_manager.ensemble = {
-            self.best_member: self.ensemble_manager.ensemble[
-                self.best_member
-            ]
+            self.best_member: self.ensemble_manager.ensemble[self.best_member]
         }
-        
+
     def _setup_convergence(self):
         """Setup convergence training configuration."""
         if self.config.converge_best:
@@ -900,7 +887,7 @@ class ALTrainingManager:
             r_max_lr=self.config.r_max_lr,
             all_heads=self.config.all_heads,
         )
-        
+
     def _get_initial_epoch(self):
         """Get initial epoch for convergence training."""
         if self.config.restart:
@@ -929,7 +916,7 @@ class ALTrainingManager:
             for tag in self.ensemble_manager.ensemble.keys()
         ]
         self.state_manager.trajectory_intermediate_epochs[idx] = 0
-        
+
         if self.config.use_multihead_model:
             for model in self.models:
                 model.select_heads = False
@@ -952,13 +939,14 @@ class ALTrainingManager:
             )
             smallest_valid_set = 0
             for valid_set in self.ensemble_manager.ensemble_model_sets[tag][
-                "valid"].values():
+                "valid"
+            ].values():
                 if (
                     smallest_valid_set == 0
                     or len(valid_set) < smallest_valid_set
                 ):
                     smallest_valid_set = len(valid_set)
-                    
+
             valid_batch_size = self._check_batch_size(
                 min(self.config.set_batch_size, smallest_valid_set), tag
             )
@@ -973,24 +961,28 @@ class ALTrainingManager:
                 valid_batch_size,
             )
             if not self.config.enable_cueq_train:
-                average_num_neighbors, atomic_energies_dict = update_model_auxiliaries(
-                    model,
-                    self.config.model_choice,
-                    model_sets[tag],
-                    self.config.scaling,
-                    self.mlff_manager.ensemble_atomic_energies[tag],
-                    self.config.update_avg_num_neighbors,
-                    self.mlff_manager.update_atomic_energies,
-                    self.mlff_manager.ensemble_atomic_energies_dict[tag],
-                    self.ensemble_manager.z_table,
-                    self.config.dtype,
-                    self.config.device,
+                average_num_neighbors, atomic_energies_dict = (
+                    update_model_auxiliaries(
+                        model,
+                        self.config.model_choice,
+                        model_sets[tag],
+                        self.config.scaling,
+                        self.mlff_manager.ensemble_atomic_energies[tag],
+                        self.config.update_avg_num_neighbors,
+                        self.mlff_manager.update_atomic_energies,
+                        self.mlff_manager.ensemble_atomic_energies_dict[tag],
+                        self.ensemble_manager.z_table,
+                        self.config.dtype,
+                        self.config.device,
+                    )
                 )
-                self.mlff_manager.ensemble_atomic_energies_dict[tag] = atomic_energies_dict
+                self.mlff_manager.ensemble_atomic_energies_dict[tag] = (
+                    atomic_energies_dict
+                )
         if self.config.use_multihead_model:
             for model in self.ensemble_manager.ensemble.values():
-                model.select_heads = True        
-        
+                model.select_heads = True
+
         return model_sets
 
     def _final_save(self, session: TrainingSession):
@@ -1001,7 +993,7 @@ class ALTrainingManager:
             current_epoch=session.current_epoch,
             convert_cueq_to_e3nn=self.config.enable_cueq_train,
             model_settings=self.config.model_settings["ARCHITECTURE"],
-            model_choice=self.config.model_choice
+            model_choice=self.config.model_choice,
         )
         # save model(s) and datasets in final results directory
         results_dir = self.config.output_dir / "results"
@@ -1018,7 +1010,7 @@ class ALTrainingManager:
             current_epoch=self.state_manager.total_epoch,
             convert_cueq_to_e3nn=self.config.enable_cueq_train,
             model_settings=self.config.model_settings["ARCHITECTURE"],
-            model_choice=self.config.model_choice
+            model_choice=self.config.model_choice,
         )
 
 
@@ -1078,7 +1070,7 @@ class ALDFTManager:
                 )
                 self.state_manager.trajectories[idx].calc = temp_calc
                 del temp_calc
-                
+
             self.state_manager.trajectory_status[idx] = "running"
 
         else:
@@ -1155,10 +1147,8 @@ class ALDFTManager:
             return None
 
     def _handle_aims_settings(
-            self,
-            control_source: Union[str, dict[int, str]],
-            log: bool = False
-            ):
+        self, control_source: Union[str, dict[int, str]], log: bool = False
+    ):
         """
         Parses the AIMS control file to get the settings for the AIMS
         calculator.
@@ -1175,9 +1165,8 @@ class ALDFTManager:
                 True  # this is necesssary to check for convergence in ASI
             )
             self.aims_settings = {
-                idx: aims_settings for idx in range(
-                    self.config.num_trajectories
-                )
+                idx: aims_settings
+                for idx in range(self.config.num_trajectories)
             }
         elif isinstance(control_source, dict):
             self.aims_settings = {}
@@ -1189,9 +1178,7 @@ class ALDFTManager:
                     True  # this is necesssary to check for convergence in ASI
                 )
                 if log:
-                    logging.info(
-                        f"Control file for geometry {key}: {value}."
-                    )
+                    logging.info(f"Control file for geometry {key}: {value}.")
                 self.aims_settings[key] = aims_settings
 
 
@@ -1245,13 +1232,10 @@ class ALDFTManagerSerial(ALDFTManager):
             self.config.ASI_path, init_via_ase, self.comm_handler.comm, atoms
         )
         return calc
-    
+
     def handle_dft_call(self, point, idx):
         super().handle_dft_call(point, idx)
-        self.data_manager.handle_received_point(
-            idx,
-            self.point
-        )
+        self.data_manager.handle_received_point(idx, self.point)
 
 
 class ALDFTManagerParallel(ALDFTManager):
@@ -1512,8 +1496,7 @@ class ALReferenceManagerPARSL:
                     if self.clean_dirs:
                         try:
                             shutil.rmtree(
-                                self.calc_dir
-                                / f"worker_{job_idx}_no_{job_no}"
+                                self.calc_dir / f"worker_{job_idx}_no_{job_no}"
                             )
                         except FileNotFoundError:
                             logging.warning(
@@ -1663,7 +1646,9 @@ class ALTeacherModelManagerPARSL(ALReferenceManagerPARSL):
         """Submit a teacher model calculation via PARSL."""
         kwargs = {}
         if self.workqueue_resource_spec is not None:
-            kwargs["parsl_resource_specification"] = self.workqueue_resource_spec
+            kwargs["parsl_resource_specification"] = (
+                self.workqueue_resource_spec
+            )
         return recalc_teacher_model_parsl(
             positions=data.get_positions(),
             species=data.get_chemical_symbols(),
@@ -1847,9 +1832,7 @@ class ALRunningManager:
             tuple: Contains point, prediction, and uncertainty.
         """
         if self.rank == 0:
-            logging.info(
-                f"Trajectory {idx} is at MD step {current_MD_step}."
-            )
+            logging.info(f"Trajectory {idx} is at MD step {current_MD_step}.")
 
             point = trajectories[idx].copy()
             if self.config.use_foundational:

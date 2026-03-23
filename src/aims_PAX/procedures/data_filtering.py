@@ -27,6 +27,7 @@ def _quiet_so3lr():
     finally:
         logger.setLevel(prev)
 
+
 import h5py
 import numpy as np
 import torch
@@ -51,7 +52,6 @@ from aims_PAX.tools.utilities.utilities import (
     log_yaml_block,
     setup_logger,
 )
-
 
 # ---------------------------------------------------------------------------
 # DataFilteringProcedure
@@ -143,9 +143,7 @@ class DataFilteringProcedure:
                     log_dir=Path(config.log_dir) / "parsl_df.log"
                 )
                 parsl.load(self._parsl_settings["config"])
-                logging.info(
-                    "PARSL loaded for data-filtering workers."
-                )
+                logging.info("PARSL loaded for data-filtering workers.")
 
         # ---------------------------------------------------------------
         # 6. Model setup (scan datasets, create model)
@@ -255,26 +253,25 @@ class DataFilteringProcedure:
                     )
                     _log(
                         f"Worker {worker_id} (dataset {dataset_idx}): "
-                        f"{len(exceeding)}/{len(batch_errors)} points exceeded "
-                        f"threshold. Mean batch error: {mean_err:.6f}"
+                        f"{len(exceeding)}/{len(batch_errors)} "
+                        f"points exceeded threshold. "
+                        f"Mean batch error: {mean_err:.6f}"
                     )
 
-                    # 3. Update threshold
-                    if batch_errors:
-                        self.threshold_manager.update_threshold(
-                            dataset_idx, batch_errors
-                        )
-
-                    # 4. Add exceeding points to dataset
+                    # 3. Add exceeding points to dataset
                     if exceeding:
                         max_reached = dm.load_and_add_points(
                             dataset_idx, exceeding
                         )
 
-                        # 5. Prepare dataloaders & train
+                        # 4. Prepare dataloaders & train
                         if sm.train_points_added > 0:
                             dm.prepare_dataloaders()
                             tm.perform_training()
+
+                            # 5. Update threshold from validation
+                            # error (moving average)
+                            self.threshold_manager.update_from_validation()
 
                             # Check desired accuracy after training
                             if (
@@ -284,10 +281,10 @@ class DataFilteringProcedure:
                             ):
                                 logging.info(
                                     f"Desired accuracy "
-                                    f"{config.desired_accuracy} reached "
-                                    f"(valid error = "
-                                    f"{sm.current_valid_error:.6f}). "
-                                    "Stopping."
+                                    f"{config.desired_accuracy} "
+                                    f"reached (valid error = "
+                                    f"{sm.current_valid_error:.6f}"
+                                    "). Stopping."
                                 )
                                 max_reached = True
 
@@ -313,10 +310,11 @@ class DataFilteringProcedure:
                     if config.create_restart:
                         rm.save()
 
-                    # 7. Resubmit idle workers immediately so
-                    # evaluation runs while the next result trains
+                    # 7. Resubmit this specific worker immediately
+                    # so evaluation runs while the next result
+                    # trains
                     if not max_reached:
-                        wm.submit_batch_jobs()
+                        wm.submit_worker(worker_id)
 
             # ----------------------------------------------------------
             # End of pass — check whether to loop or stop
@@ -382,7 +380,9 @@ class DataFilteringProcedure:
     def converge(self) -> None:
         """Final convergence training on the collected filtered dataset."""
         if self.state_manager.train_points_added == 0:
-            logging.warning("No training data collected; skipping convergence.")
+            logging.warning(
+                "No training data collected; skipping convergence."
+            )
             return
 
         tag = "model_seed_1"
@@ -482,9 +482,7 @@ class DataFilteringProcedure:
 
         ks = config.key_specification
         save_keyspec = KeySpecification(
-            info_keys={
-                k: v for k, v in ks.info_keys.items() if k != "head"
-            },
+            info_keys={k: v for k, v in ks.info_keys.items() if k != "head"},
             arrays_keys=dict(ks.arrays_keys),
         )
 

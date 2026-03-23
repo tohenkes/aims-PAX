@@ -20,7 +20,10 @@ import torch
 from so3krates_torch.data.hdf5_utils import load_atoms_from_hdf5
 from so3krates_torch.data.utils import config_from_atoms
 
-from aims_PAX.procedures.al_managers import TrainingOrchestrator, TrainingSession
+from aims_PAX.procedures.al_managers import (
+    TrainingOrchestrator,
+    TrainingSession,
+)
 from aims_PAX.procedures.df_preparation import (
     DFConfiguration,
     DFModelManager,
@@ -34,7 +37,6 @@ from aims_PAX.tools.utilities.data_handling import (
 )
 from aims_PAX.tools.utilities.utilities import save_checkpoint
 
-
 # ---------------------------------------------------------------------------
 # DFThresholdManager
 # ---------------------------------------------------------------------------
@@ -42,8 +44,8 @@ from aims_PAX.tools.utilities.utilities import save_checkpoint
 
 class DFThresholdManager:
     """
-    Thin wrapper around get_threshold() that maintains per-dataset error
-    histories and updates thresholds adaptively.
+    Maintains adaptive thresholds based on a moving average of
+    validation errors (updated after each training cycle).
 
     For single-dataset runs: self.state_manager.threshold is a scalar.
     For multi-head runs: self.state_manager.threshold is a dict keyed by
@@ -58,64 +60,53 @@ class DFThresholdManager:
         self.config = config
         self.state_manager = state_manager
 
-    def update_threshold(self, dataset_idx: int, batch_errors: List[float]):
+    def update_from_validation(self):
         """
-        Extend the error history for the given dataset and recompute
-        the adaptive threshold.
-
-        Args:
-            dataset_idx: Index of the source HDF5 dataset (0-based).
-            batch_errors: Errors for the evaluated batch.
+        Update the threshold(s) from the current validation error(s)
+        obtained after training.  Appends the latest validation MAE to
+        a history and recomputes the threshold as a moving average
+        scaled by (1 + c_x).
         """
         sm = self.state_manager
 
+        # Freeze check
+        if sm.total_points_added >= self.config.freeze_threshold_dataset:
+            logging.debug("Threshold frozen.")
+            return
+
+        _log = logging.debug if self.config.compact_logging else logging.info
+
         if self.config.use_multihead_model:
-            head_name = f"head_{dataset_idx}"
-            sm.batch_errors[head_name].extend(batch_errors)
-
-            # Freeze check
-            if sm.total_points_added >= self.config.freeze_threshold_dataset:
-                logging.debug(
-                    f"Threshold frozen for {head_name} "
-                    f"(dataset {dataset_idx})."
+            for head_name in self.config.all_heads:
+                mae = sm.current_valid_errors_per_head.get(head_name, None)
+                if mae is None:
+                    continue
+                sm.validation_error_history[head_name].append(mae)
+                new_threshold = get_threshold(
+                    sm.validation_error_history[head_name],
+                    c_x=self.config.c_x,
                 )
-                return
-
-            new_threshold = get_threshold(
-                sm.batch_errors[head_name],
-                c_x=self.config.c_x,
-            )
-            sm.threshold[head_name] = float(new_threshold)
-            _log = (
-                logging.debug
-                if self.config.compact_logging
-                else logging.info
-            )
-            _log(
-                f"Threshold updated for {head_name}: "
-                f"{sm.threshold[head_name]:.6f} "
-                f"({len(sm.batch_errors[head_name])} error samples)"
-            )
+                sm.threshold[head_name] = float(new_threshold)
+                _log(
+                    f"Threshold updated for {head_name}: "
+                    f"{sm.threshold[head_name]:.6f} "
+                    f"(from {len(sm.validation_error_history[head_name])} "
+                    f"validation samples)"
+                )
         else:
-            sm.batch_errors.extend(batch_errors)
-
-            if sm.total_points_added >= self.config.freeze_threshold_dataset:
-                logging.debug("Threshold frozen (single dataset).")
+            mae = sm.current_valid_error
+            if mae == np.inf:
                 return
-
+            sm.validation_error_history.append(mae)
             new_threshold = get_threshold(
-                sm.batch_errors,
+                sm.validation_error_history,
                 c_x=self.config.c_x,
             )
             sm.threshold = float(new_threshold)
-            _log = (
-                logging.debug
-                if self.config.compact_logging
-                else logging.info
-            )
             _log(
                 f"Threshold updated: {sm.threshold:.6f} "
-                f"({len(sm.batch_errors)} error samples)"
+                f"(from {len(sm.validation_error_history)} "
+                f"validation samples)"
             )
 
     def get_threshold_for_dataset(self, dataset_idx: int) -> float:
@@ -233,9 +224,7 @@ class DFDataManager:
             sampled_valid = {}
             for head_name, head_data in valid_set.items():
                 valid_n = min(int(set_valid_size), len(head_data))
-                sampled_valid[head_name] = random.sample(
-                    head_data, valid_n
-                )
+                sampled_valid[head_name] = random.sample(head_data, valid_n)
 
             batch_size = min(config.set_batch_size, train_n)
             train_loader, valid_loaders = create_dataloader(
@@ -243,9 +232,7 @@ class DFDataManager:
             )
             model_set["train_subset"] = {0: train_loader}
             model_set["valid_subset"] = {0: valid_loaders}
-            _log = (
-                logging.debug if config.compact_logging else logging.info
-            )
+            _log = logging.debug if config.compact_logging else logging.info
             _log(
                 f"Dataloaders prepared (random_subset): "
                 f"{train_n}/{len(train_set)} train,"
@@ -265,9 +252,7 @@ class DFDataManager:
             model_set["train_loader"] = train_loader
             model_set["valid_loader"] = valid_loaders
             n_valid = sum(len(v) for v in valid_set.values())
-            _log = (
-                logging.debug if config.compact_logging else logging.info
-            )
+            _log = logging.debug if config.compact_logging else logging.info
             _log(
                 f"Dataloaders prepared: {len(train_set)} train,"
                 f" {n_valid} valid (batch_size={batch_size})."
@@ -359,7 +344,9 @@ class DFDataManager:
         sm.total_points_added += 1
         return False
 
-    def _ensure_valid_not_empty(self, valid_set: dict, train_set: list) -> dict:
+    def _ensure_valid_not_empty(
+        self, valid_set: dict, train_set: list
+    ) -> dict:
         """
         If any head's valid set is empty, sample from train_set as fallback.
         """
@@ -553,9 +540,7 @@ class DFWorkerManager:
                         "memory_per_job must be set in CLUSTER settings "
                         "when cores_per_job is set."
                     )
-                disk = config.cluster_settings.get(
-                    "disk_per_job", 1000
-                )
+                disk = config.cluster_settings.get("disk_per_job", 1000)
                 self.workqueue_resource_spec = {
                     "cores": cores,
                     "memory": memory,
@@ -582,95 +567,98 @@ class DFWorkerManager:
         """
         Submit evaluation jobs for all idle, non-done workers.
         """
+        for worker_id in range(self.config.num_chunks):
+            self.submit_worker(worker_id)
+
+    def submit_worker(self, worker_id: int) -> None:
+        """
+        Submit an evaluation job for a single worker if it is idle
+        and not done.
+        """
         sm = self.state_manager
         config = self.config
 
-        for worker_id in range(config.num_chunks):
-            if sm.workers_done.get(worker_id, True):
-                continue
-            if worker_id in self._futures:
-                continue  # already running
+        if sm.workers_done.get(worker_id, True):
+            return
+        if worker_id in self._futures:
+            return  # already running
 
-            dataset_idx = sm.worker_dataset_idx[worker_id]
-            start, end = sm.worker_chunks[worker_id]
-            current_offset = sm.worker_offsets[worker_id]
+        dataset_idx = sm.worker_dataset_idx[worker_id]
+        start, end = sm.worker_chunks[worker_id]
+        current_offset = sm.worker_offsets[worker_id]
 
-            if current_offset >= end:
-                sm.workers_done[worker_id] = True
-                continue
+        if current_offset >= end:
+            sm.workers_done[worker_id] = True
+            return
 
-            batch_end = min(current_offset + config.eval_stride, end)
-            shuffle_map = sm.shuffle_maps[dataset_idx]
-            batch_indices = shuffle_map[
-                current_offset:batch_end
-            ].tolist()
+        batch_end = min(current_offset + config.eval_stride, end)
+        shuffle_map = sm.shuffle_maps[dataset_idx]
+        batch_indices = shuffle_map[current_offset:batch_end].tolist()
 
-            hdf5_path = config.hdf5_paths[dataset_idx]
-            threshold = self._get_threshold(dataset_idx)
-            head_index = dataset_idx
-            multihead = config.use_multihead_model
+        hdf5_path = config.hdf5_paths[dataset_idx]
+        threshold = self._get_threshold(dataset_idx)
+        head_index = dataset_idx
+        multihead = config.use_multihead_model
 
-            _log = (
-                logging.debug if config.compact_logging else logging.info
+        _log = logging.debug if config.compact_logging else logging.info
+        _log(
+            f"Worker {worker_id} (dataset {dataset_idx}): submitting"
+            f" indices {current_offset}-{batch_end - 1}"
+            f" (threshold={threshold:.6f})"
+        )
+
+        if self._use_parsl:
+            from aims_PAX.tools.utilities.parsl_utils import (
+                evaluate_batch_parsl,
             )
-            _log(
-                f"Worker {worker_id} (dataset {dataset_idx}): submitting"
-                f" indices {current_offset}-{batch_end - 1}"
-                f" (threshold={threshold:.6f})"
+
+            kwargs = {}
+            if self.workqueue_resource_spec is not None:
+                kwargs["parsl_resource_specification"] = (
+                    self.workqueue_resource_spec
+                )
+            future = evaluate_batch_parsl(
+                model_path=self.model_save_path,
+                hdf5_path=hdf5_path,
+                batch_indices=batch_indices,
+                threshold=threshold,
+                r_max=float(config.r_max),
+                r_max_lr=config.r_max_lr,
+                error_type=config.error_type,
+                energy_key=config.misc["energy_key"],
+                forces_key=config.misc["forces_key"],
+                z_table_zs=list(self.model_manager.z_table.zs),
+                head_index=head_index,
+                multihead=multihead,
+                eval_batch_size=config.eval_batch_size,
+                device=config.worker_device,
+                **kwargs,
+            )
+        else:
+            future = self._executor.submit(
+                _evaluate_batch_local,
+                model_path=self.model_save_path,
+                hdf5_path=hdf5_path,
+                batch_indices=batch_indices,
+                threshold=threshold,
+                r_max=float(config.r_max),
+                r_max_lr=config.r_max_lr,
+                error_type=config.error_type,
+                energy_key=config.misc["energy_key"],
+                forces_key=config.misc["forces_key"],
+                z_table_zs=list(self.model_manager.z_table.zs),
+                head_index=head_index,
+                multihead=multihead,
+                eval_batch_size=config.eval_batch_size,
+                device=config.device,
             )
 
-            if self._use_parsl:
-                from aims_PAX.tools.utilities.parsl_utils import (
-                    evaluate_batch_parsl,
-                )
-
-                kwargs = {}
-                if self.workqueue_resource_spec is not None:
-                    kwargs["parsl_resource_specification"] = (
-                        self.workqueue_resource_spec
-                    )
-                future = evaluate_batch_parsl(
-                    model_path=self.model_save_path,
-                    hdf5_path=hdf5_path,
-                    batch_indices=batch_indices,
-                    threshold=threshold,
-                    r_max=float(config.r_max),
-                    r_max_lr=config.r_max_lr,
-                    error_type=config.error_type,
-                    energy_key=config.misc["energy_key"],
-                    forces_key=config.misc["forces_key"],
-                    z_table_zs=list(self.model_manager.z_table.zs),
-                    head_index=head_index,
-                    multihead=multihead,
-                    eval_batch_size=config.eval_batch_size,
-                    device=config.worker_device,
-                    **kwargs,
-                )
-            else:
-                future = self._executor.submit(
-                    _evaluate_batch_local,
-                    model_path=self.model_save_path,
-                    hdf5_path=hdf5_path,
-                    batch_indices=batch_indices,
-                    threshold=threshold,
-                    r_max=float(config.r_max),
-                    r_max_lr=config.r_max_lr,
-                    error_type=config.error_type,
-                    energy_key=config.misc["energy_key"],
-                    forces_key=config.misc["forces_key"],
-                    z_table_zs=list(self.model_manager.z_table.zs),
-                    head_index=head_index,
-                    multihead=multihead,
-                    eval_batch_size=config.eval_batch_size,
-                    device=config.device,
-                )
-
-            self._futures[worker_id] = (
-                future,
-                dataset_idx,
-                batch_indices,
-                batch_end,
-            )
+        self._futures[worker_id] = (
+            future,
+            dataset_idx,
+            batch_indices,
+            batch_end,
+        )
 
     def collect_completed(
         self,
@@ -698,8 +686,7 @@ class DFWorkerManager:
                     result = future.result()
                 except Exception as exc:
                     logging.warning(
-                        f"Worker {worker_id} failed: {exc}. "
-                        "Skipping batch."
+                        f"Worker {worker_id} failed: {exc}. " "Skipping batch."
                     )
                     result = {
                         "exceeding_indices": [],
@@ -804,8 +791,11 @@ def _evaluate_batch_local(
     if not isinstance(atoms_list, list):
         atoms_list = [atoms_list]
 
-    all_heads = [f"head_{i}" for i in range(model.num_output_heads)] \
-        if multihead else None
+    all_heads = (
+        [f"head_{i}" for i in range(model.num_output_heads)]
+        if multihead
+        else None
+    )
 
     # When r_max_lr is None, SO3LR still needs edge_index_lr (electrostatics
     # / dispersion are enabled by default). Fall back to r_max so the graph
@@ -856,15 +846,11 @@ def _evaluate_batch_local(
             pred_forces = output.get("forces")
             if ref_forces is not None and pred_forces is not None:
                 per_atom_abs = (
-                    torch.abs(pred_forces - ref_forces)
-                    .mean(dim=-1)
-                    .detach()
+                    torch.abs(pred_forces - ref_forces).mean(dim=-1).detach()
                 )
                 force_errors = torch.zeros(n_structs, device=_device)
                 counts = torch.zeros(n_structs, device=_device)
-                force_errors.scatter_add_(
-                    0, mini_batch.batch, per_atom_abs
-                )
+                force_errors.scatter_add_(0, mini_batch.batch, per_atom_abs)
                 counts.scatter_add_(
                     0,
                     mini_batch.batch,
@@ -880,9 +866,7 @@ def _evaluate_batch_local(
                     mini_batch.batch, minlength=n_structs
                 ).float()
                 energy_errors = (
-                    torch.abs(
-                        pred_energy.squeeze(-1) - ref_energy.squeeze(-1)
-                    )
+                    torch.abs(pred_energy.squeeze(-1) - ref_energy.squeeze(-1))
                     / n_atoms.clamp(min=1)
                 ).detach()
 

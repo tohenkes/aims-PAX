@@ -35,7 +35,6 @@ from aims_PAX.tools.utilities.utilities import (
     setup_logger,
 )
 
-
 # ---------------------------------------------------------------------------
 # DFConfiguration
 # ---------------------------------------------------------------------------
@@ -83,16 +82,12 @@ class DFConfiguration:
         # Multi-head: one head per dataset when >1 path
         self.use_multihead_model = len(self.hdf5_paths) > 1
         if self.use_multihead_model:
-            self.all_heads = [
-                f"head_{i}" for i in range(len(self.hdf5_paths))
-            ]
+            self.all_heads = [f"head_{i}" for i in range(len(self.hdf5_paths))]
             # Patch model settings so TrainingOrchestrator picks this up
-            self.model_settings["ARCHITECTURE"][
-                "use_multihead_model"
-            ] = True
-            self.model_settings["ARCHITECTURE"][
-                "num_multihead_heads"
-            ] = len(self.hdf5_paths)
+            self.model_settings["ARCHITECTURE"]["use_multihead_model"] = True
+            self.model_settings["ARCHITECTURE"]["num_multihead_heads"] = len(
+                self.hdf5_paths
+            )
         else:
             self.all_heads = None
 
@@ -131,9 +126,7 @@ class DFConfiguration:
         # Output
         self.save_xyz: bool = df["save_xyz"]
         self.shuffle_dataset: bool = df["shuffle_dataset"]
-        self.loop_exhausted_data: bool = df.get(
-            "loop_exhausted_data", True
-        )
+        self.loop_exhausted_data: bool = df.get("loop_exhausted_data", True)
         self.max_data_passes: int = df.get("max_data_passes", 0)
         self.compact_logging: bool = df.get("compact_logging", False)
 
@@ -156,9 +149,9 @@ class DFConfiguration:
         self.dataset_dir = _r(self.misc["dataset_dir"])
         self.log_dir = str(_r(self.misc["log_dir"]))
         self.checkpoints_dir = str(_r(self.checkpoints_dir))
-        self.model_settings["GENERAL"]["checkpoints_dir"] = (
-            self.checkpoints_dir
-        )
+        self.model_settings["GENERAL"][
+            "checkpoints_dir"
+        ] = self.checkpoints_dir
         self.model_dir = str(_r(self.model_dir))
         self.model_settings["GENERAL"]["model_dir"] = self.model_dir
         self.model_settings["GENERAL"]["loss_dir"] = str(
@@ -222,10 +215,13 @@ class DFStateManager:
         # immediately bootstraps training.
         if config.use_multihead_model:
             self.threshold = {h: 0.0 for h in config.all_heads}
-            self.batch_errors = {h: [] for h in config.all_heads}
+            self.validation_error_history = {h: [] for h in config.all_heads}
         else:
             self.threshold = 0.0
-            self.batch_errors = []
+            self.validation_error_history = []
+
+        # Per-head validation errors (multi-head only, set after training)
+        self.current_valid_errors_per_head: dict = {}
 
         # Global counters
         self.total_points_added: int = 0
@@ -256,9 +252,7 @@ class DFStateManager:
             }
             self.collect_thresholds = []
 
-    def initialize_workers(
-        self, dataset_sizes: List[int], pass_num: int = 1
-    ):
+    def initialize_workers(self, dataset_sizes: List[int], pass_num: int = 1):
         """
         Distribute num_chunks across datasets proportionally to their
         size and partition each dataset into contiguous chunks.
@@ -321,10 +315,10 @@ class DFStateManager:
             f"{num_datasets} dataset(s). "
             f"Workers per dataset: {workers_per_dataset}"
             + (
-            f" (shuffled, pass {pass_num})"
-            if (self.config.shuffle_dataset or pass_num > 1)
-            else ""
-        )
+                f" (shuffled, pass {pass_num})"
+                if (self.config.shuffle_dataset or pass_num > 1)
+                else ""
+            )
         )
 
 
@@ -498,7 +492,8 @@ class DFRestart:
         "worker_dataset_idx",
         "shuffle_maps",
         "threshold",
-        "batch_errors",
+        "validation_error_history",
+        "current_valid_errors_per_head",
         "total_points_added",
         "train_points_added",
         "valid_points_added",
@@ -517,7 +512,9 @@ class DFRestart:
         if not self.config.create_restart:
             return
 
-        state_dict = {k: getattr(self.state_manager, k) for k in self._STATE_KEYS}
+        state_dict = {
+            k: getattr(self.state_manager, k) for k in self._STATE_KEYS
+        }
         state_dict["df_done"] = self.df_done
 
         if self.config.analysis:
@@ -533,9 +530,7 @@ class DFRestart:
 
     def load(self):
         """Load state from checkpoint and restore to state_manager."""
-        logging.info(
-            "Restarting data-filtering procedure from checkpoint."
-        )
+        logging.info("Restarting data-filtering procedure from checkpoint.")
         state_dict = np.load(
             self.config.df_restart_path, allow_pickle=True
         ).item()
