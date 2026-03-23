@@ -267,6 +267,10 @@ class DataFilteringProcedure:
                         # 4. Prepare dataloaders & train
                         if sm.train_points_added > 0:
                             dm.prepare_dataloaders()
+                            logging.info(
+                                f"Training after worker "
+                                f"{worker_id} batch."
+                            )
                             tm.perform_training()
 
                             # 5. Update threshold from validation

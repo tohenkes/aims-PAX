@@ -513,9 +513,9 @@ class DFWorkerManager:
         self.state_manager = state_manager
         self.model_manager = model_manager
 
-        self.model_save_path = str(
-            Path(config.output_dir) / "df_worker_model.pt"
-        )
+        self._model_dir = Path(config.output_dir)
+        self._current_model_path: Optional[str] = None
+        self._previous_model_path: Optional[str] = None
 
         # Pending futures: worker_id -> future
         self._futures: dict = {}
@@ -552,16 +552,28 @@ class DFWorkerManager:
     # -----------------------------------------------------------------------
 
     def save_model_for_workers(self) -> None:
-        """Save current model to shared filesystem for workers."""
+        """Save current model to a versioned file for workers."""
+        epoch = self.state_manager.total_epoch
+        new_path = str(
+            self._model_dir / f"df_worker_model_epoch_{epoch}.pt"
+        )
         tag = "model_seed_1"
         model = self.model_manager.ensemble[tag]
         device = torch.device(self.config.device)
         model.cpu()
         try:
-            torch.save(model, self.model_save_path)
+            torch.save(model, new_path)
         finally:
             model.to(device)
-        logging.debug(f"Model saved for workers: {self.model_save_path}")
+
+        # Clean up the previous version (not the one currently
+        # in use by submitted workers — that is _previous).
+        old = self._previous_model_path
+        if old is not None and os.path.exists(old):
+            os.remove(old)
+        self._previous_model_path = self._current_model_path
+        self._current_model_path = new_path
+        logging.debug(f"Model saved for workers: {new_path}")
 
     def submit_batch_jobs(self) -> None:
         """
@@ -618,7 +630,7 @@ class DFWorkerManager:
                     self.workqueue_resource_spec
                 )
             future = evaluate_batch_parsl(
-                model_path=self.model_save_path,
+                model_path=self._current_model_path,
                 hdf5_path=hdf5_path,
                 batch_indices=batch_indices,
                 threshold=threshold,
@@ -637,7 +649,7 @@ class DFWorkerManager:
         else:
             future = self._executor.submit(
                 _evaluate_batch_local,
-                model_path=self.model_save_path,
+                model_path=self._current_model_path,
                 hdf5_path=hdf5_path,
                 batch_indices=batch_indices,
                 threshold=threshold,
