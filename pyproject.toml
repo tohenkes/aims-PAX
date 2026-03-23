@@ -28,6 +28,11 @@ dependencies = [
 ]
 
 [project.optional-dependencies]
+atomate2 = [
+    "pyfhiaims",
+    "pymatgen-io-aims",
+    "atomate2",
+]
 tests = [
     "pytest",
     "pytest-cov"
