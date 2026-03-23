@@ -515,7 +515,7 @@ class DFWorkerManager:
 
         self._model_dir = Path(config.output_dir)
         self._current_model_path: Optional[str] = None
-        self._previous_model_path: Optional[str] = None
+        self._old_model_paths: List[str] = []
 
         # Pending futures: worker_id -> future
         self._futures: dict = {}
@@ -554,9 +554,7 @@ class DFWorkerManager:
     def save_model_for_workers(self) -> None:
         """Save current model to a versioned file for workers."""
         epoch = self.state_manager.total_epoch
-        new_path = str(
-            self._model_dir / f"df_worker_model_epoch_{epoch}.pt"
-        )
+        new_path = str(self._model_dir / f"df_worker_model_epoch_{epoch}.pt")
         tag = "model_seed_1"
         model = self.model_manager.ensemble[tag]
         device = torch.device(self.config.device)
@@ -566,14 +564,24 @@ class DFWorkerManager:
         finally:
             model.to(device)
 
-        # Clean up the previous version (not the one currently
-        # in use by submitted workers — that is _previous).
-        old = self._previous_model_path
-        if old is not None and os.path.exists(old):
-            os.remove(old)
-        self._previous_model_path = self._current_model_path
+        # Retire the old path and clean up files no longer
+        # referenced by any pending worker.
+        if self._current_model_path is not None:
+            self._old_model_paths.append(self._current_model_path)
         self._current_model_path = new_path
+        self._cleanup_old_models()
         logging.debug(f"Model saved for workers: {new_path}")
+
+    def _cleanup_old_models(self) -> None:
+        """Delete old model files not referenced by pending futures."""
+        in_use = {t[4] for t in self._futures.values()}
+        remaining = []
+        for path in self._old_model_paths:
+            if path in in_use:
+                remaining.append(path)
+            elif os.path.exists(path):
+                os.remove(path)
+        self._old_model_paths = remaining
 
     def submit_batch_jobs(self) -> None:
         """
@@ -670,6 +678,7 @@ class DFWorkerManager:
             dataset_idx,
             batch_indices,
             batch_end,
+            self._current_model_path,
         )
 
     def collect_completed(
@@ -685,9 +694,13 @@ class DFWorkerManager:
         completed = []
         done_workers = []
 
-        for worker_id, (future, dataset_idx, batch_indices, batch_end) in list(
-            self._futures.items()
-        ):
+        for worker_id, (
+            future,
+            dataset_idx,
+            batch_indices,
+            batch_end,
+            _model_path,
+        ) in list(self._futures.items()):
             if self._use_parsl:
                 is_done = future.done()
             else:
@@ -736,9 +749,19 @@ class DFWorkerManager:
         return all_workers_done and len(self._futures) == 0
 
     def shutdown(self) -> None:
-        """Clean up thread/process pool (PARSL cleanup handled elsewhere)."""
+        """Clean up thread/process pool and model files."""
         if self._executor is not None:
             self._executor.shutdown(wait=False)
+        # Remove all versioned model files
+        for path in self._old_model_paths:
+            if os.path.exists(path):
+                os.remove(path)
+        if self._current_model_path is not None and os.path.exists(
+            self._current_model_path
+        ):
+            os.remove(self._current_model_path)
+        self._old_model_paths = []
+        self._current_model_path = None
 
     # -----------------------------------------------------------------------
     # Private helpers

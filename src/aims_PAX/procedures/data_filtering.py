@@ -251,10 +251,15 @@ class DataFilteringProcedure:
                         if config.compact_logging
                         else logging.info
                     )
+                    used_threshold = (
+                        self.threshold_manager
+                        .get_threshold_for_dataset(dataset_idx)
+                    )
                     _log(
                         f"Worker {worker_id} (dataset {dataset_idx}): "
                         f"{len(exceeding)}/{len(batch_errors)} "
-                        f"points exceeded threshold. "
+                        f"points exceeded threshold "
+                        f"({used_threshold:.6f}). "
                         f"Mean batch error: {mean_err:.6f}"
                     )
 
