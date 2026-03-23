@@ -620,11 +620,13 @@ class DFWorkerManager:
         head_index = dataset_idx
         multihead = config.use_multihead_model
 
+        progress_pct = (current_offset - start) / (end - start) * 100
         _log = logging.debug if config.compact_logging else logging.info
         _log(
             f"Worker {worker_id} (dataset {dataset_idx}): submitting"
             f" indices {current_offset}-{batch_end - 1}"
-            f" (threshold={threshold:.6f})"
+            f" ({progress_pct:.1f}% done,"
+            f" threshold={threshold:.6f})"
         )
 
         if self._use_parsl:
