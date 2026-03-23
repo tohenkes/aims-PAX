@@ -313,9 +313,10 @@ class DataFilteringProcedure:
                     if config.create_restart:
                         rm.save()
 
-                # Resubmit jobs (handles workers that just finished)
-                if not max_reached:
-                    wm.submit_batch_jobs()
+                    # 7. Resubmit idle workers immediately so
+                    # evaluation runs while the next result trains
+                    if not max_reached:
+                        wm.submit_batch_jobs()
 
             # ----------------------------------------------------------
             # End of pass — check whether to loop or stop
