@@ -1,4 +1,5 @@
 import logging
+import random
 import re
 import sys
 import os
@@ -1751,3 +1752,14 @@ def log_yaml_block(
     ).rstrip()
     for line in yaml_text.splitlines():
         logger.log(level, "%s%s", indent, line)
+
+
+def get_seeds(seed: int, ensemble_size: int) -> np.ndarray:
+    """
+    Sets up the random seeds for reproducibility.
+    """
+    np.random.seed(seed)
+    random.seed(seed)
+    return np.random.randint(
+        0, 1000, size=ensemble_size
+    )

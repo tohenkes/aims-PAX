@@ -2,15 +2,23 @@
 Atomate2 flows for initial dataset generation in aims-PAX.
 Return an aims-PAX checkpoint from which the AL can be restarted.
 """
-
+import logging
 from dataclasses import dataclass
+from pathlib import Path
+from pickle import UnpicklingError
 
-from jobflow import Maker, job
+import numpy as np
+from jobflow import Maker, job, Flow
 from pymatgen.core import Structure, Molecule
+from pymatgen.io.ase import MSONAtoms
 
-from aims_PAX.atomate2.utils import get_idg_makers_from_settings
+from aims_PAX.atomate2.atomic_energies import AtomicEnergies
+from aims_PAX.atomate2.utils import get_model_dependent_inputs
 from aims_PAX.settings import ModelSettings
 from aims_PAX.settings.project import IDGSettings, MiscSettings, MDSettings
+from aims_PAX.tools.utilities.input_utils import read_geometry
+from aims_PAX.tools.utilities.utilities import setup_logger, log_yaml_block, get_seeds, create_seeds_tags_dict, \
+    get_atomic_energies_from_pt
 
 
 @dataclass
@@ -39,7 +47,6 @@ class InitialDatasetGenerator(Maker):
     This maker integrates with the atomate2 workflow framework and is designed
     to work within the aims-PAX active learning infrastructure.
     """
-    structure: Structure | Molecule
     settings: IDGSettings
     md_settings: MDSettings
     misc_settings: MiscSettings
@@ -49,11 +56,200 @@ class InitialDatasetGenerator(Maker):
     def make(self):
         """Create a job to make an initial dataset. This is a sequence of steps (`self.step` jobs)
         made until one of the stopping criteria is reached."""
-        md_makers, reference_maker = get_idg_makers_from_settings(idg_settings=self.settings,
-                                                                  md_settings=self.md_settings,
-                                                                  misc_settings=self.misc_settings)
+        # use dtype from model settings for the foundational model as well
+        logger = self.get_logger()
+        logger.info("Initializing initial dataset procedure.")
+        logger.info(f"Procedure runs with atomate2.")
+        logger.info("Using following settings for the initial dataset procedure:")
+        log_yaml_block(
+            "INITIAL_DATASET_GENERATION",
+            self.settings.model_dump(),
+        )
+        # check for the restart
+        restart_path = (
+            self.misc_settings.output_dir
+            / "restart"
+            / "initial_ds"
+            / "initial_ds_restart.npy"
+        )
+        restart = restart_path.exists()
 
-        return md_makers[1].make(self.structure)
+        # set seeds for reproducibility
+        ensemble_seeds = get_seeds(self.model_settings.GENERAL.seed,
+                          self.settings.ensemble_size)
+        seeds_tags_dict = create_seeds_tags_dict(
+            seeds=ensemble_seeds,
+            model_settings=self.model_settings,
+            dataset_dir=self.misc_settings.dataset_dir,
+        )
+        tags = list(seeds_tags_dict.keys())
+        logger.debug(f"Using seeds: {seeds_tags_dict}")
+
+        # create the initial job (create / read in trajectories / energies / etc)
+        if restart:
+            prepare_job = self.restart(restart_path=restart_path)
+        else:
+            prepare_job = self.run_from_scratch(tags=tags)
+
+        return Flow(prepare_job)
+
+
+        # these are the settings for the foundational model
+        #
+        # No CuEQ training during initial dataset generation
+        # (because avg_num_neighbors, mean, std, atomic energies etc
+        # are changing all the time; not possible to modify with CuEQ)
+        # model_settings = {
+        #     "device": self.model_settings.MISC.device,
+        #     "default_dtype": self.model_settings.GENERAL.default_dtype,
+        #     "enable_cueq_train": False
+        # }
+        # md_makers, reference_maker = get_idg_makers_from_settings(
+        #     idg_settings=self.settings,
+        #     md_settings=self.md_settings,
+        #     misc_settings=self.misc_settings,
+        #     model_settings=model_settings)
+        #
+        # md_makers[2] = md_makers[2].update_kwargs(
+        #     {"n_steps": 100}
+        # )
+        #
+        # return md_makers[2].make(self.structure)
+
+
+    def get_logger(self):
+        """Get the logger for the initial dataset generation."""
+        logger_level = getattr(logging, self.model_settings.MISC.log_level, logging.INFO)
+        for handler in logging.root.handlers[:]:
+            logging.root.removeHandler(handler)
+        return setup_logger(
+            level=logger_level,
+            tag="initial_dataset",
+            directory=self.misc_settings.log_dir.as_posix()
+        )
+
+    # def get_atomic_energies(self):
+    #     """
+    #     Handles the atomic energies for the initial dataset generation.
+    #     Either they are loaded from a model checkpoint, initialized to zero
+    #     or specified by the user in the model settings.
+    #     """
+    #     self.ensemble_atomic_energies = None
+    #     self.ensemble_atomic_energies_dict = None
+    #     self.update_atomic_energies = False
+    #     if self.atomic_energies_dict is None:
+    #         if self.restart:
+
+    #         else:
+    #
+
+    #
+    #     else:
+    #
+    #
+    #         self.ensemble_atomic_energies_dict = {
+    #             tag: self.atomic_energies_dict
+    #             for tag in self.seeds_tags_dict.keys()
+    #         }
+    #
+    #         self.ensemble_atomic_energies = {
+    #             tag: np.array(
+    #                 [
+    #                     self.ensemble_atomic_energies_dict[tag][z]
+    #                     for z in self.ensemble_atomic_energies_dict[
+    #                         tag
+    #                     ].keys()
+    #                 ]
+    #             )
+    #             for tag in self.seeds_tags_dict.keys()
+    #         }
+    #
+    #     logging.info(
+    #         f"{self.ensemble_atomic_energies_dict[list(self.seeds_tags_dict.keys())[0]]}"
+    #     )
+
+
+    @job
+    def restart(self, restart_path: Path):
+        """Restart the initial dataset generation from a checkpoint."""
+        logger = self.get_logger()
+        logger.info("Restarting initial dataset acquisition from checkpoint.")
+        try:
+            restart_dict = np.load(
+                restart_path,
+                allow_pickle=True,
+            ).item()
+        except (UnpicklingError, EOFError) as e:
+            logging.error(
+                f"Could not read restart data at '{restart_path}'")
+            raise e
+        trajectories = restart_dict["trajectories"]
+        step = restart_dict["step"]
+        if not self.misc_settings.create_restart:
+            restart_dict = None
+
+        logging.info(f"Running initial dataset acquisition with {len(trajectories)} geometries.")
+        # get model-dependent inputs (zs, etc) to the trained model
+        model_inputs = get_model_dependent_inputs(self.model_settings.GENERAL.model_choice,
+                                                  trajectories=trajectories)
+
+        logger.debug("Loading atomic energies from checkpoint.")
+
+        # _, ensemble_atomic_energies_dict = get_atomic_energies_from_pt(
+        #     path_to_checkpoints=self.checkpoints_dir,
+        #     z=,
+        #     seeds_tags_dict=self.seeds_tags_dict,
+        #     dtype=self.dtype,
+        #     model_choice=self.model_choice,
+        # )
+
+        return {
+            "trajectories": {k: MSONAtoms(v) for k, v in trajectories.items()},
+            "step": step,
+            "restart_dict": restart_dict
+        }
+
+    @job
+    def run_from_scratch(self, tags: list[str]):
+        """
+        Run the job from scratch based on the provided tags.
+        """
+        logger = self.get_logger()
+        # create restart dict
+        restart_dict = None
+        if self.misc_settings.create_restart:
+            logger.debug("Creating restart dictionary.")
+            restart_dict = {
+                "trajectories": None,
+                "last_initial_losses": None,
+                "initial_ds_done": False,
+            }
+        trajectories = read_geometry(self.misc_settings.path_to_geometry, log=True)
+        step = 0
+
+        logging.info(f"Running initial dataset acquisition with {len(trajectories)} geometries.")
+        # get model-dependent inputs (zs, etc) to the trained model
+        model_inputs = get_model_dependent_inputs(self.model_settings.GENERAL.model_choice,
+                                                  trajectories=trajectories)
+
+        # get atomic energies
+        default_atomic_energies = self.model_settings.ARCHITECTURE.atomic_energies
+        update_atomic_energies = False
+        if default_atomic_energies is None:
+            logger.info("No atomic energies specified. Fitting to training data.")
+            ensemble_atomic_energies = AtomicEnergies.from_z(tags, model_inputs["z"])
+            update_atomic_energies = True
+        else:
+            logger.info("Using specified atomic energies.")
+            ensemble_atomic_energies = AtomicEnergies.from_e(tags, default_atomic_energies)
+
+        return {
+            "trajectories": {k: MSONAtoms(v) for k, v in trajectories.items()},
+            "step": step,
+            "restart_dict": restart_dict,
+            "atomic_energies": ensemble_atomic_energies,
+            "update_atomic_energies": update_atomic_energies
+        }
 
 
     @job
