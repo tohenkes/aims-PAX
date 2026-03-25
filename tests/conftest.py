@@ -29,6 +29,9 @@ def control_molecule(data_dir) -> Path:
 def aspirin(data_dir) -> Path:
     return data_dir / "structures" / "aspirin.in"
 
+@pytest.fixture(scope="session")
+def si(data_dir) -> Path:
+    return data_dir / "structures" / "Si.in"
 
 @pytest.fixture
 def project_settings(data_dir, species_dir):
