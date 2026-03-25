@@ -4,3 +4,6 @@ GENERAL:
 
 ARCHITECTURE:
   model: MACE
+
+MISC:
+  device: cuda

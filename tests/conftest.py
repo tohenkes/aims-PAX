@@ -18,17 +18,16 @@ def data_dir():
     return Path(__file__).parent / "test_data"
 
 @pytest.fixture(scope="session")
-def species_dir(data_dir):
+def species_dir(data_dir) -> Path:
     return data_dir / "species_defaults" / "light"
 
 @pytest.fixture(scope="session")
-def control_molecule(data_dir):
+def control_molecule(data_dir) -> Path:
     return data_dir / "control_files" / "molecule.in"
 
 @pytest.fixture(scope="session")
-def aspirin(data_dir) -> Molecule:
-    structure_file = data_dir / "structures" / "aspirin.in"
-    return AimsGeometry.from_file(structure_file).to_structure()
+def aspirin(data_dir) -> Path:
+    return data_dir / "structures" / "aspirin.in"
 
 
 @pytest.fixture
@@ -50,7 +49,7 @@ def clean_dir(debug_mode):
     old_cwd = Path.cwd()
     with tempfile.TemporaryDirectory(delete=not debug_mode) as tmp_dir:
         os.chdir(tmp_dir)
-        yield tmp_dir
+        yield Path(tmp_dir)
         os.chdir(old_cwd)
     if debug_mode:
         print(f"Tests ran in {tmp_dir}")

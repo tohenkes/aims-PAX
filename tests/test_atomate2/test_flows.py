@@ -17,7 +17,6 @@ def test_idg_maker(data_dir, clean_dir, project_settings, control_molecule, aspi
     model_settings = ModelSettings.from_file(model_settings_file)
 
     job = InitialDatasetGenerator(
-        structure=aspirin,
         settings=settings.INITIAL_DATASET_GENERATION,
         md_settings=settings.MD,
         misc_settings=settings.MISC,
@@ -25,5 +24,6 @@ def test_idg_maker(data_dir, clean_dir, project_settings, control_molecule, aspi
     ).make()
     
     response = run_locally(job, create_folders=True)
+    print(response)
     assert response
     

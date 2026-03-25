@@ -9,7 +9,7 @@ INITIAL_DATASET_GENERATION:
   skip_step_initial: 10
   foundational_model: mace-mp
   foundational_model_settings:
-    mace_model: medium
+    mace_model: small
   species_dir: "./tests/test_data/species_defaults/light"
 
 ACTIVE_LEARNING:
@@ -30,12 +30,20 @@ ACTIVE_LEARNING:
 
 
 MD:
-  stat_ensemble: NVT
-  thermostat: Langevin
-  temperature: 500
-  timestep: 1.
-  friction: 0.001
-  seed: 42
+  1:
+    stat_ensemble: NVT
+    thermostat: Langevin
+    temperature: 500
+    timestep: 1.
+    friction: 0.001
+    seed: 42
+  2:
+    stat_ensemble: NVT
+    thermostat: Langevin
+    temperature: 700
+    timestep: 1.
+    friction: 0.001
+    seed: 42
 
 MISC:
   create_restart: True
