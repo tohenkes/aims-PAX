@@ -56,15 +56,15 @@ class GeneralSettings(ProjectBaseModel):
 
 class BaseArchitectureSettings(ProjectBaseModel):
     """Base class for model architecture settings"""
-
-
-class MACEArchitectureSettings(BaseArchitectureSettings):
-    model: Literal["mace"]
     atomic_energies: dict[int, float] | None = Field(
         default=None,
         description="Atomic energy references {atomic_number: energy}. "
                     "If None, determined via linear least squares on training set."
     )
+
+
+class MACEArchitectureSettings(BaseArchitectureSettings):
+    model: Literal["mace"]
     compute_avg_num_neighbors: bool = Field(
         default=True,
         description="Whether to compute average number of neighbors."
@@ -177,7 +177,6 @@ class SO3LRArchitectureSettings(So3kratesArchitectureSettings):
     dispersion_energy_cutoff_lr_damping: float = 2.0
     r_max_lr: float | None = None
     neighborlist_format_lr: str = "sparse"
-    atomic_energies: dict[int, float] | None = None
     use_multihead_model: bool = False
     num_multihead_heads: int | None = None
 
