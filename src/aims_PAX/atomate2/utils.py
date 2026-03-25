@@ -2,7 +2,9 @@
 Helper utilities for Atomate2 aims-PAX IDG workflow
 """
 from pathlib import Path
+from typing import Any
 
+import numpy as np
 from ase import units
 from atomate2.ase.md import MDEnsemble
 from atomate2.forcefields import MLFF
@@ -10,14 +12,15 @@ from pymatgen.io.aims.sets.core import StaticSetGenerator as AimsStaticSetGenera
 
 from aims_PAX.atomate2 import *
 from aims_PAX.atomate2.random import RandomState
-from aims_PAX.settings.project import FMSettings, MDSettings, IDGSettings, MiscSettings
-from aims_PAX.tools.utilities.utilities import AIMSControlParser
+from aims_PAX.settings.project import MDSettings, IDGSettings, MiscSettings
+from aims_PAX.tools.utilities.utilities import AIMSControlParser, Z_from_geometry, create_ztable
 
 
 def get_idg_makers_from_settings(
         idg_settings: IDGSettings,
         md_settings: MDSettings,
-        misc_settings: MiscSettings) -> tuple[dict[int, AllowedMDMakers], AllowedReferenceMakers]:
+        misc_settings: MiscSettings,
+        model_settings: dict[str, Any]) -> tuple[dict[int, AllowedMDMakers], AllowedReferenceMakers]:
     """
     Returns initialized md and reference makers from project and model
     settings.
@@ -35,7 +38,7 @@ def get_idg_makers_from_settings(
         raise NotImplementedError(f"{model_used} MD model"
                                   f"sampling is not currently supported in atomate2 aims-PAX.")
     md_maker = available_md_makers[model_used](
-        idg_settings.foundational_model_settings,
+        {**idg_settings.foundational_model_settings.model_dump(), **model_settings},
         md_settings
     )
     # here only aims static maker is used, can be extended to include teacher reference
@@ -44,7 +47,7 @@ def get_idg_makers_from_settings(
     return md_maker, ref_maker
 
 
-def get_mace_mp_maker(model_settings: FMSettings,
+def get_mace_mp_maker(model_settings: dict[str, Any],
                       md_settings: MDSettings) -> dict[int, AllowedMDMakers]:
     """Create a maker for MD runs."""
     makers = {}
@@ -54,12 +57,15 @@ def get_mace_mp_maker(model_settings: FMSettings,
         ("npt", "berendsen"): "berendsen",
         ("npt", "mtk"): "nose-hoover-chain"
     }
+    # translate from aims-PAX to atomate2
+    model_settings["model"] = model_settings.pop("mace_model")
+
     for idx in idx_makers:
         md_setting = md_settings.get_for_index(idx).model_dump()
         ensemble = md_setting.pop("stat_ensemble")
         kwargs = {
             "name": f"mace-mp-{idx}",
-            "force_field_name": MLFF.MACE,
+            "force_field_name": MLFF.MACE_MP_0,
             "time_step": md_setting.pop("timestep"),
             "ensemble": getattr(MDEnsemble, ensemble),
             "temperature": md_setting.pop("temperature"),
@@ -74,14 +80,18 @@ def get_mace_mp_maker(model_settings: FMSettings,
             dynamics = md_setting.pop("barostat")
             kwargs["pressure"] = md_setting.pop("pressure") / 1e8    # AseMDMaker asks for pressure in kBar
         kwargs["dynamics"] = valid_dynamics[(ensemble, dynamics)]
-        # here only ASE.MolecularDynamics specific settings should be left, we will translate them to
-        # ASE internal units; below are translation rules
+        # here only ASE.MolecularDynamics specific settings should be left,
+        # we will translate them to ASE internal units;
+        # below are translation rules
         if "friction" in md_setting:
             md_setting["friction"] /= units.fs
         if "seed" in md_setting:
             md_setting["rng"] = RandomState(md_setting.pop("seed"))
         # set ASE calculator kwargs
         kwargs["ase_md_kwargs"] = md_setting
+        # set calculator kwargs
+        kwargs["calculator_kwargs"] = model_settings
+
         makers[idx] = ForceFieldMDMaker(**kwargs)
     return makers
 
@@ -96,3 +106,16 @@ def get_aims_maker(path_to_control: Path, species_dir: Path) -> AllowedReference
             user_params=control_dict
         )
     )
+
+
+def get_model_dependent_inputs(model_name: str, **kwargs) -> dict[str, Any]:
+    """Get model-dependent inputs"""
+    model_inputs = {}
+    if model_name == "mace":
+        assert "trajectories" in kwargs
+        model_inputs["z"] = Z_from_geometry(kwargs["trajectories"])
+    elif model_name in ("so3lr", "so3krates"):
+        model_inputs["z"] = np.arange(1, 119)
+    model_inputs["z_table"] = create_ztable(model_inputs["z"])
+    return model_inputs
+
