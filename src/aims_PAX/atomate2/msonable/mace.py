@@ -3,16 +3,30 @@ This module contains an MSONable version of the MACE model.
 """
 from pathlib import Path
 import torch
-from mace.modules.models import MACE as MACE_
+from mace.modules.models import MACE, ScaleShiftMACE
 from monty.json import MSONable
 
 
-class MACE(MACE_, MSONable):
+class MSONMixin(MSONable):
+
+    @classmethod
+    def from_parent(cls, instance):
+        instance.__class__ = cls
+        return instance
 
     def as_dict(self) -> dict:
-        torch.save(self, Path.cwd() / "model.pt")
-        return {"checkpoint": Path.cwd() / "model.pt"}
+        path = Path.cwd() / "model.pt"
+        torch.save(self, path)
+        return {"checkpoint": str(path)}
 
     @classmethod
     def from_dict(cls, d):
-        return torch.load(d["checkpoint"], weights_only=False)
+        return cls.from_parent(torch.load(d["checkpoint"], weights_only=False))
+
+
+class MSONMACE(MACE, MSONMixin):
+    pass
+
+
+class MSONScaleShiftMACE(ScaleShiftMACE, MSONMixin):
+    pass
