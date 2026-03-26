@@ -56,7 +56,7 @@ from ase.md.velocitydistribution import MaxwellBoltzmannDistribution
 from ase.md.langevin import Langevin
 from ase.md.nptberendsen import NPTBerendsen
 from ase.md.npt import NPT
-from ase.md.nose_hoover_chain import MTKNPT
+from ase.md.nose_hoover_chain import MTKNPT, IsotropicMTKNPT
 from ase import units
 from contextlib import nullcontext
 from mace.calculators import mace_mp
@@ -543,6 +543,21 @@ class PrepareInitialDatasetProcedure:
                 }
 
                 dyn = MTKNPT(**npt_settings)
+            if md_settings["barostat"].lower() == "isomtk":
+                npt_settings = {
+                    "atoms": atoms,
+                    "timestep": md_settings["timestep"] * units.fs,
+                    "temperature_K": md_settings["temperature"],
+                    "pressure_au": md_settings["pressure"] * units.Pascal,
+                    "tdamp": md_settings["tdamp"] * units.fs,
+                    "pdamp": md_settings["pdamp"] * units.fs,
+                    "tchain": md_settings["tchain"],
+                    "pchain": md_settings["pchain"],
+                    "tloop": md_settings["tloop"],
+                    "ploop": md_settings["ploop"],
+                }
+                dyn = IsotropicMTKNPT(**npt_settings)
+
 
         return dyn
 
@@ -1741,8 +1756,9 @@ class ALMD:
 
         if barostat == "berendsen":
             return self._create_berendsen_npt(atoms, md_settings, idx)
-        elif barostat == "mtk":
-            return self._create_mkt_npt(atoms, md_settings, idx)
+        elif barostat in ["mtk", "isomtk"]:
+            iso = barostat == "isomtk"
+            return self._create_mkt_npt(atoms, md_settings, idx, iso)
         else:
             raise ValueError(f"Unsupported barostat: {barostat}")
 
@@ -1776,6 +1792,7 @@ class ALMD:
         atoms: ase.Atoms,
         md_settings: dict,
         idx: int,
+        iso: bool = False,
     ) -> MTKNPT:
         """Create MTK NPT dynamics engine."""
         npt_settings = {
@@ -1790,7 +1807,10 @@ class ALMD:
             "tloop": md_settings["tloop"],
             "ploop": md_settings["ploop"],
         }
-        return MTKNPT(**npt_settings)
+        if iso:
+            return IsotropicMTKNPT(**npt_settings)
+        else:
+            return MTKNPT(**npt_settings)
 
     def _initialize_velocities(self, atoms: ase.Atoms, md_settings: dict):
         """
