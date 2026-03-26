@@ -87,7 +87,9 @@ class InitialDatasetGenerator(Maker):
 
         # create the initial job (create / read in trajectories / energies / etc)
         if restart:
-            prepare_job = self.restart(restart_path=restart_path)
+            prepare_job = self.restart(
+                restart_path=restart_path,
+                seeds_tags_dict=seeds_tags_dict,)
         else:
             prepare_job = self.run_from_scratch(tags=tags)
 
@@ -128,49 +130,9 @@ class InitialDatasetGenerator(Maker):
             directory=self.misc_settings.log_dir.as_posix()
         )
 
-    # def get_atomic_energies(self):
-    #     """
-    #     Handles the atomic energies for the initial dataset generation.
-    #     Either they are loaded from a model checkpoint, initialized to zero
-    #     or specified by the user in the model settings.
-    #     """
-    #     self.ensemble_atomic_energies = None
-    #     self.ensemble_atomic_energies_dict = None
-    #     self.update_atomic_energies = False
-    #     if self.atomic_energies_dict is None:
-    #         if self.restart:
-
-    #         else:
-    #
-
-    #
-    #     else:
-    #
-    #
-    #         self.ensemble_atomic_energies_dict = {
-    #             tag: self.atomic_energies_dict
-    #             for tag in self.seeds_tags_dict.keys()
-    #         }
-    #
-    #         self.ensemble_atomic_energies = {
-    #             tag: np.array(
-    #                 [
-    #                     self.ensemble_atomic_energies_dict[tag][z]
-    #                     for z in self.ensemble_atomic_energies_dict[
-    #                         tag
-    #                     ].keys()
-    #                 ]
-    #             )
-    #             for tag in self.seeds_tags_dict.keys()
-    #         }
-    #
-    #     logging.info(
-    #         f"{self.ensemble_atomic_energies_dict[list(self.seeds_tags_dict.keys())[0]]}"
-    #     )
-
 
     @job
-    def restart(self, restart_path: Path):
+    def restart(self, restart_path: Path, seeds_tags_dict: dict[str, int]):
         """Restart the initial dataset generation from a checkpoint."""
         logger = self.get_logger()
         logger.info("Restarting initial dataset acquisition from checkpoint.")
@@ -192,21 +154,26 @@ class InitialDatasetGenerator(Maker):
         # get model-dependent inputs (zs, etc) to the trained model
         model_inputs = get_model_dependent_inputs(self.model_settings.GENERAL.model_choice,
                                                   trajectories=trajectories)
-
         logger.debug("Loading atomic energies from checkpoint.")
 
-        # _, ensemble_atomic_energies_dict = get_atomic_energies_from_pt(
-        #     path_to_checkpoints=self.checkpoints_dir,
-        #     z=,
-        #     seeds_tags_dict=self.seeds_tags_dict,
-        #     dtype=self.dtype,
-        #     model_choice=self.model_choice,
-        # )
+        # get atomic energies
+        # TODO: this needs just the tags list, no need for a full dict
+        _, ensemble_atomic_energies_dict = get_atomic_energies_from_pt(
+            path_to_checkpoints=self.model_settings.GENERAL.checkpoints_dir,
+            z=model_inputs["z"],
+            seeds_tags_dict=seeds_tags_dict,
+            dtype=self.model_settings.GENERAL.default_dtype,
+            model_choice=self.model_settings.GENERAL.model_choice,
+        )
+        ensemble_atomic_energies = AtomicEnergies.from_e(list(seeds_tags_dict.keys()),
+                                                         ensemble_atomic_energies_dict)
 
         return {
             "trajectories": {k: MSONAtoms(v) for k, v in trajectories.items()},
             "step": step,
-            "restart_dict": restart_dict
+            "restart_dict": restart_dict,
+            "atomic_energies": ensemble_atomic_energies,
+            "update_atomic_energies": False
         }
 
     @job
