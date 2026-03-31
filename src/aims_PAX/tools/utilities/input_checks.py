@@ -31,6 +31,7 @@ SCHEME = {
     ],
     "optional_parsl_options": {
         "cmd_timeout": 10,
+        "full_debug": False,
     },
     "idg_least_one_required": {
         "desired_acc",
@@ -348,6 +349,7 @@ SCHEME_DTYPES = {
         "use_teacher_reference",
         "save_xyz",
         "shuffle_dataset",
+        "full_debug",
     ],
     "lists": ["mol_idxs"],
     "optional_lists": [],

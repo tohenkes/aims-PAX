@@ -162,6 +162,7 @@ def create_parsl_config(
 
     label = parsl_options.get("label", "workqueue")
     cmd_timeout = parsl_options.get("cmd_timeout", 10)
+    full_debug = parsl_options.get("full_debug", False)
 
     try:
         worker_init_str = cluster_settings["worker_str"]
@@ -196,6 +197,7 @@ def create_parsl_config(
                     shared_fs=True,  # assumes shared file system
                     function_dir=str(function_dir),
                     autocategory=False,
+                    full_debug=full_debug,
                     provider=SlurmProvider(
                         partition=partition,
                         nodes_per_block=nodes_per_block,
