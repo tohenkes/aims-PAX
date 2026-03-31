@@ -60,12 +60,26 @@ def prepare_parsl(
     clean_dirs = cluster_settings.get("clean_dirs", True)
     calc_idx = 0
 
+    parsl_options = cluster_settings.get("parsl_options", {})
+    _parsl_info = parsl_options.get("parsl_info_dir", None)
+    if _parsl_info is None:
+        parsl_info_dir = output_dir / "parsl_info"
+    else:
+        parsl_info_dir = Path(_parsl_info)
+        if not parsl_info_dir.is_absolute():
+            parsl_info_dir = output_dir / parsl_info_dir
+    clean_parsl_dirs = parsl_options.get("clean_parsl_dirs", True)
+    clean_task_dirs = parsl_options.get("clean_task_dirs", True)
+
     return {
         "config": config,
         "calc_dir": calc_dir,
         "clean_dirs": clean_dirs,
         "launch_str": launch_str,
         "calc_idx": calc_idx,
+        "parsl_info_dir": parsl_info_dir,
+        "clean_parsl_dirs": clean_parsl_dirs,
+        "clean_task_dirs": clean_task_dirs,
     }
 
 
@@ -252,6 +266,45 @@ def handle_parsl_logger(log_dir: Path = Path("./")):
     parsl_logger.handlers.clear()
     parsl_logger.addHandler(parsl_handler)
     parsl_logger.propagate = False
+
+
+def cleanup_task_dir(future) -> None:
+    """
+    Remove the per-task function_data directory for a completed Parsl task.
+    Called immediately after future.result() is retrieved. Silently skips
+    if the path cannot be determined (e.g. local executor, non-WorkQueue).
+    """
+    import shutil
+    import parsl
+
+    try:
+        task_id = getattr(future, "parsl_executor_task_id", None)
+        if task_id is None:
+            return
+        for executor in parsl.dfk().executors.values():
+            fdd = getattr(executor, "function_data_dir", None)
+            if fdd is None:
+                continue
+            task_dir = Path(fdd) / "{:04d}".format(task_id)
+            if task_dir.exists():
+                shutil.rmtree(task_dir)
+                logging.debug(f"Removed Parsl task dir: {task_dir}")
+    except Exception:
+        pass  # Non-critical; never crash the workflow
+
+
+def cleanup_parsl_dirs(parsl_info_dir: Path) -> None:
+    """
+    Remove Parsl run_dir and function_dir under parsl_info_dir.
+    Called after parsl.dfk().cleanup() when clean_parsl_dirs is True.
+    """
+    import shutil
+
+    for subdir in ("run_dir", "function_dir"):
+        d = parsl_info_dir / subdir
+        if d.exists():
+            shutil.rmtree(d)
+            logging.debug(f"Removed Parsl directory: {d}")
 
 
 @python_app

@@ -522,6 +522,8 @@ class DFWorkerManager:
 
         # Determine mode
         self._use_parsl = config.cluster_settings is not None
+        _parsl_opts = (config.cluster_settings or {}).get("parsl_options", {})
+        self.clean_task_dirs = _parsl_opts.get("clean_task_dirs", True)
         self._executor: Optional[concurrent.futures.Executor] = None
 
         if not self._use_parsl:
@@ -711,6 +713,9 @@ class DFWorkerManager:
             if is_done:
                 try:
                     result = future.result()
+                    if self._use_parsl and self.clean_task_dirs:
+                        from aims_PAX.tools.utilities.parsl_utils import cleanup_task_dir
+                        cleanup_task_dir(future)
                 except Exception as exc:
                     logging.warning(
                         f"Worker {worker_id} failed: {exc}. " "Skipping batch."

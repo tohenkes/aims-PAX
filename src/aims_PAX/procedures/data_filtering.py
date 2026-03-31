@@ -386,6 +386,7 @@ class DataFilteringProcedure:
 
         wm.shutdown()
         self._finalize()
+        self._cleanup_parsl()
 
     def converge(self) -> None:
         """Final convergence training on the collected filtered dataset."""
@@ -567,6 +568,22 @@ class DataFilteringProcedure:
         # Save final model
         self._save_final_model()
         logging.info("Final model saved.")
+
+    def _cleanup_parsl(self) -> None:
+        """Shut down Parsl and optionally remove its working directories."""
+        if self._parsl_settings is None:
+            return
+        import parsl
+
+        try:
+            parsl.dfk()
+        except parsl.errors.NoDataFlowKernelError:
+            return
+
+        parsl.dfk().cleanup()
+        if self._parsl_settings.get("clean_parsl_dirs", True):
+            from aims_PAX.tools.utilities.parsl_utils import cleanup_parsl_dirs
+            cleanup_parsl_dirs(self._parsl_settings["parsl_info_dir"])
 
     def _save_multihead_hdf5(
         self,

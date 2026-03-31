@@ -1360,6 +1360,9 @@ class ALReferenceManagerPARSL:
         self.parsl_config = parsl_setup_dict["config"]
         self.calc_dir = parsl_setup_dict["calc_dir"]
         self.clean_dirs = parsl_setup_dict["clean_dirs"]
+        self.parsl_info_dir = parsl_setup_dict["parsl_info_dir"]
+        self.clean_parsl_dirs = parsl_setup_dict["clean_parsl_dirs"]
+        self.clean_task_dirs = parsl_setup_dict["clean_task_dirs"]
 
         try:
             parsl.dfk()
@@ -1482,7 +1485,11 @@ class ALReferenceManagerPARSL:
 
             for job_idx, job_no in done_jobs:
                 with self.results_lock:
-                    temp_result = futures[job_idx][job_no].result()
+                    _fut = futures[job_idx][job_no]
+                    temp_result = _fut.result()
+                    if self.clean_task_dirs:
+                        from aims_PAX.tools.utilities.parsl_utils import cleanup_task_dir
+                        cleanup_task_dir(_fut)
                     if temp_result is None:
                         self.reference_results[job_idx] = False
                     else:
@@ -1512,6 +1519,9 @@ class ALReferenceManagerPARSL:
         time.sleep(10)
         if not self.config.analysis:
             parsl.dfk().cleanup()
+            if self.clean_parsl_dirs:
+                from aims_PAX.tools.utilities.parsl_utils import cleanup_parsl_dirs
+                cleanup_parsl_dirs(self.parsl_info_dir)
 
     # Keep backward-compatible alias
     finalize_dft = finalize_reference
@@ -2706,7 +2716,11 @@ class ALAnalysisManagerPARSL(ALAnalysisManager):
             # Process done jobs
             for job_idx, job_no in done_jobs:
                 with self.results_lock:
-                    temp_result = futures[job_idx][job_no].result()
+                    _fut = futures[job_idx][job_no]
+                    temp_result = _fut.result()
+                if self.dft_manager.clean_task_dirs:
+                    from aims_PAX.tools.utilities.parsl_utils import cleanup_task_dir
+                    cleanup_task_dir(_fut)
                 if temp_result is None:
                     logging.info(
                         f"SCF during analysis for worker {job_idx} no {job_no}"
@@ -2789,3 +2803,6 @@ class ALAnalysisManagerPARSL(ALAnalysisManager):
         while not self.analysis_done:
             time.sleep(0.1)
         parsl.dfk().cleanup()
+        if self.dft_manager.clean_parsl_dirs:
+            from aims_PAX.tools.utilities.parsl_utils import cleanup_parsl_dirs
+            cleanup_parsl_dirs(self.dft_manager.parsl_info_dir)

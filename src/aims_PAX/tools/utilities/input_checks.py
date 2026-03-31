@@ -32,6 +32,8 @@ SCHEME = {
     "optional_parsl_options": {
         "cmd_timeout": 10,
         "full_debug": False,
+        "clean_task_dirs": True,
+        "clean_parsl_dirs": True,
     },
     "idg_least_one_required": {
         "desired_acc",
@@ -350,6 +352,8 @@ SCHEME_DTYPES = {
         "save_xyz",
         "shuffle_dataset",
         "full_debug",
+        "clean_task_dirs",
+        "clean_parsl_dirs",
     ],
     "lists": ["mol_idxs"],
     "optional_lists": [],

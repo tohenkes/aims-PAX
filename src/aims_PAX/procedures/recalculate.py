@@ -258,6 +258,9 @@ class ReCalculatorPARSL:
         self.clean_dirs = parsl_setup_dict["clean_dirs"]
         self.launch_str = parsl_setup_dict["launch_str"]
         self.calc_idx = parsl_setup_dict["calc_idx"]
+        self.parsl_info_dir = parsl_setup_dict["parsl_info_dir"]
+        self.clean_parsl_dirs = parsl_setup_dict["clean_parsl_dirs"]
+        self.clean_task_dirs = parsl_setup_dict["clean_task_dirs"]
         handle_parsl_logger(
             log_dir="./parsl_recalculation.log",
         )
@@ -289,6 +292,9 @@ class ReCalculatorPARSL:
                 result = job_results[i]
                 if result.done():
                     temp = result.result()
+                    if self.clean_task_dirs:
+                        from aims_PAX.tools.utilities.parsl_utils import cleanup_task_dir
+                        cleanup_task_dir(result)
                     calcs_done += 1
                     if temp is None:
                         logging.warning(
@@ -329,6 +335,9 @@ class ReCalculatorPARSL:
 
         logging.info("Closing PARSL.")
         parsl.dfk().cleanup()
+        if self.clean_parsl_dirs:
+            from aims_PAX.tools.utilities.parsl_utils import cleanup_parsl_dirs
+            cleanup_parsl_dirs(self.parsl_info_dir)
         exit()
 
     def _handle_aims_settings(self, path_to_control: str):

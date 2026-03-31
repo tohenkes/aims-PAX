@@ -1046,6 +1046,9 @@ class InitialDatasetPARSL(InitialDatasetFoundational):
             self.clean_dirs = parsl_setup_dict["clean_dirs"]
             self.launch_str = parsl_setup_dict["launch_str"]
             self.calc_idx = parsl_setup_dict["calc_idx"]
+            self.parsl_info_dir = parsl_setup_dict["parsl_info_dir"]
+            self.clean_parsl_dirs = parsl_setup_dict["clean_parsl_dirs"]
+            self.clean_task_dirs = parsl_setup_dict["clean_task_dirs"]
             
             self.parsl_func_input = {
                 "ase_aims_command": self.launch_str,
@@ -1197,6 +1200,9 @@ class InitialDatasetPARSL(InitialDatasetFoundational):
                         result = job_results[idx][i]
                         if result.done():
                             temp = result.result()
+                            if self.clean_task_dirs:
+                                from aims_PAX.tools.utilities.parsl_utils import cleanup_task_dir
+                                cleanup_task_dir(result)
                             current_point = self.sampled_points[idx][i]
                             processed = self._process_reference_result(
                                 temp, current_point
@@ -1259,6 +1265,9 @@ class InitialDatasetPARSL(InitialDatasetFoundational):
         if self.close_parsl:
             logging.info("Closing PARSL.")
             parsl.dfk().cleanup()
+            if self.clean_parsl_dirs:
+                from aims_PAX.tools.utilities.parsl_utils import cleanup_parsl_dirs
+                cleanup_parsl_dirs(self.parsl_info_dir)
         else:
             logging.info(
                 "Not closing PARSL. Please close it manually if needed."
