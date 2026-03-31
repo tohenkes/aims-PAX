@@ -278,7 +278,14 @@ def cleanup_task_dir(future) -> None:
     import parsl
 
     try:
-        task_id = getattr(future, "parsl_executor_task_id", None)
+        # parsl_executor_task_id is set on the inner exec_fu, not on AppFuture
+        task_record = getattr(future, "task_record", None)
+        if task_record is None:
+            return
+        exec_fu = task_record.get("exec_fu")
+        if exec_fu is None:
+            return
+        task_id = getattr(exec_fu, "parsl_executor_task_id", None)
         if task_id is None:
             return
         for executor in parsl.dfk().executors.values():
