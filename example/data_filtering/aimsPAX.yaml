@@ -71,6 +71,8 @@ MISC:
 #     min_blocks: 1
 #     max_blocks: 8
 #     label: 'filter_example'
+#     # cmd_timeout: 10    # Seconds to wait for sbatch/squeue/scancel to respond.
+#     #                    # Increase (e.g. 30-60) on clusters with slow schedulers.
 #   slurm_str: |
 #     #SBATCH --job-name=filter_example
 #     #SBATCH --partition=gpu

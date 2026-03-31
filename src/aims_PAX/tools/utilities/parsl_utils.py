@@ -161,6 +161,7 @@ def create_parsl_config(
     )
 
     label = parsl_options.get("label", "workqueue")
+    cmd_timeout = parsl_options.get("cmd_timeout", 10)
 
     try:
         worker_init_str = cluster_settings["worker_str"]
@@ -203,6 +204,7 @@ def create_parsl_config(
                         max_blocks=max_blocks,
                         scheduler_options=slurm_options_str,
                         worker_init=worker_init_str,
+                        cmd_timeout=cmd_timeout,
                     ),
                 )
             ],
@@ -227,6 +229,7 @@ def create_parsl_config(
                         scheduler_options=slurm_options_str,
                         worker_init=worker_init_str,
                         launcher=SimpleLauncher(),
+                        cmd_timeout=cmd_timeout,
                     ),
                 )
             ],

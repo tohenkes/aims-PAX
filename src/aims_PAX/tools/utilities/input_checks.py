@@ -29,6 +29,9 @@ SCHEME = {
         "max_blocks",
         "label",
     ],
+    "optional_parsl_options": {
+        "cmd_timeout": 10,
+    },
     "idg_least_one_required": {
         "desired_acc",
         "max_initial_set_size",
@@ -249,6 +252,7 @@ SCHEME_DTYPES = {
         "init_blocks",
         "min_blocks",
         "max_blocks",
+        "cmd_timeout",
         "valid_skip",
         "convergence_patience",
         "skip_step_initial",
@@ -1069,6 +1073,16 @@ def check_aimsPAX_settings(settings: dict, procedure: str = "full") -> dict:
             parsl_options = check_dtypes(
                 settings=parsl_options,
                 scheme_key="required_parsl_options",
+                scheme=SCHEME,
+                scheme_dtype=SCHEME_DTYPES,
+            )
+            # fill optional parsl_options defaults and coerce dtypes
+            for k, v in SCHEME["optional_parsl_options"].items():
+                if k not in parsl_options:
+                    parsl_options[k] = v
+            parsl_options = check_dtypes(
+                settings=parsl_options,
+                scheme_key="optional_parsl_options",
                 scheme=SCHEME,
                 scheme_dtype=SCHEME_DTYPES,
             )
