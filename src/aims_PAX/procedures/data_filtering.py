@@ -11,6 +11,7 @@ DataFilteringProcedure orchestrates:
 
 import contextlib
 import logging
+import random
 import time
 from pathlib import Path
 from typing import List, Optional
@@ -84,6 +85,7 @@ class DataFilteringProcedure:
             aimsPAX_settings=aimsPAX_settings,
         )
         config = self.config
+        random.seed(config.seed)
 
         # ---------------------------------------------------------------
         # 2. Logging

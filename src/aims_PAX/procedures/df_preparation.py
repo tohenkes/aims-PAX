@@ -182,7 +182,7 @@ class DFConfiguration:
         self.epochs_per_worker = self.epochs_per_batch
         self.num_trajectories = 1
         self.model_choice = "so3lr"
-        self.seeds_tags_dict = {"model_seed_1": 42}
+        self.seeds_tags_dict = {"model_seed_1": self.seed}
         self.mol_idxs = None
 
 
