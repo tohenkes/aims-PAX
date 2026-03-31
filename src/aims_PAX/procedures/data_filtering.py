@@ -30,7 +30,6 @@ def _quiet_so3lr():
 
 
 import h5py
-import numpy as np
 import torch
 
 from so3krates_torch.data.hdf5_utils import save_atoms_to_hdf5
@@ -435,28 +434,31 @@ class DataFilteringProcedure:
         dataset_dir = config.dataset_dir
 
         if config.use_multihead_model:
-            hdf5_path = dataset_dir / "filtered_combined.h5"
+            train_path = dataset_dir / "filtered_combined_train.h5"
+            valid_path = dataset_dir / "filtered_combined_valid.h5"
         else:
-            hdf5_path = dataset_dir / "filtered_dataset.h5"
+            train_path = dataset_dir / "filtered_dataset_train.h5"
+            valid_path = dataset_dir / "filtered_dataset_valid.h5"
 
-        if not hdf5_path.exists():
+        if not train_path.exists() and not valid_path.exists():
             logging.warning(
-                f"Filtered dataset not found at {hdf5_path}; "
+                f"Filtered dataset not found at {train_path} / {valid_path}; "
                 "cannot reload for convergence."
             )
             return
 
-        logging.info(f"Reloading filtered dataset from {hdf5_path}.")
-        with _quiet_so3lr():
-            all_atoms = load_atoms_from_hdf5(str(hdf5_path))
+        train_atoms, valid_atoms = [], []
+        if train_path.exists():
+            logging.info(f"Reloading train dataset from {train_path}.")
+            with _quiet_so3lr():
+                train_atoms = load_atoms_from_hdf5(str(train_path))
+        if valid_path.exists():
+            logging.info(f"Reloading valid dataset from {valid_path}.")
+            with _quiet_so3lr():
+                valid_atoms = load_atoms_from_hdf5(str(valid_path))
 
-        # Split into train / valid using the same ratio as the original run
-        n = len(all_atoms)
-        n_valid = max(1, int(np.round(n * config.valid_ratio)))
-        n_train = n - n_valid
-
-        mm.ensemble_ase_sets[tag]["train"] = all_atoms[:n_train]
-        mm.ensemble_ase_sets[tag]["valid"] = all_atoms[n_train:]
+        mm.ensemble_ase_sets[tag]["train"] = train_atoms
+        mm.ensemble_ase_sets[tag]["valid"] = valid_atoms
 
         mm.ensemble_model_sets = ase_to_model_ensemble_sets(
             ensemble_ase_sets=mm.ensemble_ase_sets,
@@ -469,8 +471,8 @@ class DataFilteringProcedure:
         )
 
         logging.info(
-            f"Reloaded {n_train} train + {n_valid} valid structures "
-            "for convergence."
+            f"Reloaded {len(train_atoms)} train + {len(valid_atoms)} valid "
+            "structures for convergence."
         )
 
     def _save_incremental_dataset(self) -> None:
@@ -487,8 +489,9 @@ class DataFilteringProcedure:
         tag = "model_seed_1"
         ase_sets = mm.ensemble_ase_sets[tag]
 
-        all_atoms = ase_sets["train"] + ase_sets["valid"]
-        if not all_atoms:
+        train_atoms = ase_sets["train"]
+        valid_atoms = ase_sets["valid"]
+        if not train_atoms and not valid_atoms:
             return
 
         ks = config.key_specification
@@ -501,17 +504,28 @@ class DataFilteringProcedure:
         dataset_dir.mkdir(parents=True, exist_ok=True)
 
         if config.use_multihead_model:
-            self._save_multihead_hdf5(all_atoms, dataset_dir, save_keyspec)
+            self._save_multihead_hdf5(
+                train_atoms, valid_atoms, dataset_dir, save_keyspec
+            )
         else:
-            output_path = str(dataset_dir / "filtered_dataset.h5")
-            with _quiet_so3lr():
-                save_atoms_to_hdf5(
-                    atoms_iter=all_atoms,
-                    output_path=output_path,
-                    key_specification=save_keyspec,
+            for split, atoms in [
+                ("train", train_atoms),
+                ("valid", valid_atoms),
+            ]:
+                if not atoms:
+                    continue
+                output_path = str(
+                    dataset_dir / f"filtered_dataset_{split}.h5"
                 )
+                with _quiet_so3lr():
+                    save_atoms_to_hdf5(
+                        atoms_iter=atoms,
+                        output_path=output_path,
+                        key_specification=save_keyspec,
+                    )
         logging.debug(
-            f"Incremental dataset saved: {len(all_atoms)} structures."
+            f"Incremental dataset saved: "
+            f"{len(train_atoms)} train + {len(valid_atoms)} valid structures."
         )
 
     def _finalize(self) -> None:
@@ -556,56 +570,65 @@ class DataFilteringProcedure:
 
     def _save_multihead_hdf5(
         self,
-        all_atoms: list,
+        train_atoms: list,
+        valid_atoms: list,
         dataset_dir: Path,
         save_keyspec: KeySpecification,
     ) -> None:
         """
-        For multi-head runs: save one HDF5 per source dataset
-        (based on atoms.info["head"]) and a combined HDF5.
+        For multi-head runs: save one HDF5 per source dataset per split
+        (based on atoms.info["head"]) and combined train/valid HDF5 files.
         """
         config = self.config
 
-        # Group atoms by head
-        per_head: dict = {h: [] for h in config.all_heads}
-        for atoms in all_atoms:
-            head_name = atoms.info.get("head", "head_0")
-            if head_name in per_head:
-                per_head[head_name].append(atoms)
-            else:
-                per_head.setdefault(head_name, []).append(atoms)
-
-        total = 0
-        for head_name, atoms_list in per_head.items():
+        for split, atoms_list in [
+            ("train", train_atoms),
+            ("valid", valid_atoms),
+        ]:
             if not atoms_list:
                 continue
-            ds_idx = int(head_name.split("_")[-1])
-            src_stem = Path(config.hdf5_paths[ds_idx]).stem
-            output_path = str(dataset_dir / f"filtered_{src_stem}.h5")
+
+            # Group atoms by head
+            per_head: dict = {h: [] for h in config.all_heads}
+            for atoms in atoms_list:
+                head_name = atoms.info.get("head", "head_0")
+                if head_name in per_head:
+                    per_head[head_name].append(atoms)
+                else:
+                    per_head.setdefault(head_name, []).append(atoms)
+
+            for head_name, head_atoms in per_head.items():
+                if not head_atoms:
+                    continue
+                ds_idx = int(head_name.split("_")[-1])
+                src_stem = Path(config.hdf5_paths[ds_idx]).stem
+                output_path = str(
+                    dataset_dir / f"filtered_{src_stem}_{split}.h5"
+                )
+                with _quiet_so3lr():
+                    save_atoms_to_hdf5(
+                        atoms_iter=head_atoms,
+                        output_path=output_path,
+                        key_specification=save_keyspec,
+                    )
+                logging.info(
+                    f"  {head_name} ({split}): {len(head_atoms)} structures"
+                    f" → {output_path}"
+                )
+
+            combined_path = str(
+                dataset_dir / f"filtered_combined_{split}.h5"
+            )
             with _quiet_so3lr():
                 save_atoms_to_hdf5(
                     atoms_iter=atoms_list,
-                    output_path=output_path,
+                    output_path=combined_path,
                     key_specification=save_keyspec,
                 )
             logging.info(
-                f"  {head_name}: {len(atoms_list)} structures → "
-                f"{output_path}"
+                f"Combined filtered dataset ({split}): "
+                f"{len(atoms_list)} structures → {combined_path}"
             )
-            total += len(atoms_list)
-
-        # Combined HDF5
-        combined_path = str(dataset_dir / "filtered_combined.h5")
-        with _quiet_so3lr():
-            save_atoms_to_hdf5(
-                atoms_iter=all_atoms,
-                output_path=combined_path,
-                key_specification=save_keyspec,
-            )
-        logging.info(
-            f"Combined filtered dataset: {total} structures → "
-            f"{combined_path}"
-        )
 
     def _save_final_model(self) -> None:
         """Save each model in the ensemble to model_dir as <tag>.model."""
