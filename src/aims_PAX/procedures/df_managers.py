@@ -193,6 +193,7 @@ class DFDataManager:
         """
         config = self.config
         mm = self.model_manager
+        sm = self.state_manager
         tag = "model_seed_1"
         model_set = mm.ensemble_model_sets[tag]
 
@@ -214,7 +215,14 @@ class DFDataManager:
                 "replay_strategy='random_subset'."
             )
             train_n = min(config.train_subset_size, len(train_set))
-            sampled_train = random.sample(model_set["train"], train_n)
+            n_new = sm.new_train_count
+            new_points = model_set["train"][-n_new:] if n_new else []
+            old_pool = model_set["train"][:-n_new] if n_new else model_set["train"]
+            forced = new_points[:train_n]
+            n_fill = train_n - len(forced)
+            remainder = random.sample(old_pool, min(n_fill, len(old_pool)))
+            sampled_train = forced + remainder
+            sm.new_train_count = 0
 
             set_valid_size = (
                 config.valid_subset_size
