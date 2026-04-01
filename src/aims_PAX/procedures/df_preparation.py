@@ -33,6 +33,7 @@ from aims_PAX.tools.utilities.utilities import (
     apply_model_settings,
     create_keyspec,
     setup_logger,
+    setup_pretrained,
 )
 
 # ---------------------------------------------------------------------------
@@ -387,6 +388,16 @@ class DFModelManager:
             f"avg_num_neighbors={self.avg_num_neighbors:.2f}"
         )
 
+    def _df_checkpoint_exists(self) -> bool:
+        """Return True if a DF checkpoint file exists (restart scenario)."""
+        ckpt_dir = self.config.checkpoints_dir
+        if not os.path.isdir(ckpt_dir):
+            return False
+        return any(
+            f.endswith(".pth") or f.endswith(".pt")
+            for f in os.listdir(ckpt_dir)
+        )
+
     def setup_model(self):
         """Create the SO3LR or MultiHeadSO3LR model and training setup."""
         config = self.config
@@ -442,6 +453,62 @@ class DFModelManager:
                 else "SO3LR"
             )
         )
+
+        # Load pre-trained weights if configured (first run only;
+        # restart loads from DF checkpoint)
+        training = config.model_settings.get("TRAINING", {})
+        pretrained_path = training.get("pretrained_model") or training.get(
+            "pretrained_weights"
+        )
+        if pretrained_path and not self._df_checkpoint_exists():
+            logging.info(
+                f"Data filtering: loading pre-trained model weights from "
+                f"{pretrained_path}"
+            )
+            if config.use_multihead_model:
+                self.ensemble[tag] = setup_pretrained(
+                    config.model_settings,
+                    self.z_table,
+                    self.e0s_dict,
+                )
+                self.training_setups[tag] = setup_model_training(
+                    settings=config.model_settings,
+                    model=self.ensemble[tag],
+                    model_choice=config.model_choice,
+                    tag=tag,
+                    restart=config.restart,
+                    checkpoints_dir=config.checkpoints_dir,
+                )
+            else:
+                device = torch.device(config.device)
+                # weights_only=False needed: checkpoint may contain
+                # non-tensor scalars
+                ckpt = torch.load(
+                    pretrained_path,
+                    map_location=device,
+                    weights_only=False,
+                )
+                state_dict = (
+                    ckpt["model"]
+                    if isinstance(ckpt, dict) and "model" in ckpt
+                    else ckpt
+                )
+                if isinstance(state_dict, dict):
+                    self.ensemble[tag].load_state_dict(
+                        state_dict, strict=False
+                    )
+                else:
+                    self.ensemble[tag] = state_dict
+                    # Re-setup training so optimizer references the
+                    # newly loaded model
+                    self.training_setups[tag] = setup_model_training(
+                        settings=config.model_settings,
+                        model=self.ensemble[tag],
+                        model_choice=config.model_choice,
+                        tag=tag,
+                        restart=config.restart,
+                        checkpoints_dir=config.checkpoints_dir,
+                    )
 
     def load_from_checkpoint(self, checkpoint_path: str):
         """Reload model weights from a saved checkpoint."""
