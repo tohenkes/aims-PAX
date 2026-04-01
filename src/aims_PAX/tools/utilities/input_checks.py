@@ -219,6 +219,7 @@ SCHEME = {
         "margin": 0.002,
         "save_xyz": False,
         "shuffle_dataset": True,
+        "use_multihead_model": False,
     },
     "conflicts": {
         "parallel": "CLUSTER",
@@ -354,6 +355,7 @@ SCHEME_DTYPES = {
         "full_debug",
         "clean_task_dirs",
         "clean_parsl_dirs",
+        "use_multihead_model",
     ],
     "lists": ["mol_idxs"],
     "optional_lists": [],
@@ -797,6 +799,13 @@ def check_df_settings(settings: dict) -> dict:
         assert df_settings["train_subset_size"] is not None, (
             "`train_subset_size` must be specified for "
             "`random_subset` replay strategy!"
+        )
+
+    # Validate use_multihead_model
+    if df_settings.get("use_multihead_model", False):
+        assert len(df_settings.get("hdf5_paths", [])) >= 2, (
+            "`use_multihead_model=True` requires at least 2 entries "
+            "in `hdf5_paths`"
         )
 
     settings["DATA_FILTERING"] = df_settings
