@@ -12,6 +12,18 @@ DATA_FILTERING:
   #                             # source_dataset (HDF5 stem) in companion
   #                             # *_sources.json files saved alongside the output.
 
+  # To start data filtering from a pre-trained model, add to model.yaml:
+  #
+  # TRAINING:
+  #   pretrained_model: "/path/to/existing_model.pth"   # full model file
+  #   # pretrained_weights: "/path/to/weights.pth"      # weights-only alternative
+  #   perform_finetuning: false  # set true to freeze layers (see model.yaml options)
+  #
+  # On restart, the DF checkpoint takes precedence over pretrained_model;
+  # the pretrained path is only used on the very first initialisation.
+  # For multi-head DF from a single-head pretrained model, also set:
+  #   convert_to_multihead: true
+
   # --- Evaluation ---
   shuffle_dataset: True  # Shuffle dataset indices before chunking to avoid
                          # sampling bias from inherent dataset structure (e.g.
