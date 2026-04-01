@@ -10,6 +10,7 @@ DataFilteringProcedure orchestrates:
 """
 
 import contextlib
+import json
 import logging
 import random
 import time
@@ -524,6 +525,7 @@ class DataFilteringProcedure:
                         output_path=output_path,
                         key_specification=save_keyspec,
                     )
+                self._save_sources_json(atoms, output_path)
         logging.debug(
             f"Incremental dataset saved: "
             f"{len(train_atoms)} train + {len(valid_atoms)} valid structures."
@@ -628,6 +630,7 @@ class DataFilteringProcedure:
                         output_path=output_path,
                         key_specification=save_keyspec,
                     )
+                self._save_sources_json(head_atoms, output_path)
                 logging.info(
                     f"  {head_name} ({split}): {len(head_atoms)} structures"
                     f" → {output_path}"
@@ -642,10 +645,26 @@ class DataFilteringProcedure:
                     output_path=combined_path,
                     key_specification=save_keyspec,
                 )
+            self._save_sources_json(atoms_list, combined_path)
             logging.info(
                 f"Combined filtered dataset ({split}): "
                 f"{len(atoms_list)} structures → {combined_path}"
             )
+
+    @staticmethod
+    def _save_sources_json(atoms_list: list, hdf5_path: str) -> None:
+        """Save a companion JSON file listing source_dataset per structure.
+
+        The i-th entry corresponds to the i-th structure in the paired
+        HDF5 file. Used because save_atoms_to_hdf5 does not serialise
+        custom atoms.info keys.
+        """
+        sources = [
+            a.info.get("source_dataset", "") for a in atoms_list
+        ]
+        json_path = hdf5_path.replace(".h5", "_sources.json")
+        with open(json_path, "w") as f:
+            json.dump(sources, f, indent=2)
 
     def _save_final_model(self) -> None:
         """Save each model in the ensemble to model_dir as <tag>.model."""

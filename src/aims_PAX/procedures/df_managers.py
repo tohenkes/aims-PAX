@@ -174,8 +174,10 @@ class DFDataManager:
         for atoms in atoms_list:
             atoms.info["head"] = head_name
             # Tag each structure with the source HDF5 file stem.
-            # Note: source_dataset will NOT persist in HDF5 round-trip
-            # (only config_type, head, *_weight keys are serialized).
+            # source_dataset is not preserved by save_atoms_to_hdf5 (which
+            # only serialises specific hardcoded keys). A companion
+            # _sources.json file is saved alongside each output HDF5 to
+            # record origin dataset per structure.
             atoms.info["source_dataset"] = Path(hdf5_path).stem
             max_reached = self._add_single_point(atoms, head_name)
             if max_reached:
