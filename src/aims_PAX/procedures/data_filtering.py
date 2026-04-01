@@ -424,6 +424,12 @@ class DataFilteringProcedure:
         where the training atoms are no longer in memory. Mirrors how AL
         reloads its dataset via load_ensemble_sets_from_folder +
         ase_to_model_ensemble_sets.
+
+        Note: reloaded atoms will not have atoms.info["source_dataset"] set
+        (save_atoms_to_hdf5 does not persist that key). This is safe because
+        converge() only calls _save_final_model(), never _save_incremental_dataset
+        or _finalize(), so the companion *_sources.json files are never
+        re-written from these reloaded atoms.
         """
         from so3krates_torch.data.hdf5_utils import load_atoms_from_hdf5
         from aims_PAX.tools.utilities.data_handling import (
