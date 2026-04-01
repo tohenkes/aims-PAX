@@ -227,6 +227,7 @@ class DFStateManager:
         self.total_points_added: int = 0
         self.train_points_added: int = 0
         self.valid_points_added: int = 0
+        self.new_train_count: int = 0
         self.current_valid_error: float = np.inf
         self.total_epoch: int = 0
 
@@ -497,6 +498,7 @@ class DFRestart:
         "total_points_added",
         "train_points_added",
         "valid_points_added",
+        "new_train_count",
         "current_valid_error",
         "total_epoch",
         "ensemble_reset_opt",
