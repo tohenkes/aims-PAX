@@ -30,6 +30,7 @@ from aims_PAX.tools.model_tools.setup_so3 import (
 )
 from aims_PAX.tools.model_tools.training_tools import setup_model_training
 from aims_PAX.tools.utilities.utilities import (
+    apply_finetuning_settings,
     apply_model_settings,
     create_keyspec,
     setup_logger,
@@ -509,6 +510,22 @@ class DFModelManager:
                         restart=config.restart,
                         checkpoints_dir=config.checkpoints_dir,
                     )
+
+            # Apply finetuning settings if configured
+            if training.get("perform_finetuning"):
+                self.ensemble[tag] = apply_finetuning_settings(
+                    self.ensemble[tag], config.model_settings
+                )
+                # Re-setup training so optimizer references the
+                # finetuned model
+                self.training_setups[tag] = setup_model_training(
+                    settings=config.model_settings,
+                    model=self.ensemble[tag],
+                    model_choice=config.model_choice,
+                    tag=tag,
+                    restart=config.restart,
+                    checkpoints_dir=config.checkpoints_dir,
+                )
 
     def load_from_checkpoint(self, checkpoint_path: str):
         """Reload model weights from a saved checkpoint."""
