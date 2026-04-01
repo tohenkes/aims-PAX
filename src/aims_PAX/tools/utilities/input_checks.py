@@ -802,10 +802,10 @@ def check_df_settings(settings: dict) -> dict:
         )
 
     # Validate use_multihead_model
-    if df_settings.get("use_multihead_model", False):
-        assert len(df_settings.get("hdf5_paths", [])) >= 2, (
+    if df_settings["use_multihead_model"]:
+        assert len(df_settings["hdf5_paths"]) >= 2, (
             "`use_multihead_model=True` requires at least 2 entries "
-            "in `hdf5_paths`"
+            "in `hdf5_paths`!"
         )
 
     settings["DATA_FILTERING"] = df_settings
