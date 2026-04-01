@@ -1,9 +1,16 @@
 DATA_FILTERING:
   # Path(s) to raw HDF5 v2.0 dataset(s) to filter.
-  # Single path  → regular SO3LR model.
-  # Multiple paths → MultiHeadSO3LR (one output head per dataset).
   hdf5_paths:
     - "/path/to/large_dataset.h5"
+  # use_multihead_model: false  # Set true to use one output head per dataset
+  #                             # (requires >= 2 hdf5_paths). Default: false,
+  #                             # meaning a single-head model is trained on the
+  #                             # combined data even when multiple paths are given.
+  #                             # NOTE: if you previously relied on multiple paths
+  #                             # automatically enabling multi-head, add this flag.
+  #                             # Each filtered structure is tagged with
+  #                             # source_dataset (HDF5 stem) in companion
+  #                             # *_sources.json files saved alongside the output.
 
   # --- Evaluation ---
   shuffle_dataset: True  # Shuffle dataset indices before chunking to avoid
