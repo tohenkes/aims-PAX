@@ -79,8 +79,8 @@ class DFConfiguration:
         # HDF5 datasets
         self.hdf5_paths: List[str] = df["hdf5_paths"]
 
-        # Multi-head: one head per dataset when >1 path
-        self.use_multihead_model = len(self.hdf5_paths) > 1
+        # Multi-head: explicitly opt-in (default: single-head even with multiple paths)
+        self.use_multihead_model = bool(df.get("use_multihead_model", False))
         if self.use_multihead_model:
             self.all_heads = [f"head_{i}" for i in range(len(self.hdf5_paths))]
             # Patch model settings so TrainingOrchestrator picks this up
