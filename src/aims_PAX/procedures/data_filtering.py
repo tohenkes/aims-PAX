@@ -559,7 +559,7 @@ class DataFilteringProcedure:
 
         # Optional XYZ output
         if config.save_xyz:
-            xyz_dir = dataset_dir / "xyz"
+            xyz_dir = config.dataset_dir / "xyz"
             save_datasets(
                 ensemble=mm.ensemble,
                 ensemble_ase_sets=mm.ensemble_ase_sets,
@@ -662,7 +662,11 @@ class DataFilteringProcedure:
         sources = [
             a.info.get("source_dataset", "") for a in atoms_list
         ]
-        json_path = hdf5_path.replace(".h5", "_sources.json")
+        json_path = str(
+            Path(hdf5_path).with_name(
+                Path(hdf5_path).stem + "_sources.json"
+            )
+        )
         with open(json_path, "w") as f:
             json.dump(sources, f, indent=2)
 
