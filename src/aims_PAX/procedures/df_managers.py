@@ -335,6 +335,7 @@ class DFDataManager:
             mm.ensemble_ase_sets[tag]["train"].append(atoms)
             mm.ensemble_model_sets[tag]["train"] += model_point
             sm.train_points_added += 1
+            sm.new_train_count += 1
 
             # Check max size
             if sm.train_points_added >= config.max_train_set_size:
