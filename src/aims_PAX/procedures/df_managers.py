@@ -727,6 +727,7 @@ class DFWorkerManager:
                 multihead=multihead,
                 eval_batch_size=config.eval_batch_size,
                 device=config.worker_device,
+                dtype=config.dtype,
                 **kwargs,
             )
         else:
@@ -746,6 +747,7 @@ class DFWorkerManager:
                 multihead=multihead,
                 eval_batch_size=config.eval_batch_size,
                 device=config.device,
+                dtype=config.dtype,
             )
 
         self._futures[worker_id] = (
@@ -909,6 +911,7 @@ class DFWorkerManager:
                 multihead=False,
                 eval_batch_size=config.eval_batch_size,
                 device=config.worker_device,
+                dtype=config.dtype,
                 hdf5_paths=list(config.hdf5_paths),
                 batch_items=batch_items,
                 **kwargs,
@@ -930,6 +933,7 @@ class DFWorkerManager:
                 multihead=False,
                 eval_batch_size=config.eval_batch_size,
                 device=config.device,
+                dtype=config.dtype,
                 hdf5_paths=list(config.hdf5_paths),
                 batch_items=batch_items,
             )
@@ -1127,6 +1131,7 @@ def _evaluate_batch_local(
     multihead: bool = False,
     eval_batch_size: int = 32,
     device: str = "cpu",
+    dtype: str = "float32",
     hdf5_paths: Optional[List[str]] = None,
     batch_items: Optional[List[Tuple[int, int]]] = None,
 ) -> dict:
@@ -1145,6 +1150,12 @@ def _evaluate_batch_local(
     from so3krates_torch.tools.utils import AtomicNumberTable
     from so3krates_torch.tools import torch_geometric as so3_torch_geometric
 
+    _dtype_map = {
+        "float32": torch.float32,
+        "float64": torch.float64,
+        "float16": torch.float16,
+    }
+    torch.set_default_dtype(_dtype_map.get(dtype, torch.float32))
     _device = torch.device(device)
     z_table = AtomicNumberTable(z_table_zs)
     key_spec = KeySpecification(
