@@ -221,13 +221,20 @@ class DFDataManager:
                 "replay_strategy='random_subset'."
             )
             train_n = min(config.train_subset_size, len(train_set))
+            extra_data = model_set.get("extra", [])
+            n_extra = round(train_n * config.extra_dataset_ratio) if extra_data else 0
+            n_filtered = train_n - n_extra
+
             n_new = sm.new_train_count
             new_points = model_set["train"][-n_new:] if n_new else []
             old_pool = model_set["train"][:-n_new] if n_new else model_set["train"]
-            forced = new_points[:train_n]
-            n_fill = train_n - len(forced)
+            forced = new_points[:n_filtered]
+            n_fill = n_filtered - len(forced)
             remainder = random.sample(old_pool, min(n_fill, len(old_pool)))
-            sampled_train = forced + remainder
+            sampled_filtered = forced + remainder
+
+            sampled_extra = random.sample(extra_data, min(n_extra, len(extra_data)))
+            sampled_train = sampled_filtered + sampled_extra
             sm.new_train_count = 0
 
             set_valid_size = (
@@ -259,17 +266,21 @@ class DFDataManager:
                     f"with {len(head_data)} batch(es)."
                 )
         else:
-            batch_size = min(config.set_batch_size, len(train_set))
+            extra_data = model_set.get("extra", [])
+            train_data = train_set + extra_data
+            batch_size = min(config.set_batch_size, len(train_data))
             train_loader, valid_loaders = create_dataloader(
-                train_set, valid_set, batch_size, valid_batch_size
+                train_data, valid_set, batch_size, valid_batch_size
             )
             model_set["train_loader"] = train_loader
             model_set["valid_loader"] = valid_loaders
             n_valid = sum(len(v) for v in valid_set.values())
             _log = logging.debug if config.compact_logging else logging.info
             _log(
-                f"Dataloaders prepared: {len(train_set)} train,"
-                f" {n_valid} valid (batch_size={batch_size})."
+                f"Dataloaders prepared: {len(train_data)} train"
+                f" ({len(train_set)} filtered"
+                + (f" + {len(extra_data)} extra" if extra_data else "")
+                + f"), {n_valid} valid (batch_size={batch_size})."
             )
 
     def prepare_convergence_dataloaders(self) -> None:
