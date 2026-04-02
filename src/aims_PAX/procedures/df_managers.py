@@ -985,6 +985,7 @@ def _evaluate_batch_combined(
     of "exceeding_indices", plus "batch_errors", "mean_batch_error",
     "head_index".
     """
+    import math
     import torch
     import numpy as np
     from so3krates_torch.data.hdf5_utils import load_atoms_from_hdf5
@@ -1099,14 +1100,26 @@ def _evaluate_batch_combined(
         local_idxs = mini_batch.global_idx.cpu().numpy()
         ds_idxs = mini_batch.ds_idx.cpu().numpy()
 
+        nan_count = 0
         for err, local_i, ds_i in zip(errors_np, local_idxs, ds_idxs):
             err_float = float(err)
             batch_errors.append(err_float)
+            if math.isnan(err_float):
+                nan_count += 1
+                exceeding_items.append((int(ds_i), int(local_i)))
+                continue
             if err_float > threshold:
                 exceeding_items.append((int(ds_i), int(local_i)))
+        if nan_count:
+            import logging
+
+            logging.warning(
+                f"NaN model output for {nan_count} structure(s) in batch;"
+                " treated as exceeding threshold."
+            )
 
     mean_batch_error = (
-        float(np.mean(batch_errors)) if batch_errors else 0.0
+        float(np.nanmean(batch_errors)) if batch_errors else 0.0
     )
     return {
         "exceeding_items": exceeding_items,
@@ -1142,6 +1155,7 @@ def _evaluate_batch_local(
     When hdf5_paths and batch_items are provided, delegates to
     _evaluate_batch_combined for the single-head multi-dataset case.
     """
+    import math
     import torch
     import numpy as np
     from so3krates_torch.data.hdf5_utils import load_atoms_from_hdf5
@@ -1287,13 +1301,27 @@ def _evaluate_batch_local(
         errors_np = errors.cpu().numpy()
         global_idxs = mini_batch.global_idx.cpu().numpy()
 
+        nan_count = 0
         for err, gidx in zip(errors_np, global_idxs):
             err_float = float(err)
             batch_errors.append(err_float)
+            if math.isnan(err_float):
+                nan_count += 1
+                exceeding_indices.append(int(gidx))
+                continue
             if err_float > threshold:
                 exceeding_indices.append(int(gidx))
+        if nan_count:
+            import logging
 
-    mean_batch_error = float(np.mean(batch_errors)) if batch_errors else 0.0
+            logging.warning(
+                f"NaN model output for {nan_count} structure(s) in batch;"
+                " treated as exceeding threshold."
+            )
+
+    mean_batch_error = (
+        float(np.nanmean(batch_errors)) if batch_errors else 0.0
+    )
 
     return {
         "exceeding_indices": exceeding_indices,

@@ -569,6 +569,7 @@ def evaluate_batch_parsl(
             "mean_batch_error": float — mean error over batch
             "head_index": int — the head_index used
     """
+    import math
     import torch
     import numpy as np
     from so3krates_torch.data.hdf5_utils import load_atoms_from_hdf5
@@ -715,16 +716,28 @@ def evaluate_batch_parsl(
             local_idxs_c = mini_batch.global_idx.cpu().numpy()
             ds_idxs_c = mini_batch.ds_idx.cpu().numpy()
 
+            nan_count_c = 0
             for err, local_i, ds_i in zip(
                 errors_np_c, local_idxs_c, ds_idxs_c
             ):
                 err_float = float(err)
                 batch_errors_combined.append(err_float)
+                if math.isnan(err_float):
+                    nan_count_c += 1
+                    exceeding_items.append((int(ds_i), int(local_i)))
+                    continue
                 if err_float > threshold:
                     exceeding_items.append((int(ds_i), int(local_i)))
+            if nan_count_c:
+                import logging
+
+                logging.warning(
+                    f"NaN model output for {nan_count_c} structure(s)"
+                    " in batch; treated as exceeding threshold."
+                )
 
         mean_batch_error_combined = (
-            float(np.mean(batch_errors_combined))
+            float(np.nanmean(batch_errors_combined))
             if batch_errors_combined
             else 0.0
         )
@@ -838,13 +851,27 @@ def evaluate_batch_parsl(
         errors_np = errors.cpu().numpy()
         global_idxs = mini_batch.global_idx.cpu().numpy()
 
+        nan_count = 0
         for err, gidx in zip(errors_np, global_idxs):
             err_float = float(err)
             batch_errors.append(err_float)
+            if math.isnan(err_float):
+                nan_count += 1
+                exceeding_indices.append(int(gidx))
+                continue
             if err_float > threshold:
                 exceeding_indices.append(int(gidx))
+        if nan_count:
+            import logging
 
-    mean_batch_error = float(np.mean(batch_errors)) if batch_errors else 0.0
+            logging.warning(
+                f"NaN model output for {nan_count} structure(s) in batch;"
+                " treated as exceeding threshold."
+            )
+
+    mean_batch_error = (
+        float(np.nanmean(batch_errors)) if batch_errors else 0.0
+    )
 
     return {
         "exceeding_indices": exceeding_indices,
