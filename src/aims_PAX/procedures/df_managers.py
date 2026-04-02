@@ -171,6 +171,37 @@ class DFDataManager:
         if not isinstance(atoms_list, list):
             atoms_list = [atoms_list]
 
+        forces_key = self.config.misc["forces_key"]
+        energy_key = self.config.misc["energy_key"]
+        valid_atoms = []
+        for atoms in atoms_list:
+            forces = atoms.arrays.get(forces_key)
+            energy = atoms.info.get(energy_key)
+            if forces is not None and (
+                np.isnan(forces).any() or np.isinf(forces).any()
+            ):
+                logging.warning(
+                    "Skipping structure with NaN/Inf forces from HDF5."
+                )
+                continue
+            if energy is not None and (
+                np.isnan(energy) or np.isinf(energy)
+            ):
+                logging.warning(
+                    "Skipping structure with NaN/Inf energy from HDF5."
+                )
+                continue
+            valid_atoms.append(atoms)
+        n_skipped = len(atoms_list) - len(valid_atoms)
+        if n_skipped:
+            logging.warning(
+                f"Skipped {n_skipped} structure(s) with NaN/Inf data "
+                f"from dataset {dataset_idx}."
+            )
+        atoms_list = valid_atoms
+        if not atoms_list:
+            return False
+
         for atoms in atoms_list:
             atoms.info["head"] = head_name
             # Tag each structure with the source HDF5 file stem.
@@ -448,6 +479,12 @@ class DFTrainingManager:
             self.orchestrator.validate_and_update_state(
                 session, logger, trajectory_idx=0
             )
+
+            if np.isnan(sm.current_valid_error):
+                logging.error(
+                    f"NaN detected in validation MAE at epoch "
+                    f"{sm.total_epoch}. Model weights may be corrupt."
+                )
 
             # Update epoch counters
             sm.trajectory_intermediate_epochs[0] += 1

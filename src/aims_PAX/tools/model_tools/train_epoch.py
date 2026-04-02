@@ -180,6 +180,14 @@ def take_step(
         return loss
 
     loss = closure()
+
+    if torch.isnan(loss) or torch.isinf(loss):
+        logging.warning(
+            f"Skipping optimizer step: loss is {loss.item()} (NaN or Inf)."
+        )
+        optimizer.zero_grad(set_to_none=True)
+        return loss, {"loss": float("nan"), "time": time.time() - start_time}
+
     optimizer.step()
 
     if ema is not None:
