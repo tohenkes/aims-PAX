@@ -49,6 +49,15 @@ DATA_FILTERING:
   freeze_threshold_dataset: .inf  # Freeze threshold once this many training
                                   # structures are collected.
 
+  # --- Extra anchor dataset ---
+  # Prevents catastrophic forgetting when fine-tuning from a pre-trained model.
+  # Only supported with use_multihead_model: false.
+  # extra_dataset_path: "/path/to/original_training_data.h5"
+  # extra_dataset_ratio: 0.3  # 30 % of train_subset_size drawn from extra dataset.
+  #                           # Has no effect with replay_strategy: full_dataset
+  #                           # (all extra data is appended unconditionally there).
+  #                           # Requires replay_strategy: random_subset to take effect.
+
   # --- Training ---
   epochs_per_batch: 50   # Training epochs each time new points are added.
   valid_ratio: 0.1       # Fraction of collected structures reserved for validation.
