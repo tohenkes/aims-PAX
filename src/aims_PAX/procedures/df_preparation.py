@@ -125,6 +125,14 @@ class DFConfiguration:
         self.margin: float = df["margin"]
         self.analysis: bool = df["analysis"]
 
+        # Extra anchor dataset
+        self.extra_dataset_path: Optional[str] = df.get(
+            "extra_dataset_path", None
+        )
+        self.extra_dataset_ratio: float = float(
+            df.get("extra_dataset_ratio", 0.0)
+        )
+
         # Output
         self.save_xyz: bool = df["save_xyz"]
         self.shuffle_dataset: bool = df["shuffle_dataset"]
@@ -526,6 +534,42 @@ class DFModelManager:
                     restart=config.restart,
                     checkpoints_dir=config.checkpoints_dir,
                 )
+
+        self.load_extra_dataset()
+
+    def load_extra_dataset(self) -> None:
+        """Load and convert the anchor dataset once at startup."""
+        config = self.config
+        if not config.extra_dataset_path:
+            return
+
+        from so3krates_torch.data.hdf5_utils import load_atoms_from_hdf5
+        from aims_PAX.tools.utilities.data_handling import create_model_dataset
+
+        logging.info(
+            f"Data filtering: loading extra anchor dataset from "
+            f"{config.extra_dataset_path}"
+        )
+        atoms_list = load_atoms_from_hdf5(config.extra_dataset_path)
+        if not isinstance(atoms_list, list):
+            atoms_list = [atoms_list]
+
+        tag = "model_seed_1"
+        extra_model_data = create_model_dataset(
+            data=atoms_list,
+            seed=config.seed,
+            z_table=self.z_table,
+            r_max=config.r_max,
+            key_specification=config.key_specification,
+            r_max_lr=getattr(config, "r_max_lr", None),
+            all_heads=None,  # single-head only
+            head_name="Default",
+        )
+        self.ensemble_model_sets[tag]["extra"] = extra_model_data
+        logging.info(
+            f"Data filtering: extra dataset loaded — "
+            f"{len(extra_model_data)} structures"
+        )
 
     def load_from_checkpoint(self, checkpoint_path: str):
         """Reload model weights from a saved checkpoint."""
