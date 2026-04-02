@@ -640,6 +640,14 @@ class DFWorkerManager:
             return
 
         batch_end = min(current_offset + config.eval_stride, end)
+
+        # Combined mode: delegate to combined helper
+        if dataset_idx == -1:
+            self._submit_worker_combined(
+                worker_id, current_offset, batch_end
+            )
+            return
+
         shuffle_map = sm.shuffle_maps[dataset_idx]
         batch_indices = shuffle_map[current_offset:batch_end].tolist()
 
@@ -746,12 +754,20 @@ class DFWorkerManager:
                     logging.warning(
                         f"Worker {worker_id} failed: {exc}. " "Skipping batch."
                     )
-                    result = {
-                        "exceeding_indices": [],
-                        "batch_errors": [],
-                        "mean_batch_error": 0.0,
-                        "head_index": dataset_idx,
-                    }
+                    if dataset_idx == -1:
+                        result = {
+                            "exceeding_items": [],
+                            "batch_errors": [],
+                            "mean_batch_error": 0.0,
+                            "head_index": 0,
+                        }
+                    else:
+                        result = {
+                            "exceeding_indices": [],
+                            "batch_errors": [],
+                            "mean_batch_error": 0.0,
+                            "head_index": dataset_idx,
+                        }
 
                 # Advance worker offset to the next chunk position.
                 # batch_end is the chunk-position end (not an HDF5 index),
@@ -800,6 +816,95 @@ class DFWorkerManager:
     # Private helpers
     # -----------------------------------------------------------------------
 
+    def _submit_worker_combined(
+        self,
+        worker_id: int,
+        current_offset: int,
+        batch_end: int,
+    ) -> None:
+        """Submit a combined-pool evaluation job for worker_id."""
+        sm = self.state_manager
+        config = self.config
+
+        # Resolve (ds_idx, local_idx) pairs for this slice
+        rows = sm.combined_index_map[
+            sm.combined_shuffle[current_offset:batch_end]
+        ]
+        batch_items = [
+            (int(r[0]), int(r[1])) for r in rows
+        ]
+
+        threshold = self._get_threshold(-1)  # scalar threshold
+
+        start, end = sm.worker_chunks[worker_id]
+        progress_pct = (current_offset - start) / (end - start) * 100
+        _log = logging.debug if config.compact_logging else logging.info
+        _log(
+            f"Worker {worker_id} (combined pool): submitting"
+            f" positions {current_offset}-{batch_end - 1}"
+            f" ({len(batch_items)} structures,"
+            f" {progress_pct:.1f}% done,"
+            f" threshold={threshold:.6f})"
+        )
+
+        if self._use_parsl:
+            from aims_PAX.tools.utilities.parsl_utils import (
+                evaluate_batch_parsl,
+            )
+
+            kwargs = {}
+            if self.workqueue_resource_spec is not None:
+                kwargs["parsl_resource_specification"] = (
+                    self.workqueue_resource_spec
+                )
+            future = evaluate_batch_parsl(
+                model_path=self._current_model_path,
+                hdf5_path="",  # unused in combined mode
+                batch_indices=[],  # unused in combined mode
+                threshold=threshold,
+                r_max=float(config.r_max),
+                r_max_lr=config.r_max_lr,
+                error_type=config.error_type,
+                energy_key=config.misc["energy_key"],
+                forces_key=config.misc["forces_key"],
+                z_table_zs=list(self.model_manager.z_table.zs),
+                head_index=0,
+                multihead=False,
+                eval_batch_size=config.eval_batch_size,
+                device=config.worker_device,
+                hdf5_paths=list(config.hdf5_paths),
+                batch_items=batch_items,
+                **kwargs,
+            )
+        else:
+            future = self._executor.submit(
+                _evaluate_batch_local,
+                model_path=self._current_model_path,
+                hdf5_path="",  # unused in combined mode
+                batch_indices=[],  # unused in combined mode
+                threshold=threshold,
+                r_max=float(config.r_max),
+                r_max_lr=config.r_max_lr,
+                error_type=config.error_type,
+                energy_key=config.misc["energy_key"],
+                forces_key=config.misc["forces_key"],
+                z_table_zs=list(self.model_manager.z_table.zs),
+                head_index=0,
+                multihead=False,
+                eval_batch_size=config.eval_batch_size,
+                device=config.device,
+                hdf5_paths=list(config.hdf5_paths),
+                batch_items=batch_items,
+            )
+
+        self._futures[worker_id] = (
+            future,
+            -1,  # combined sentinel
+            batch_items,
+            batch_end,
+            self._current_model_path,
+        )
+
     def _get_threshold(self, dataset_idx: int) -> float:
         sm = self.state_manager
         if self.config.use_multihead_model:
@@ -813,6 +918,161 @@ class DFWorkerManager:
 # ---------------------------------------------------------------------------
 # Local (non-PARSL) evaluation function
 # ---------------------------------------------------------------------------
+
+
+def _evaluate_batch_combined(
+    model,
+    hdf5_paths: list,
+    batch_items: list,
+    threshold: float,
+    r_max: float,
+    r_max_lr,
+    error_type: str,
+    z_table,
+    key_spec,
+    all_heads,
+    eval_batch_size: int,
+    device,
+) -> dict:
+    """
+    Evaluate a batch drawn from the combined pool (single-head, multi-dataset).
+
+    batch_items: list of (ds_idx, local_idx) tuples already resolved from
+    combined_index_map[combined_shuffle[offset:batch_end]].
+
+    Returns a dict with key "exceeding_items" (List[Tuple[int,int]]) instead
+    of "exceeding_indices", plus "batch_errors", "mean_batch_error",
+    "head_index".
+    """
+    import torch
+    import numpy as np
+    from so3krates_torch.data.hdf5_utils import load_atoms_from_hdf5
+    from so3krates_torch.data.atomic_data import AtomicData
+    from so3krates_torch.data.utils import config_from_atoms
+    from so3krates_torch.tools import torch_geometric as so3_torch_geometric
+
+    _cutoff_lr = r_max_lr if r_max_lr is not None else r_max
+
+    # Group batch_items by ds_idx for efficient HDF5 loading
+    from collections import defaultdict
+
+    by_ds: dict = defaultdict(list)
+    for item_idx, (ds_i, local_i) in enumerate(batch_items):
+        by_ds[ds_i].append((item_idx, local_i))
+
+    # Load atoms for each dataset and build data_list preserving order
+    data_list = [None] * len(batch_items)
+    for ds_i, idx_pairs in by_ds.items():
+        item_positions = [p[0] for p in idx_pairs]
+        local_indices = [p[1] for p in idx_pairs]
+        atoms_group = load_atoms_from_hdf5(
+            hdf5_paths[ds_i], index=local_indices
+        )
+        if not isinstance(atoms_group, list):
+            atoms_group = [atoms_group]
+        for pos, local_i, atoms in zip(
+            item_positions, local_indices, atoms_group
+        ):
+            cfg = config_from_atoms(atoms, key_specification=key_spec)
+            data = AtomicData.from_config(
+                cfg,
+                z_table=z_table,
+                cutoff=r_max,
+                cutoff_lr=_cutoff_lr,
+                heads=all_heads,
+            )
+            # global_idx stores local_idx; ds_idx stored separately
+            data.global_idx = torch.tensor(
+                [local_i], dtype=torch.long
+            )
+            data.ds_idx = torch.tensor([ds_i], dtype=torch.long)
+            data_list[pos] = data
+
+    loader = so3_torch_geometric.dataloader.DataLoader(
+        dataset=data_list,
+        batch_size=eval_batch_size,
+        shuffle=False,
+        drop_last=False,
+    )
+
+    exceeding_items = []
+    batch_errors = []
+
+    for mini_batch in loader:
+        mini_batch = mini_batch.to(device)
+        n_structs = mini_batch.num_graphs
+
+        with torch.enable_grad():
+            output = model(mini_batch.to_dict())
+
+        force_errors = None
+        energy_errors = None
+
+        if error_type in ("forces", "both"):
+            ref_forces = mini_batch.forces
+            pred_forces = output.get("forces")
+            if ref_forces is not None and pred_forces is not None:
+                per_atom_abs = (
+                    torch.abs(pred_forces - ref_forces)
+                    .mean(dim=-1)
+                    .detach()
+                )
+                force_errors = torch.zeros(n_structs, device=device)
+                counts = torch.zeros(n_structs, device=device)
+                force_errors.scatter_add_(
+                    0, mini_batch.batch, per_atom_abs
+                )
+                counts.scatter_add_(
+                    0,
+                    mini_batch.batch,
+                    torch.ones(per_atom_abs.shape[0], device=device),
+                )
+                force_errors = force_errors / counts.clamp(min=1)
+
+        if error_type in ("energy", "both"):
+            ref_energy = mini_batch.energy
+            pred_energy = output.get("energy")
+            if ref_energy is not None and pred_energy is not None:
+                n_atoms = torch.bincount(
+                    mini_batch.batch, minlength=n_structs
+                ).float()
+                energy_errors = (
+                    torch.abs(
+                        pred_energy.squeeze(-1) - ref_energy.squeeze(-1)
+                    )
+                    / n_atoms.clamp(min=1)
+                ).detach()
+
+        errors = torch.zeros(n_structs, device=device)
+        n_terms = 0
+        if force_errors is not None:
+            errors += force_errors
+            n_terms += 1
+        if energy_errors is not None:
+            errors += energy_errors
+            n_terms += 1
+        if n_terms > 0:
+            errors = errors / n_terms
+
+        errors_np = errors.cpu().numpy()
+        local_idxs = mini_batch.global_idx.cpu().numpy()
+        ds_idxs = mini_batch.ds_idx.cpu().numpy()
+
+        for err, local_i, ds_i in zip(errors_np, local_idxs, ds_idxs):
+            err_float = float(err)
+            batch_errors.append(err_float)
+            if err_float > threshold:
+                exceeding_items.append((int(ds_i), int(local_i)))
+
+    mean_batch_error = (
+        float(np.mean(batch_errors)) if batch_errors else 0.0
+    )
+    return {
+        "exceeding_items": exceeding_items,
+        "batch_errors": batch_errors,
+        "mean_batch_error": mean_batch_error,
+        "head_index": 0,
+    }
 
 
 def _evaluate_batch_local(
@@ -830,10 +1090,15 @@ def _evaluate_batch_local(
     multihead: bool = False,
     eval_batch_size: int = 32,
     device: str = "cpu",
+    hdf5_paths: Optional[List[str]] = None,
+    batch_items: Optional[List[Tuple[int, int]]] = None,
 ) -> dict:
     """
     Local version of evaluate_batch_parsl — same logic but called directly
     (in a subprocess via ProcessPoolExecutor).
+
+    When hdf5_paths and batch_items are provided, delegates to
+    _evaluate_batch_combined for the single-head multi-dataset case.
     """
     import torch
     import numpy as np
@@ -854,6 +1119,28 @@ def _evaluate_batch_local(
     model.eval()
     if multihead and hasattr(model, "select_heads"):
         model.select_heads = True
+
+    # Combined mode: route to _evaluate_batch_combined
+    if hdf5_paths is not None and batch_items is not None:
+        all_heads = (
+            [f"head_{i}" for i in range(model.num_output_heads)]
+            if multihead
+            else None
+        )
+        return _evaluate_batch_combined(
+            model=model,
+            hdf5_paths=hdf5_paths,
+            batch_items=batch_items,
+            threshold=threshold,
+            r_max=r_max,
+            r_max_lr=r_max_lr,
+            error_type=error_type,
+            z_table=z_table,
+            key_spec=key_spec,
+            all_heads=all_heads,
+            eval_batch_size=eval_batch_size,
+            device=_device,
+        )
 
     atoms_list = load_atoms_from_hdf5(hdf5_path, index=batch_indices)
     if not isinstance(atoms_list, list):

@@ -244,9 +244,20 @@ class DataFilteringProcedure:
                     continue
 
                 for worker_id, dataset_idx, result in completed:
-                    exceeding = result.get("exceeding_indices", [])
                     batch_errors = result.get("batch_errors", [])
                     mean_err = result.get("mean_batch_error", 0.0)
+
+                    # Combined mode returns exceeding_items (list of
+                    # (ds_idx, local_idx) tuples); single-dataset/multihead
+                    # returns exceeding_indices (list of HDF5 indices).
+                    if dataset_idx == -1:
+                        exceeding_items = result.get("exceeding_items", [])
+                        n_exceeding = len(exceeding_items)
+                        ds_label = "combined"
+                    else:
+                        exceeding = result.get("exceeding_indices", [])
+                        n_exceeding = len(exceeding)
+                        ds_label = str(dataset_idx)
 
                     _log = (
                         logging.debug
@@ -255,21 +266,37 @@ class DataFilteringProcedure:
                     )
                     used_threshold = (
                         self.threshold_manager
-                        .get_threshold_for_dataset(dataset_idx)
+                        .get_threshold_for_dataset(
+                            0 if dataset_idx == -1 else dataset_idx
+                        )
                     )
                     _log(
-                        f"Worker {worker_id} (dataset {dataset_idx}): "
-                        f"{len(exceeding)}/{len(batch_errors)} "
+                        f"Worker {worker_id} (dataset {ds_label}): "
+                        f"{n_exceeding}/{len(batch_errors)} "
                         f"points exceeded threshold "
                         f"({used_threshold:.6f}). "
                         f"Mean batch error: {mean_err:.6f}"
                     )
 
                     # 3. Add exceeding points to dataset
-                    if exceeding:
-                        max_reached = dm.load_and_add_points(
-                            dataset_idx, exceeding
-                        )
+                    if n_exceeding > 0:
+                        if dataset_idx == -1:
+                            # Group by source dataset and add per-group
+                            from collections import defaultdict
+
+                            by_ds: dict = defaultdict(list)
+                            for ds_i, local_i in exceeding_items:
+                                by_ds[ds_i].append(local_i)
+                            for ds_i, local_idxs in by_ds.items():
+                                max_reached = dm.load_and_add_points(
+                                    ds_i, local_idxs
+                                )
+                                if max_reached:
+                                    break
+                        else:
+                            max_reached = dm.load_and_add_points(
+                                dataset_idx, exceeding
+                            )
 
                         # 4. Prepare dataloaders & train
                         if sm.train_points_added > 0:

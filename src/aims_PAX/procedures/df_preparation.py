@@ -254,6 +254,11 @@ class DFStateManager:
         # Pass counter (incremented each time data is exhausted and re-looped)
         self.current_pass: int = 1
 
+        # Combined-mode state (None when inactive; set by
+        # _initialize_workers_combined for single-head multi-dataset runs)
+        self.combined_index_map: Optional[np.ndarray] = None
+        self.combined_shuffle: Optional[np.ndarray] = None
+
         # Analysis
         if config.analysis:
             self.collect_losses = {
@@ -278,6 +283,12 @@ class DFStateManager:
                 f"({total}). Effective parallelism will be limited to "
                 f"{total} chunk(s)."
             )
+
+        # Combined mode: single-head with multiple datasets — merge into one
+        # virtual pool so workers are distributed evenly over all structures.
+        if not self.config.use_multihead_model and num_datasets > 1:
+            self._initialize_workers_combined(dataset_sizes, pass_num)
+            return
 
         # Distribute chunks proportionally (at least 1 per dataset)
         if num_datasets == 1:
@@ -330,6 +341,59 @@ class DFStateManager:
                 if (self.config.shuffle_dataset or pass_num > 1)
                 else ""
             )
+        )
+
+    def _initialize_workers_combined(
+        self, dataset_sizes: List[int], pass_num: int
+    ) -> None:
+        """
+        Combined-pool mode for single-head multi-dataset runs.
+
+        Merges all datasets into one virtual pool, shuffles the combined
+        pool, and divides it evenly across num_chunks workers.
+        Sets worker_dataset_idx[w] = -1 as a sentinel so downstream
+        code knows to use combined_index_map / combined_shuffle instead
+        of shuffle_maps[ds_idx].
+        """
+        num_chunks = self.config.num_chunks
+        total = sum(dataset_sizes)
+
+        # Build combined index map: row i = [ds_idx, local_idx]
+        rows = []
+        for ds_idx, ds_size in enumerate(dataset_sizes):
+            for local_idx in range(ds_size):
+                rows.append((ds_idx, local_idx))
+        self.combined_index_map = np.array(rows, dtype=np.int64)
+
+        # Shuffle (pass 2+ always shuffles to avoid identical loops)
+        rng = np.random.default_rng(self.config.seed + pass_num - 1)
+        if self.config.shuffle_dataset or pass_num > 1:
+            self.combined_shuffle = rng.permutation(total)
+        else:
+            self.combined_shuffle = np.arange(total, dtype=np.int64)
+
+        # Divide evenly across workers
+        chunk_size = math.ceil(total / max(num_chunks, 1))
+        worker_id = 0
+        start = 0
+        while start < total and worker_id < num_chunks:
+            end = min(start + chunk_size, total)
+            self.worker_offsets[worker_id] = start
+            self.worker_chunks[worker_id] = (start, end)
+            self.workers_done[worker_id] = False
+            self.worker_dataset_idx[worker_id] = -1  # combined sentinel
+            start = end
+            worker_id += 1
+
+        suffix = (
+            f" (shuffled, pass {pass_num})"
+            if (self.config.shuffle_dataset or pass_num > 1)
+            else ""
+        )
+        logging.info(
+            f"Initialised {worker_id} workers over 1 combined pool "
+            f"({len(dataset_sizes)} source datasets, "
+            f"{total} total structures){suffix}"
         )
 
 
@@ -635,6 +699,8 @@ class DFRestart:
         "trajectory_intermediate_epochs",
         "trajectory_total_epochs",
         "current_pass",
+        "combined_index_map",
+        "combined_shuffle",
     ]
 
     def save(self):

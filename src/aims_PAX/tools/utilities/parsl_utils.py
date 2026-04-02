@@ -532,6 +532,8 @@ def evaluate_batch_parsl(
     multihead: bool = False,
     eval_batch_size: int = 32,
     device: str = "cpu",
+    hdf5_paths=None,
+    batch_items=None,
     **kwargs,
 ):
     """
@@ -589,6 +591,146 @@ def evaluate_batch_parsl(
     if multihead and hasattr(model, "select_heads"):
         model.select_heads = True
 
+    # -----------------------------------------------------------------------
+    # Combined mode: single-head multi-dataset pool
+    # -----------------------------------------------------------------------
+    if hdf5_paths is not None and batch_items is not None:
+        from collections import defaultdict
+
+        _cutoff_lr = r_max_lr if r_max_lr is not None else r_max
+        all_heads_combined = None  # combined mode is always single-head
+
+        # Group batch_items by ds_idx for efficient HDF5 loading
+        by_ds: dict = defaultdict(list)
+        for item_idx, (ds_i, local_i) in enumerate(batch_items):
+            by_ds[ds_i].append((item_idx, local_i))
+
+        data_list_combined = [None] * len(batch_items)
+        for ds_i, idx_pairs in by_ds.items():
+            item_positions = [p[0] for p in idx_pairs]
+            local_indices = [p[1] for p in idx_pairs]
+            atoms_group = load_atoms_from_hdf5(
+                hdf5_paths[ds_i], index=local_indices
+            )
+            if not isinstance(atoms_group, list):
+                atoms_group = [atoms_group]
+            for pos, local_i, atoms in zip(
+                item_positions, local_indices, atoms_group
+            ):
+                cfg = config_from_atoms(atoms, key_specification=key_spec)
+                data = AtomicData.from_config(
+                    cfg,
+                    z_table=z_table,
+                    cutoff=r_max,
+                    cutoff_lr=_cutoff_lr,
+                    heads=all_heads_combined,
+                )
+                data.global_idx = torch.tensor(
+                    [local_i], dtype=torch.long
+                )
+                data.ds_idx = torch.tensor([ds_i], dtype=torch.long)
+                data_list_combined[pos] = data
+
+        loader_combined = so3_torch_geometric.dataloader.DataLoader(
+            dataset=data_list_combined,
+            batch_size=eval_batch_size,
+            shuffle=False,
+            drop_last=False,
+        )
+
+        exceeding_items = []
+        batch_errors_combined = []
+
+        for mini_batch in loader_combined:
+            mini_batch = mini_batch.to(_device)
+            n_structs = mini_batch.num_graphs
+
+            with torch.enable_grad():
+                output = model(mini_batch.to_dict())
+
+            force_errors_c = None
+            energy_errors_c = None
+
+            if error_type in ("forces", "both"):
+                ref_forces = mini_batch.forces
+                pred_forces = output.get("forces")
+                if ref_forces is not None and pred_forces is not None:
+                    per_atom_abs = (
+                        torch.abs(pred_forces - ref_forces)
+                        .mean(dim=-1)
+                        .detach()
+                    )
+                    force_errors_c = torch.zeros(
+                        n_structs, device=_device
+                    )
+                    counts_c = torch.zeros(n_structs, device=_device)
+                    force_errors_c.scatter_add_(
+                        0, mini_batch.batch, per_atom_abs
+                    )
+                    counts_c.scatter_add_(
+                        0,
+                        mini_batch.batch,
+                        torch.ones(
+                            per_atom_abs.shape[0], device=_device
+                        ),
+                    )
+                    force_errors_c = force_errors_c / counts_c.clamp(
+                        min=1
+                    )
+
+            if error_type in ("energy", "both"):
+                ref_energy = mini_batch.energy
+                pred_energy = output.get("energy")
+                if ref_energy is not None and pred_energy is not None:
+                    n_atoms_c = torch.bincount(
+                        mini_batch.batch, minlength=n_structs
+                    ).float()
+                    energy_errors_c = (
+                        torch.abs(
+                            pred_energy.squeeze(-1)
+                            - ref_energy.squeeze(-1)
+                        )
+                        / n_atoms_c.clamp(min=1)
+                    ).detach()
+
+            errors_c = torch.zeros(n_structs, device=_device)
+            n_terms_c = 0
+            if force_errors_c is not None:
+                errors_c += force_errors_c
+                n_terms_c += 1
+            if energy_errors_c is not None:
+                errors_c += energy_errors_c
+                n_terms_c += 1
+            if n_terms_c > 0:
+                errors_c = errors_c / n_terms_c
+
+            errors_np_c = errors_c.cpu().numpy()
+            local_idxs_c = mini_batch.global_idx.cpu().numpy()
+            ds_idxs_c = mini_batch.ds_idx.cpu().numpy()
+
+            for err, local_i, ds_i in zip(
+                errors_np_c, local_idxs_c, ds_idxs_c
+            ):
+                err_float = float(err)
+                batch_errors_combined.append(err_float)
+                if err_float > threshold:
+                    exceeding_items.append((int(ds_i), int(local_i)))
+
+        mean_batch_error_combined = (
+            float(np.mean(batch_errors_combined))
+            if batch_errors_combined
+            else 0.0
+        )
+        return {
+            "exceeding_items": exceeding_items,
+            "batch_errors": batch_errors_combined,
+            "mean_batch_error": mean_batch_error_combined,
+            "head_index": 0,
+        }
+
+    # -----------------------------------------------------------------------
+    # Standard mode (single dataset or multi-head)
+    # -----------------------------------------------------------------------
     atoms_list = load_atoms_from_hdf5(hdf5_path, index=batch_indices)
     if not isinstance(atoms_list, list):
         atoms_list = [atoms_list]
