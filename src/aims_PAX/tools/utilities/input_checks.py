@@ -220,6 +220,8 @@ SCHEME = {
         "save_xyz": False,
         "shuffle_dataset": True,
         "use_multihead_model": False,
+        "extra_dataset_path": None,
+        "extra_dataset_ratio": 0.0,
     },
     "conflicts": {
         "parallel": "CLUSTER",
@@ -246,6 +248,7 @@ SCHEME_DTYPES = {
         "externalstress",
         "tdamp",
         "pdamp",
+        "extra_dataset_ratio",
     ],
     "ints": [
         "num_trajectories",
@@ -321,6 +324,7 @@ SCHEME_DTYPES = {
         "aims_lib_path",
         "dispersion_xc",
         "damping",
+        "extra_dataset_path",
     ],
     "optional_ints": [
         "train_subset_size",
@@ -807,6 +811,31 @@ def check_df_settings(settings: dict) -> dict:
             "`use_multihead_model=True` requires at least 2 entries "
             "in `hdf5_paths`!"
         )
+
+    # Validate extra_dataset_path / extra_dataset_ratio
+    extra_path = df_settings.get("extra_dataset_path", None)
+    extra_ratio = df_settings.get("extra_dataset_ratio", 0.0)
+    if extra_ratio > 0.0:
+        assert extra_path is not None, (
+            "extra_dataset_ratio > 0 requires extra_dataset_path to be set"
+        )
+        assert os.path.isfile(extra_path), (
+            f"extra_dataset_path not found: {extra_path}"
+        )
+        assert 0.0 < extra_ratio < 1.0, (
+            "extra_dataset_ratio must be in (0.0, 1.0)"
+        )
+        if df_settings.get("use_multihead_model", False):
+            raise ValueError(
+                "extra_dataset_path is not supported with "
+                "use_multihead_model=True. Use single-head mode."
+            )
+        if df_settings.get("replay_strategy", "full_dataset") == "full_dataset":
+            logging.warning(
+                "extra_dataset_ratio has no effect with "
+                "replay_strategy=full_dataset; all extra data will be "
+                "included in every training step."
+            )
 
     settings["DATA_FILTERING"] = df_settings
     return settings
