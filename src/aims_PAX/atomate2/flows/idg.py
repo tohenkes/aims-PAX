@@ -173,7 +173,6 @@ class InitialDatasetGenerator(Maker):
             "step": step,
             "restart_dict": restart_dict,
             "atomic_energies": ensemble_atomic_energies,
-            "update_atomic_energies": False
         }
 
     @job
@@ -201,11 +200,9 @@ class InitialDatasetGenerator(Maker):
 
         # get atomic energies
         default_atomic_energies = self.model_settings.ARCHITECTURE.atomic_energies
-        update_atomic_energies = False
         if default_atomic_energies is None:
             logger.info("No atomic energies specified. Fitting to training data.")
-            ensemble_atomic_energies = AtomicEnergies.from_z(tags, model_inputs["z"])
-            update_atomic_energies = True
+            ensemble_atomic_energies = AtomicEnergies.from_z(tags, model_inputs["z"], need_updating=True)
         else:
             logger.info("Using specified atomic energies.")
             ensemble_atomic_energies = AtomicEnergies.from_e(tags, default_atomic_energies)
