@@ -209,10 +209,16 @@ class InitialDatasetGenerator(Maker):
             ensemble_atomic_energies = AtomicEnergies.from_e(tags, default_atomic_energies)
 
         # get ensemble dicts
-        ensemble = Ensemble.from_model_settings(tags,
-                                                self.model_settings,
-                                                ensemble_atomic_energies,
-                                                model_inputs)
+        ensemble = Ensemble.from_scratch(tags,
+                                         self.model_settings,
+                                         ensemble_atomic_energies,
+                                         model_inputs)
+
+        collect_losses = {
+            "epoch": [],
+            "avg_losses": [],
+            "ensemble_losses": [],
+        }
 
         return {
             "trajectories": {k: MSONAtoms(v) for k, v in trajectories.items()},
@@ -220,6 +226,7 @@ class InitialDatasetGenerator(Maker):
             "restart_dict": restart_dict,
             "ensemble": ensemble,
             "epoch": 0,
+            "losses": collect_losses
         }
 
 
