@@ -11,7 +11,7 @@ from typing import Type
 from monty.json import MSONable
 
 # e3nn <=0.5.x stores constants.pt with slice objects;
-# PyTorch >=2.6 requires explicit allowlisting for weights_only=True
+# PyTorch >=2.6 requires explicit allowance for weights_only=True
 torch.serialization.add_safe_globals([slice])
 
 
@@ -22,6 +22,21 @@ class MSONableModel(MSONable):
     def from_parent(cls, instance):
         instance.__class__ = cls
         return instance
+
+
+# Tensor serialization and deserialization
+def _serialize_value(v):
+    """Convert non-JSON-serializable types to serializable ones."""
+    if isinstance(v, torch.Tensor):
+        return {"@tensor": v.detach().cpu().tolist()}
+    return v
+
+
+def _deserialize_value(v):
+    """Reconstruct types from their serialized form."""
+    if isinstance(v, dict) and "@tensor" in v:
+        return torch.tensor(v["@tensor"])
+    return v
 
 
 def _msonable_torch_stateful(torch_cls: Type) -> Type[MSONableModel]:
@@ -71,7 +86,7 @@ def _msonable_torch_stateless(torch_cls: Type) -> Type[MSONableModel]:
             # Introspect __init__ params and pull their values from the instance
             sig = inspect.signature(self._torch_cls.__init__)
             params = {
-                name: getattr(self, name, param.default)
+                name: _serialize_value(getattr(self, name, param.default))
                 for name, param in sig.parameters.items()
                 if name != "self" and param.default is not inspect.Parameter.empty
             }
@@ -86,7 +101,7 @@ def _msonable_torch_stateless(torch_cls: Type) -> Type[MSONableModel]:
         @classmethod
         def from_dict(cls, d: dict):
             excluded = {"@module", "@class", "torch_cls_module", "torch_cls_name"}
-            kwargs = {k: v for k, v in d.items() if k not in excluded}
+            kwargs = {k: _deserialize_value(v) for k, v in d.items() if k not in excluded}
             return cls.from_parent(cls._torch_cls(**kwargs))
 
     MSONableTorch.__name__ = f"MSONable{torch_cls.__name__}"
