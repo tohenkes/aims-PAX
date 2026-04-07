@@ -13,6 +13,7 @@ from pymatgen.core import Structure, Molecule
 from pymatgen.io.ase import MSONAtoms
 
 from aims_PAX.atomate2.atomic_energies import AtomicEnergies
+from aims_PAX.atomate2.msonable.ensemble import Ensemble
 from aims_PAX.atomate2.utils import get_model_dependent_inputs
 from aims_PAX.settings import ModelSettings
 from aims_PAX.settings.project import IDGSettings, MiscSettings, MDSettings
@@ -207,12 +208,18 @@ class InitialDatasetGenerator(Maker):
             logger.info("Using specified atomic energies.")
             ensemble_atomic_energies = AtomicEnergies.from_e(tags, default_atomic_energies)
 
+        # get ensemble dicts
+        ensemble = Ensemble.from_model_settings(tags,
+                                                self.model_settings,
+                                                ensemble_atomic_energies,
+                                                model_inputs)
+
         return {
             "trajectories": {k: MSONAtoms(v) for k, v in trajectories.items()},
             "step": step,
             "restart_dict": restart_dict,
-            "atomic_energies": ensemble_atomic_energies,
-            "update_atomic_energies": update_atomic_energies
+            "ensemble": ensemble,
+            "epoch": 0,
         }
 
 
