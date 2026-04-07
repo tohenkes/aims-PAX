@@ -10,6 +10,7 @@ from so3krates_torch.calculator.so3 import (
     TorchkratesCalculator,
     MultiHeadSO3LRCalculator,
 )
+from aims_PAX.settings import ModelSettings, AimsPAXSettings
 from aims_PAX.tools.uncertainty import (
     HandleUncertainty,
     MolForceUncertainty,
@@ -50,6 +51,7 @@ from aims_PAX.tools.model_tools.training_tools import setup_model_training
 from aims_PAX.tools.utilities.mpi_utils import CommHandler
 import ase
 import logging
+from ase.calculators.aims import Aims, AimsProfile
 from ase.md.velocitydistribution import MaxwellBoltzmannDistribution
 from ase.md.langevin import Langevin
 from ase.md.nptberendsen import NPTBerendsen
@@ -75,71 +77,53 @@ class PrepareInitialDatasetProcedure:
 
     def __init__(
         self,
-        model_settings: dict,
-        aimsPAX_settings: dict,
-        path_to_control: str = "./control.in",  # TODO: Rename
+        model_settings: ModelSettings,
+        aimsPAX_settings: AimsPAXSettings,
+        path_to_control: str = "./control.in", #TODO: Rename
         path_to_geometry: str = "./geometry.in",
         use_mpi: bool = True,
     ) -> None:
         """
         Args:
-            model_settings (dict): Settings for the model and its training.
-            al_settings (dict): Settings for the active learning procedure.
-            path_to_aims_lib (str): Path to the compiled AIMS library.
-            atomic_energies_dict (dict, optional): Dictionary containing the
-                                            atomic energies. Defaults to None.
-            species_dir (str, optional): Path to the basis set settings
-                                                of AIMS. Defaults to None.
+            model_settings (ModelSettings): Settings for the model and its training.
+            aimsPAX_settings (AimsPAXSettings): Settings for the active learning procedure.
             path_to_control (str, optional): Path to the AIMS control file.
                                                 Defaults to "./control.in".
             path_to_geometry (str, optional): Path to the initial geometry.
                                                 Defaults to "./geometry.in".
-            ensemble_seeds (np.array, optional): Seeds for the individual
-                                        ensemble members. Defaults to None.
+            use_mpi (bool, optional): Whether to use MPI. Defaults to True.
         """
 
         self.comm_handler = CommHandler(use_mpi=use_mpi)
         self.rank = self.comm_handler.get_rank()
         self.world_size = self.comm_handler.get_size()
 
-        _misc = aimsPAX_settings["MISC"]
-        _output_dir = Path(_misc.get("output_dir", "."))
-        _output_dir.mkdir(parents=True, exist_ok=True)
-        _log_dir = Path(_misc["log_dir"])
-        self.log_dir = (
-            _log_dir if _log_dir.is_absolute() else _output_dir / _log_dir
-        )
-        logger_level = (
-            logging.DEBUG
-            if model_settings["MISC"]["log_level"].lower() == "debug"
-            else logging.INFO
-        )
+        self.log_dir = Path(aimsPAX_settings.MISC.log_dir)
+        logger_level = getattr(logging, model_settings.MISC.log_level, logging.INFO)
 
         for handler in logging.root.handlers[:]:
             logging.root.removeHandler(handler)
         self.logger = setup_logger(
             level=logger_level,
             tag="initial_dataset",
-            directory=self.log_dir,
+            directory=self.log_dir.as_posix(),
         )
         if self.rank == 0:
             logging.info("Initializing initial dataset procedure.")
             logging.info(f"Procedure runs on {self.world_size} workers.")
             logging.info(
-                "Using followng settings for the initial dataset procedure:"
+                "Using following settings for the initial dataset procedure:"
             )
             log_yaml_block(
                 "INITIAL_DATASET_GENERATION",
-                aimsPAX_settings["INITIAL_DATASET_GENERATION"],
+                aimsPAX_settings.INITIAL_DATASET_GENERATION.model_dump(),
             )
 
         self.control_parser = AIMSControlParser()
         self._handle_model_settings(model_settings)
         if self.rank == 0:
-            logging.info(
-                f"Using following settings for {self.model_choice.upper()}:"
-            )
-            log_yaml_block(self.model_choice.upper(), model_settings)
+            logging.info(f"Using following settings for {self.model_choice.upper()}:")
+            log_yaml_block(self.model_choice.upper(), model_settings.model_dump())
 
         self._handle_settings(aimsPAX_settings)
         if not self.use_teacher_reference:
@@ -298,13 +282,13 @@ class PrepareInitialDatasetProcedure:
             0, 1000, size=self.ensemble_size
         )
 
-    def _handle_model_settings(self, model_settings: dict) -> None:
+    def _handle_model_settings(self, model_settings: ModelSettings) -> None:
         """
         Saves the model settings to class attributes.
         and fall back to defaults if not.
 
         Args:
-            model_settings (dict): Dictionary containing the model settings.
+            model_settings (ModelSettings): Dictionary containing the model settings.
         """
 
         apply_model_settings(target=self, model_settings=model_settings)
@@ -312,39 +296,38 @@ class PrepareInitialDatasetProcedure:
         # (because avg_num_neighbors, mean, std, atomic energies etc
         # are changing all the time; not possible to modify with CuEQ)
         self.enable_cueq_train = False
-        model_settings["MISC"]["enable_cueq_train"] = False
+        model_settings.MISC.enable_cueq_train = False
 
-    def _handle_settings(self, aimsPAX_settings: dict) -> None:
+    def _handle_settings(self, aimsPAX_settings: AimsPAXSettings) -> None:
         """
         Saves the active learning settings to class attributes.
         TODO: Create function to check if all necessary settings are present
         and fall back to defaults if not.
 
         Args:
-            al_settings (dict): Dictionary containing the active
+            aimsPAX_settings (AimsPAXSettings): A Pydantic model containing the active
                                 learning settings.
         """
 
-        self.idg_settings = aimsPAX_settings["INITIAL_DATASET_GENERATION"]
-        self.misc = aimsPAX_settings["MISC"]
-        self.md_settings_raw = aimsPAX_settings["MD"]
-        self.cluster_settings = aimsPAX_settings.get("CLUSTER", None)
+        self.idg_settings = aimsPAX_settings.INITIAL_DATASET_GENERATION
+        self.misc = aimsPAX_settings.MISC
+        self.md_settings_raw = aimsPAX_settings.MD
+        self.cluster_settings = aimsPAX_settings.CLUSTER
 
-        self.output_dir = Path(self.misc.get("output_dir", "."))
+        self.output_dir = self.misc.output_dir
 
         def _r(p):
             p = Path(p)
             return p if p.is_absolute() else self.output_dir / p
 
-        self.checkpoints_dir = str(_r(self.checkpoints_dir))
-        self.model_settings["GENERAL"]["checkpoints_dir"] = (
+        self.checkpoints_dir = _r(self.checkpoints_dir)
+        self.model_settings.GENERAL.checkpoints_dir = (
             self.checkpoints_dir
         )
-        self.model_dir = str(_r(self.model_dir))
-        self.model_settings["GENERAL"]["model_dir"] = self.model_dir
-        self.model_settings["GENERAL"]["loss_dir"] = str(
-            _r(self.model_settings["GENERAL"]["loss_dir"])
-        )
+        self.model_dir = _r(self.model_dir)
+        self.model_settings.GENERAL.model_dir = self.model_dir
+
+        self.model_settings.GENERAL.loss_dir = _r(self.model_settings.GENERAL.loss_dir)
 
         self.initial_ds_restart_path = (
             self.output_dir
@@ -353,60 +336,33 @@ class PrepareInitialDatasetProcedure:
             / "initial_ds_restart.npy"
         )
 
-        self.ensemble_size = self.idg_settings["ensemble_size"]
-        self.desired_acc = self.idg_settings["desired_acc"]
-        self.desired_acc_scale_idg = self.idg_settings["desired_acc_scale_idg"]
-        self.n_points_per_sampling_step_idg = self.idg_settings[
-            "n_points_per_sampling_step_idg"
-        ]
-        self.max_initial_epochs = self.idg_settings["max_initial_epochs"]
-        self.converge_initial = self.idg_settings["converge_initial"]
-        self.max_convergence_epochs = self.idg_settings[
-            "max_convergence_epochs"
-        ]
-        self.valid_skip = self.idg_settings["valid_skip"]
-        self.skip_step = self.idg_settings["skip_step_initial"]
-        self.intermediate_epochs = self.idg_settings["intermediate_epochs_idg"]
-        self.valid_ratio = self.idg_settings["valid_ratio"]
-        self.ASI_path = self.idg_settings["aims_lib_path"]
-        self.species_dir = self.idg_settings["species_dir"]
-        self.analysis = self.idg_settings["analysis"]
-        self.margin = self.idg_settings["margin"]
-        self.mol_idxs = self.misc["mol_idxs"]
-        self.key_specification = create_keyspec(
-            energy_key=self.misc["energy_key"],
-            forces_key=self.misc["forces_key"],
-            stress_key=self.misc["stress_key"],
-            dipole_key=self.misc["dipole_key"],
-            polarizability_key=self.misc["polarizability_key"],
-            head_key=self.misc["head_key"],
-            charges_key=self.misc["charges_key"],
-            total_charge_key=self.misc["total_charge_key"],
-            total_spin_key=self.misc["total_spin_key"],
-        )
-        self.idg_progress_dft_update = self.idg_settings["progress_dft_update"]
-        if not self.idg_settings["scheduler_initial"]:
-            self.model_settings["lr_scheduler"] = None
+        for field_name, value in self.idg_settings:
+            setattr(self, field_name, value)
 
-        self.initial_sampling = self.idg_settings["initial_sampling"]
-        self.foundational_model = self.idg_settings["foundational_model"]
-        self.foundational_model_settings = self.idg_settings[
-            "foundational_model_settings"
-        ]
-        self.use_teacher_reference = self.idg_settings["use_teacher_reference"]
-        self.teacher_reference_settings = self.idg_settings[
-            "teacher_reference_settings"
-        ]
+        self.mol_idxs = self.misc.mol_idxs
+        self.key_specification = create_keyspec(
+            energy_key=self.misc.energy_key,
+            forces_key=self.misc.forces_key,
+            stress_key=self.misc.stress_key,
+            dipole_key=self.misc.dipole_key,
+            polarizability_key=self.misc.polarizability_key,
+            head_key=self.misc.head_key,
+            charges_key=self.misc.charges_key,
+            total_charge_key=self.misc.total_charge_key,
+            total_spin_key=self.misc.total_spin_key,
+        )
+        # TODO: Need to move this check to all other checks
+        if not self.idg_settings.scheduler_initial:
+            self.model_settings.lr_scheduler = None
 
         self.restart = self.initial_ds_restart_path.exists()
-        self.create_restart = self.misc["create_restart"]
+        self.create_restart = self.misc.create_restart
         if self.create_restart:
             self.init_ds_restart_dict = {
                 "trajectories": None,
                 "last_initial_losses": None,
                 "initial_ds_done": False,
             }
-        self.distinct_model_sets = self.idg_settings["distinct_model_sets"]
 
     def _update_restart_dict(self):
         self._collect_restart_points(self.trajectories)
@@ -421,7 +377,7 @@ class PrepareInitialDatasetProcedure:
         """
         Creates the necessary directories for saving the datasets.
         """
-        _raw = Path(self.misc["dataset_dir"])
+        _raw = self.misc.dataset_dir
         self.dataset_dir = (
             _raw if _raw.is_absolute() else self.output_dir / _raw
         )
@@ -442,7 +398,7 @@ class PrepareInitialDatasetProcedure:
     def _setup_aims_calculator(
         self,
         atoms: ase.Atoms,
-    ) -> ase.Atoms:
+    ) -> Aims:
         """
         Attaches the AIMS calculator to the atoms object.
         Uses the AIMS settings from the control.in to set up the calculator.
@@ -459,8 +415,6 @@ class PrepareInitialDatasetProcedure:
         aims_settings = self.aims_settings.copy()
 
         def init_via_ase(asi):
-            from ase.calculators.aims import Aims, AimsProfile
-
             aims_settings["profile"] = AimsProfile(
                 command="asi-doesnt-need-command"
             )
@@ -488,12 +442,13 @@ class PrepareInitialDatasetProcedure:
             path_to_control (str): Path to the AIMS control file.
             species_dir (str): Path to the species directory of AIMS.
         """
-        if isinstance(control_source, str):
+
+        if isinstance(control_source, (str, Path)):
             aims_settings = self.control_parser(control_source)
             aims_settings["compute_forces"] = True
             aims_settings["species_dir"] = self.species_dir
             aims_settings["postprocess_anyway"] = (
-                True  # this is necesssary to check for convergence in ASI
+                True  # this is necessary to check for convergence in ASI
             )
             self.aims_settings = {0: aims_settings}
         elif isinstance(control_source, dict):
@@ -503,7 +458,7 @@ class PrepareInitialDatasetProcedure:
                 aims_settings["compute_forces"] = True
                 aims_settings["species_dir"] = self.species_dir
                 aims_settings["postprocess_anyway"] = (
-                    True  # this is necesssary to check for convergence in ASI
+                    True  # this is necessary to check for convergence in ASI
                 )
                 if log:
                     logging.info(f"Control file for geometry {key}: {value}.")
@@ -714,7 +669,7 @@ class PrepareInitialDatasetProcedure:
                         model readable format.
         """
 
-        dyn.run(self.skip_step)
+        dyn.run(self.skip_step_initial)
         current_energy = np.array(atoms.get_potential_energy())
         current_forces = np.array(atoms.get_forces())
         current_point = atoms.copy()
@@ -791,7 +746,7 @@ class PrepareInitialDatasetProcedure:
                     list(self.ensemble.keys())[0]
                 ]["epoch"]
 
-            convergence_patience = self.idg_settings["convergence_patience"]
+            convergence_patience = self.idg_settings.convergence_patience
             no_improvement = 0
             ensemble_valid_losses = {
                 tag: np.inf for tag in self.ensemble.keys()
@@ -799,7 +754,7 @@ class PrepareInitialDatasetProcedure:
             for j in range(self.max_convergence_epochs):
                 for tag, model in self.ensemble.items():
                     logger = tools.MetricsLogger(
-                        directory=self.model_settings["GENERAL"]["loss_dir"],
+                        directory=self.model_settings.GENERAL.loss_dir,
                         tag=tag + "_train",
                     )
                     train_epoch(
@@ -842,9 +797,7 @@ class PrepareInitialDatasetProcedure:
                             ],
                             training_setups=self.training_setups_convergence,
                             logger=logger,
-                            log_errors=self.model_settings["MISC"][
-                                "error_table"
-                            ],
+                            log_errors=self.model_settings.MISC.error_table,
                             epoch=epoch,
                         )
                     )
@@ -867,12 +820,7 @@ class PrepareInitialDatasetProcedure:
                             with param_context:
                                 torch.save(
                                     model,
-                                    Path(
-                                        self.model_settings["GENERAL"][
-                                            "model_dir"
-                                        ]
-                                    )
-                                    / (tag + ".model"),
+                                    self.model_settings.GENERAL.model_dir / (tag + ".model"),
                                 )
                             save_checkpoint(
                                 checkpoint_handler=self.training_setups_convergence[
@@ -911,8 +859,8 @@ class ALConfiguration:
 
     def __init__(
         self,
-        model_settings: dict,
-        aimsPAX_settings: dict,
+        model_settings: ModelSettings,
+        aimsPAX_settings: AimsPAXSettings,
         path_to_control: str = "./control.in",
         path_to_geometry: str = "./geometry.in",
     ):
@@ -920,54 +868,50 @@ class ALConfiguration:
         self.path_to_control = path_to_control
         self.path_to_geometry = path_to_geometry
         self.aimsPAX_settings = aimsPAX_settings
-        self.al_settings = aimsPAX_settings["ACTIVE_LEARNING"]
-        self.md_settings_raw = aimsPAX_settings["MD"]
-        self.cluster_settings = aimsPAX_settings.get("CLUSTER", None)
-        self.misc = aimsPAX_settings.get("MISC", {})
+        self.al_settings = aimsPAX_settings.ACTIVE_LEARNING
+        self.md_settings_raw = aimsPAX_settings.MD
+        self.cluster_settings = aimsPAX_settings.CLUSTER
+        self.misc = aimsPAX_settings.MISC
 
         self._setup_model_configuration()
         self._setup_aimsPAX_configuration()
 
     def _setup_model_configuration(self):
         """Setup model-specific configuration."""
-
-        apply_model_settings(target=self, model_settings=self.model_settings)
-        self.checkpoints_dir += "/al"
-
+        
+        apply_model_settings(
+            target=self,
+            model_settings=self.model_settings
+        )
+        self.checkpoints_dir /= "al"
+        
     def _setup_aimsPAX_configuration(self):
         """Setup active learning configuration."""
         # Training parameters
-        self.max_MD_steps = self.al_settings["max_MD_steps"]
-        self.epochs_per_worker = self.al_settings["epochs_per_worker"]
-        self.max_convergence_epochs = self.al_settings[
-            "max_convergence_epochs"
-        ]
-        self.intermediate_epochs_al = self.al_settings[
-            "intermediate_epochs_al"
-        ]
-        self.convergence_patience = self.al_settings[
-            "convergence_patience"
-        ]  # for convergence only
-        self.desired_accuracy = self.al_settings["desired_acc"]
-        self.margin = self.al_settings["margin"]  # for convergence only
+        self.max_MD_steps = self.al_settings.max_MD_steps
+        self.epochs_per_worker = self.al_settings.epochs_per_worker
+        self.max_convergence_epochs = self.al_settings.max_convergence_epochs
+        self.intermediate_epochs_al = self.al_settings.intermediate_epochs_al
+        self.convergence_patience = self.al_settings.convergence_patience  # for convergence only
+        self.desired_accuracy = self.al_settings.desired_acc
+        self.margin = self.al_settings.margin  # for convergence only
 
         # Data parameters
-        self.num_trajectories = self.al_settings["num_trajectories"]
-        self.skip_step = self.al_settings["skip_step_mlff"]
-        self.valid_skip = self.al_settings["valid_skip"]
-        self.analysis_skip = self.al_settings["analysis_skip"]
-        self.valid_ratio = self.al_settings["valid_ratio"]
-        self.max_train_set_size = self.al_settings["max_train_set_size"]
-        self.c_x = self.al_settings["c_x"]
-        self.extend_existing_final_ds = self.al_settings[
-            "extend_existing_final_ds"
-        ]
-        self.update_md_checkpoints = self.al_settings["update_md_checkpoints"]
-
+        self.num_trajectories = self.al_settings.num_trajectories
+        self.skip_step = self.al_settings.skip_step_mlff
+        self.valid_skip = self.al_settings.valid_skip
+        self.analysis_skip = self.al_settings.analysis_skip
+        self.valid_ratio = self.al_settings.valid_ratio
+        self.max_train_set_size = self.al_settings.max_train_set_size
+        self.c_x = self.al_settings.c_x
+        self.extend_existing_final_ds = self.al_settings.extend_existing_final_ds
+        self.update_md_checkpoints = self.al_settings.update_md_checkpoints
+        
         # Training procedures (TODO: Move training methods from model file here)
-        self.replay_strategy = self.al_settings["replay_strategy"]
-        self.train_subset_size = self.al_settings["train_subset_size"]
-        self.valid_subset_size = self.al_settings["valid_subset_size"]
+        self.replay_strategy = self.al_settings.replay_strategy
+        self.train_subset_size = self.al_settings.train_subset_size
+        self.valid_subset_size = self.al_settings.valid_subset_size
+        # TODO: move the following lines should to validation
         if self.replay_strategy == "random_subset":
             assert self.train_subset_size is not None, (
                 "train_subset_size must be specified for random_subset "
@@ -975,59 +919,53 @@ class ALConfiguration:
             )
 
         # Paths
-        self.output_dir = Path(self.misc.get("output_dir", "."))
+        self.output_dir = self.misc.output_dir
         self.output_dir.mkdir(parents=True, exist_ok=True)
 
         def _r(p):
             p = Path(p)
             return p if p.is_absolute() else self.output_dir / p
 
-        self.dataset_dir = _r(self.misc["dataset_dir"])
-        self.log_dir = str(_r(self.misc["log_dir"]))
-        self.checkpoints_dir = str(_r(self.checkpoints_dir))
-        self.model_settings["GENERAL"]["checkpoints_dir"] = (
+        self.dataset_dir = _r(self.misc.dataset_dir)
+        self.log_dir = _r(self.misc.log_dir)
+        self.checkpoints_dir = _r(self.checkpoints_dir)
+        self.model_settings.GENERAL.checkpoints_dir = (
             self.checkpoints_dir
         )
-        self.model_dir = str(_r(self.model_dir))
-        self.model_settings["GENERAL"]["model_dir"] = self.model_dir
-        self.model_settings["GENERAL"]["loss_dir"] = str(
-            _r(self.model_settings["GENERAL"]["loss_dir"])
-        )
+        self.model_dir = _r(self.model_dir)
+        self.model_settings.GENERAL.model_dir = self.model_dir
+        self.model_settings.GENERAL.loss_dir = _r(self.model_settings.GENERAL.loss_dir)
 
         self.al_restart_path = (
             self.output_dir / "restart" / "al" / "al_restart.npy"
         )
 
-        self.species_dir = self.al_settings.get("species_dir", None)
-        self.ASI_path = self.al_settings.get("aims_lib_path", None)
+        self.species_dir = self.al_settings.species_dir
+        self.ASI_path = self.al_settings.aims_lib_path
 
         # Optional settings
-        self.analysis = self.al_settings["analysis"]
-        self.seeds_tags_dict = self.al_settings.get("seeds_tags_dict", None)
+        self.analysis = self.al_settings.analysis
+        self.seeds_tags_dict = self.al_settings.seeds_tags_dict
 
         # Uncertainty parameters
-        self.converge_al = self.al_settings["converge_al"]
-        self.converge_best = self.al_settings["converge_best"]
-        self.uncertainty_type = self.al_settings["uncertainty_type"]
+        self.converge_al = self.al_settings.converge_al
+        self.converge_best = self.al_settings.converge_best
+        self.uncertainty_type = self.al_settings.uncertainty_type
 
-        self.uncert_not_crossed_limit = self.al_settings[
-            "uncert_not_crossed_limit"
-        ]
-        self.freeze_threshold_dataset = self.al_settings[
-            "freeze_threshold_dataset"
-        ]
+        self.uncert_not_crossed_limit = self.al_settings.uncert_not_crossed_limit
+        self.freeze_threshold_dataset = self.al_settings.freeze_threshold_dataset
         self.freeze_threshold = False
 
         self.key_specification = create_keyspec(
-            energy_key=self.misc["energy_key"],
-            forces_key=self.misc["forces_key"],
-            stress_key=self.misc["stress_key"],
-            dipole_key=self.misc["dipole_key"],
-            polarizability_key=self.misc["polarizability_key"],
-            head_key=self.misc["head_key"],
-            charges_key=self.misc["charges_key"],
-            total_charge_key=self.misc["total_charge_key"],
-            total_spin_key=self.misc["total_spin_key"],
+            energy_key=self.misc.energy_key,
+            forces_key=self.misc.forces_key,
+            stress_key=self.misc.stress_key,
+            dipole_key=self.misc.dipole_key,
+            polarizability_key=self.misc.polarizability_key,
+            head_key=self.misc.head_key,
+            charges_key=self.misc.charges_key,
+            total_charge_key=self.misc.total_charge_key,
+            total_spin_key=self.misc.total_spin_key,
         )
 
         # Molecular indices
@@ -1035,26 +973,25 @@ class ALConfiguration:
 
         # Restart handling
         self.restart = self.al_restart_path.exists()
-        self.create_restart = self.misc["create_restart"]
+        self.create_restart = self.misc.create_restart
 
-        # foundational model usage during AL
-        self.use_foundational = self.al_settings["use_foundational"]
-        self.foundational_model_settings = self.al_settings[
-            "foundational_model_settings"
-        ]
+        # FIXME: If one can use foundational model in AL as well, then it would be better
+        #        to have the model name (mace/so3lr) in the model settings
+        self.use_foundational = self.al_settings.use_foundational
+        self.foundational_model_settings = self.al_settings.foundational_model_settings
 
         # teacher model usage during AL (replaces DFT with teacher model)
-        self.use_teacher_reference = self.al_settings["use_teacher_reference"]
-        self.teacher_reference_settings = self.al_settings[
-            "teacher_reference_settings"
-        ]
+        self.use_teacher_reference = self.al_settings.use_teacher_reference
+        self.teacher_reference_settings = self.al_settings.teacher_reference_settings
 
     def _setup_molecular_indices(self):
         """
         Setup molecular indices configuration.
         Only needed if intermolecular uncertainty is used.
         """
-        mol_idxs_path = self.misc["mol_idxs"]
+        # FIXME: This is just incorrect and should be changed. I do not understand
+        #        yet how though
+        mol_idxs_path = self.misc.mol_idxs
         self.mol_idxs = (
             np.load(mol_idxs_path, allow_pickle=True)["arr_0"].tolist()
             if mol_idxs_path is not None
@@ -1063,16 +1000,12 @@ class ALConfiguration:
 
         if self.mol_idxs is not None:
             self.intermol_crossed = 0
-            self.intermol_crossed_limit = self.al_settings[
-                "intermol_crossed_limit"
-            ]
-            self.intermol_forces_weight = self.al_settings[
-                "intermol_forces_weight"
-            ]
+            self.intermol_crossed_limit = self.al_settings.intermol_crossed_limit
+            self.intermol_forces_weight = self.al_settings.intermol_forces_weight
             self.switched_on_intermol = False
 
             # Check if using intermolecular loss
-            loss_type = self.model_settings["TRAINING"]["loss"].lower()
+            loss_type = self.model_settings.TRAINING.loss.lower()
             self.using_intermol_loss = loss_type == "intermol"
 
 
@@ -1150,8 +1083,8 @@ class ALStateManager:
             self.ensemble_best_valid = {tag: np.inf for tag in tags}
 
     def _create_trajectories(
-        self, atoms: List[ase.Atoms], num_trajectories: int
-    ) -> dict:
+        self, atoms: dict[int, ase.Atoms], num_trajectories: int
+    ) -> dict[int, ase.Atoms]:
         """
         Creates a dictionary of trajectories with given starting
         geometries.
@@ -1180,7 +1113,6 @@ class ALStateManager:
         if len(atoms) == 1:
             for i in range(num_trajectories):
                 trajectories[i] = atoms[0].copy()
-            return trajectories
 
         elif len(atoms) > 1:
             if num_trajectories > len(atoms):
@@ -1203,7 +1135,7 @@ class ALStateManager:
             for i in range(num_trajectories):
                 trajectories[i] = atoms[i % len(atoms)].copy()
 
-            return trajectories
+        return trajectories
 
     def _initialize_analysis_state(self):
         """Initialize analysis-specific state."""
@@ -1340,7 +1272,7 @@ class ALEnsemble:
             dtype=dtype_mapping[self.config.dtype],
             convert_to_cueq=self.config.enable_cueq_train,
         )
-        if self.config.model_settings["TRAINING"]["perform_finetuning"]:
+        if self.config.model_settings.TRAINING.perform_finetuning:
             for tag, model in self.ensemble.items():
                 self.ensemble[tag] = apply_finetuning_settings(
                     model=model,
@@ -2214,8 +2146,8 @@ class PrepareALProcedure:
 
     def __init__(
         self,
-        model_settings: dict,
-        aimsPAX_settings: dict,
+        model_settings: ModelSettings,
+        aimsPAX_settings: AimsPAXSettings,
         path_to_control: str = "./control.in",
         path_to_geometry: str = "./geometry.in",
         use_mpi: bool = True,
@@ -2241,15 +2173,15 @@ class PrepareALProcedure:
             logging.info("Initializing active learning procedure.")
             logging.info(f"Procedure runs on {self.world_size} workers.")
             logging.info(
-                "Using followng settings for the active learning procedure:"
+                "Using following settings for the active learning procedure:"
             )
             log_yaml_block(
-                "ACTIVE_LEARNING", aimsPAX_settings["ACTIVE_LEARNING"]
+                "ACTIVE_LEARNING", aimsPAX_settings.ACTIVE_LEARNING.model_dump()
             )
             logging.info(
                 f"Using following settings for {self.config.model_choice}:"
             )
-            log_yaml_block(self.config.model_choice, model_settings)
+            log_yaml_block(self.config.model_choice, model_settings.model_dump())
         # Initialize all managers
         self.state_manager = ALStateManager(self.config, self.comm_handler)
         self.ensemble_manager = ALEnsemble(self.config, self.comm_handler)
@@ -2321,18 +2253,13 @@ class PrepareALProcedure:
         for handler in logging.root.handlers[:]:
             logging.root.removeHandler(handler)
 
-        logger_level = (
-            logging.DEBUG
-            if self.config.model_settings["MISC"]["log_level"].lower()
-            == "debug"
-            else logging.INFO
-        )
+        logger_level = getattr(logging, self.config.model_settings.MISC.log_level, logging.INFO)
 
         self.log_dir = Path(self.config.log_dir)
         tools.setup_logger(
             level=logger_level,
             tag="active_learning",
-            directory=self.log_dir,
+            directory=self.log_dir.as_posix(),
         )
 
     def _create_folders(self):

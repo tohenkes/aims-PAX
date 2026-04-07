@@ -12,21 +12,23 @@ from ase.io import ParseError
 from pathlib import Path
 from typing import Optional
 
+from aims_PAX.settings.project import ClusterSettings
+
 
 def prepare_parsl(
-    cluster_settings: dict = None, output_dir: Path = Path(".")
+    cluster_settings: ClusterSettings = None, output_dir: Path = Path(".")
 ) -> dict:
     """
     Prepare the PARSL configuration and settings for running calculations.
     Creates the config file, sets the calculation directory, defines if
     the calculation directories should be cleaned, and initializes
-    the calculation index (is used to keep track of each calculations
+    the calculation index (is used to keep track of each calculation
     when creating the directory names). Also, checks if the launch string
-    is provided in the cluster settings. The lauch string is used to run
+    is provided in the cluster settings. The launch string is used to run
     the DFT calculations on the cluster.
 
     Args:
-        cluster_settings (dict, optional): _description_. Defaults to None.
+        cluster_settings (ClusterSettings, optional): _description_. Defaults to None.
         output_dir (Path, optional): Base output directory. Relative paths
             for calc_dir and parsl_info_dir are resolved against this.
             Defaults to Path(".").
@@ -43,21 +45,15 @@ def prepare_parsl(
         "Cluster settings not found. Please provide a YAML file "
         "with the cluster settings."
     )
-    launch_str = cluster_settings.get("launch_str", "")
+    launch_str = cluster_settings.launch_str
 
     config = create_parsl_config(
         cluster_settings=cluster_settings, output_dir=output_dir
     )
     # get the path to the directory where the calculations will be run
-    # if none is provided, place it under output_dir
-    _calc_dir = cluster_settings.get("calc_dir", None)
-    if _calc_dir is None:
-        calc_dir = output_dir / "ase_aims_calcs"
-    else:
-        calc_dir = Path(_calc_dir)
-        if not calc_dir.is_absolute():
-            calc_dir = output_dir / calc_dir
-    clean_dirs = cluster_settings.get("clean_dirs", True)
+    # if none is provided use the current working directory
+    calc_dir = cluster_settings.calc_dir
+    clean_dirs = cluster_settings.clean_dirs
     calc_idx = 0
 
     return {
@@ -69,16 +65,14 @@ def prepare_parsl(
     }
 
 
-def create_parsl_config(
-    cluster_settings: dict, output_dir: Path = Path(".")
-) -> Config:
+def create_parsl_config(cluster_settings: ClusterSettings, output_dir: Path = Path(".")) -> Config:
     """
-    Reads in CLUSTER settings as a dict (provided in the yaml file).
+    Reads in CLUSTER settings as a Pydantic model (provided in the yaml file).
     The information is then used to create a PARSL configuration object.
     The configuration includes the executor, provider, and other settings
     necessary for running calculations on the cluster.
 
-    One block is capabale of running PARSL apps like the DFT calculations
+    One block is capable of running PARSL apps like the DFT calculations
     we are doing. PARSL will automatically scale the number of blocks
     based on the number of tasks submitted until the maximum number of
     blocks.
@@ -117,7 +111,7 @@ def create_parsl_config(
         Config: A PARSL configuration object with the specified settings.
     """
 
-    executor = cluster_settings.get("executor", "workqueue")
+    executor = cluster_settings.executor
 
     if executor == "local":
         parsl_info_dir = output_dir / "parsl_info"
@@ -137,46 +131,23 @@ def create_parsl_config(
             retries=0,
         )
         return config
+    parsl_options = cluster_settings.parsl_options
 
-    parsl_options = cluster_settings["parsl_options"]
+    nodes_per_block = parsl_options.nodes_per_block
+    init_blocks = parsl_options.init_blocks
+    min_blocks = parsl_options.min_blocks
+    max_blocks = parsl_options.max_blocks
+    label = parsl_options.label
 
-    nodes_per_block = parsl_options.get("nodes_per_block", 1)
-    init_blocks = parsl_options.get("init_blocks", 1)
-    min_blocks = parsl_options.get("min_blocks", 1)
-    max_blocks = parsl_options.get("max_blocks", 1)
-    _parsl_info = parsl_options.get("parsl_info_dir", None)
-    if _parsl_info is None:
-        parsl_info_dir = output_dir / "parsl_info"
-    else:
-        parsl_info_dir = Path(_parsl_info)
-        if not parsl_info_dir.is_absolute():
-            parsl_info_dir = output_dir / parsl_info_dir
+    run_dir = parsl_options.run_dir
+    function_dir = parsl_options.function_dir
 
-    # create a parent folder for all the parsl stuff
-    if not os.path.exists(parsl_info_dir):
-        os.makedirs(parsl_info_dir)
-    run_dir = parsl_options.get("run_dir", parsl_info_dir / "run_dir")
-    function_dir = parsl_options.get(
-        "function_dir", parsl_info_dir / "function_dir"
-    )
-
-    label = parsl_options.get("label", "workqueue")
-
-    try:
-        worker_init_str = cluster_settings["worker_str"]
-    except KeyError:
-        exception_msg = "Worker init string not found in YAML file. Closing."
-        raise KeyError(exception_msg)
-
-    try:
-        slurm_options_str = cluster_settings["slurm_str"]
-    except KeyError:
-        exception_msg = "Slurm options string not found in YAML file. Closing."
-        raise KeyError(exception_msg)
+    worker_init_str = cluster_settings.worker_str
+    slurm_options_str = cluster_settings.slurm_str
 
     # Extract the cluster partition from the slurm options string
     match = re.search(
-        r"(?:partition\s*=\s*|(?:^|\s)-p\s*(?:=\s*)?)([\w\-]+)",
+        r"(?: --partition| -p) *= *([\w-]*)",
         slurm_options_str,
         re.IGNORECASE,
     )
@@ -186,6 +157,7 @@ def create_parsl_config(
         logging.error("Partition not found. Closing.")
         raise KeyError("Partition not found in slurm options string.")
 
+    config = None
     if executor == "workqueue":
         config = Config(
             executors=[

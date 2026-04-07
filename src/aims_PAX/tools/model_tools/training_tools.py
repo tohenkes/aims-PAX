@@ -1,3 +1,5 @@
+from pathlib import Path
+
 import torch
 from typing import Optional, Tuple
 from torch_ema import ExponentialMovingAverage
@@ -16,9 +18,12 @@ from so3krates_torch.modules.loss import (
 import numpy as np
 import os
 
+from aims_PAX.settings import ModelSettings
+from aims_PAX.settings.model import TrainingSettings, MiscSettings
+
 
 def setup_model_training(
-    settings: dict,
+    settings: ModelSettings,
     model,
     model_choice: str,
     tag: str,
@@ -28,12 +33,11 @@ def setup_model_training(
     mol_idxs: np.ndarray = None,
 ):
 
-    general_settings = settings["GENERAL"]
-    training_settings = settings["TRAINING"]
-    misc_settings = settings["MISC"]
+    training_settings = settings.TRAINING
+    misc_settings = settings.MISC
 
     if checkpoints_dir is None:
-        checkpoints_dir = general_settings["checkpoints_dir"]
+        checkpoints_dir = settings.GENERAL.checkpoints_dir
 
     training_setup = {}
     loss_fn = choose_loss_function(training_settings)
@@ -71,109 +75,116 @@ def setup_model_training(
     )
     training_setup["checkpoint_handler"] = checkpoint_handler
     
-    training_setup["device"] = misc_settings["device"]
-    training_setup["max_grad_norm"] = training_settings["clip_grad"]
+    training_setup["device"] = misc_settings.device
+    training_setup["max_grad_norm"] = training_settings.clip_grad
     training_setup["output_args"] = {
         "forces": True,
         "virials": False,  # TODO: Remove hardcoding
-        "stress": misc_settings["compute_stress"],
+        "stress": misc_settings.compute_stress
     }
     training_setup["epoch"] = epoch
     return training_setup
 
 
-def choose_loss_function(training_settings: dict) -> torch.nn.Module:
+def choose_loss_function(training_settings: TrainingSettings) -> torch.nn.Module:
     loss_fn: torch.nn.Module
-    if training_settings["loss"].lower() == "weighted":
+    loss = training_settings.loss.lower()
+    energy_weight = training_settings.energy_weight
+    forces_weight = training_settings.forces_weight
+    stress_weight = training_settings.stress_weight
+    dipole_weight = training_settings.dipole_weight
+    hirshfeld_weight = training_settings.hirshfeld_weight
+
+    if loss == "weighted":
         loss_fn = modules.WeightedEnergyForcesLoss(
-            energy_weight=training_settings["energy_weight"],
-            forces_weight=training_settings["forces_weight"],
+            energy_weight=energy_weight,
+            forces_weight=forces_weight,
         )
 
-    elif training_settings["loss"].lower() == "forces_only":
+    elif loss == "forces_only":
         loss_fn = modules.WeightedForcesLoss(
-            forces_weight=training_settings["forces_weight"]
+            forces_weight=forces_weight
         )
 
-    elif training_settings["loss"].lower() == "weighted_stress":
+    elif loss == "weighted_stress":
         loss_fn = modules.WeightedEnergyForcesStressLoss(
-            energy_weight=training_settings["energy_weight"],
-            forces_weight=training_settings["forces_weight"],
-            stress_weight=training_settings["stress_weight"],
+            energy_weight=energy_weight,
+            forces_weight=forces_weight,
+            stress_weight=stress_weight,
         )
-    elif training_settings["loss"].lower() == "weighted_energy_forces_dipole":
+    elif loss == "weighted_energy_forces_dipole":
         loss_fn = WeightedEnergyForcesDipoleLoss(
-            energy_weight=training_settings["energy_weight"],
-            forces_weight=training_settings["forces_weight"],
-            dipole_weight=training_settings["dipole_weight"],
+            energy_weight=energy_weight,
+            forces_weight=forces_weight,
+            dipole_weight=dipole_weight,
         )
-    elif training_settings["loss"].lower() == "weighted_energy_forces_hirshfeld":
+    elif loss == "weighted_energy_forces_hirshfeld":
         loss_fn = WeightedEnergyForcesHirshfeldLoss(
-            energy_weight=training_settings["energy_weight"],
-            forces_weight=training_settings["forces_weight"],
-            hirshfeld_weight=training_settings["hirshfeld_weight"],
+            energy_weight=energy_weight,
+            forces_weight=forces_weight,
+            hirshfeld_weight=hirshfeld_weight,
         )
-    elif training_settings["loss"].lower() == "weighted_energy_forces_dipole_hirshfeld":
+    elif loss == "weighted_energy_forces_dipole_hirshfeld":
         loss_fn = WeightedEnergyForcesDipoleHirshfeldLoss(
-            energy_weight=training_settings["energy_weight"],
-            forces_weight=training_settings["forces_weight"],
-            dipole_weight=training_settings["dipole_weight"],
-            hirshfeld_weight=training_settings["hirshfeld_weight"],
+            energy_weight=energy_weight,
+            forces_weight=forces_weight,
+            dipole_weight=dipole_weight,
+            hirshfeld_weight=hirshfeld_weight,
         )
     else:
-        raise RuntimeError(f"Unknown loss function: {training_settings['loss']}")
+        raise RuntimeError(f"Unknown loss function: {loss}")
     return loss_fn
 
 
 def choose_scheduler(optimizer, training_settings):
-    if training_settings["scheduler"] == "ExponentialLR":
+    if training_settings.scheduler == "ExponentialLR":
         lr_scheduler = torch.optim.lr_scheduler.ExponentialLR(
-            optimizer=optimizer, gamma=training_settings["lr_scheduler_gamma"]
+            optimizer=optimizer, gamma=training_settings.lr_scheduler_gamma
         )
-    elif training_settings["scheduler"] == "ReduceLROnPlateau":
+    elif training_settings.scheduler == "ReduceLROnPlateau":
         lr_scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(
             optimizer=optimizer,
-            factor=training_settings["lr_factor"],
-            patience=training_settings["scheduler_patience"],
+            factor=training_settings.lr_factor,
+            patience=training_settings.scheduler_patience,
         )
     else:
         raise RuntimeError(
-            f"Unknown scheduler: {training_settings['scheduler']}"
+            f"Unknown scheduler: {training_settings.scheduler}"
         )
     return lr_scheduler
 
 
 def setup_optimizer(
         model,
-        training_settings: dict,
+        training_settings: TrainingSettings,
         param_options: dict
     ):
 
-    if training_settings["optimizer"] == "adamw":
+    if training_settings.optimizer == "adamw":
         optimizer = torch.optim.AdamW(**param_options)
-    elif training_settings["optimizer"] == "adam":
+    elif training_settings.optimizer == "adam":
         optimizer = torch.optim.Adam(**param_options)
     else:
         raise RuntimeError(
-            f"Unknown optimizer: {training_settings['optimizer']}"
+            f"Unknown optimizer: {training_settings.optimizer}"
         )
     return optimizer
 
 
-def setup_ema(training_settings: dict, model) -> Optional[ExponentialMovingAverage]:
+def setup_ema(training_settings: TrainingSettings, model) -> Optional[ExponentialMovingAverage]:
     ema: Optional[ExponentialMovingAverage] = None
-    if training_settings["ema"]:
+    if training_settings.ema:
         ema = ExponentialMovingAverage(
-            model.parameters(), decay=training_settings["ema_decay"]
+            model.parameters(), decay=training_settings.ema_decay
         )
     return ema
 
 
 def setup_checkpoint(
-    checkpoints_dir: str,
+    checkpoints_dir: Path,
     tag: str,
-    misc_settings: dict,
-    training_settings: dict,
+    misc_settings: MiscSettings,
+    training_settings: TrainingSettings,
     restart: bool,
     convergence: bool,
     model,
@@ -183,9 +194,10 @@ def setup_checkpoint(
         checkpoint_handler = tools.CheckpointHandler(
             directory=checkpoints_dir,
             tag=tag,
-            keep=misc_settings["keep_checkpoints"],
-            swa_start=training_settings.get("start_swa"),
+            keep=misc_settings.keep_checkpoints,
+            swa_start=training_settings.start_swa
         )
+        # Q: what does it mean if start_swa is None?
         if restart:
             epoch = checkpoint_handler.load_latest(
                 state=tools.CheckpointState(
@@ -194,19 +206,19 @@ def setup_checkpoint(
                     training_setup["lr_scheduler"],
                 ),
                 swa=False,
-                device=misc_settings["device"],
+                device=torch.device(misc_settings.device),
             )
         else:
             epoch = 0
     else:
         checkpoint_handler = tools.CheckpointHandler(
-            directory=checkpoints_dir + "/convergence",
+            directory=(checkpoints_dir / "convergence").as_posix(),
             tag=tag + "_convergence",
-            keep=misc_settings["keep_checkpoints"],
-            swa_start=training_settings.get("start_swa"),
+            keep=misc_settings.keep_checkpoints,
+            swa_start=training_settings.start_swa,
         )
 
-        if restart and os.path.exists(checkpoints_dir + "/convergence"):
+        if restart and (checkpoints_dir / "convergence").is_dir():
             epoch = checkpoint_handler.load_latest(
                 state=tools.CheckpointState(
                     model,
@@ -214,7 +226,7 @@ def setup_checkpoint(
                     training_setup["lr_scheduler"],
                 ),
                 swa=False,
-                device=misc_settings["device"],
+                device=torch.device(misc_settings.device),
             )
         else:
             epoch = 0
@@ -223,13 +235,13 @@ def setup_checkpoint(
 
 def create_standard_optimizer(
         model: torch.nn.Module,
-        training_settings: dict,
+        training_settings: TrainingSettings,
 ):
     param_options = dict(
         params=model.parameters(),
-        lr=training_settings["lr"],
-        weight_decay=training_settings["weight_decay"],
-        amsgrad=training_settings["amsgrad"],
+        lr=training_settings.lr,
+        weight_decay=training_settings.weight_decay,
+        amsgrad=training_settings.amsgrad,
     )
 
     optimizer = setup_optimizer(
@@ -243,7 +255,7 @@ def create_standard_optimizer(
 
 def create_mace_optimizer(
     model: modules.MACE,
-    training_settings: dict,
+    training_settings: TrainingSettings,
 ) -> dict:
 
     decay_interactions = {}
@@ -264,7 +276,7 @@ def create_mace_optimizer(
             {
                 "name": "interactions_decay",
                 "params": list(decay_interactions.values()),
-                "weight_decay": training_settings["weight_decay"],
+                "weight_decay": training_settings.weight_decay,
             },
             {
                 "name": "interactions_no_decay",
@@ -274,7 +286,7 @@ def create_mace_optimizer(
             {
                 "name": "products",
                 "params": model.products.parameters(),
-                "weight_decay": training_settings["weight_decay"],
+                "weight_decay": training_settings.weight_decay,
             },
             {
                 "name": "readouts",
@@ -282,8 +294,8 @@ def create_mace_optimizer(
                 "weight_decay": 0.0,
             },
         ],
-        lr=training_settings["lr"],
-        amsgrad=training_settings["amsgrad"],
+        lr=training_settings.lr,
+        amsgrad=training_settings.amsgrad,
     )
 
     optimizer = setup_optimizer(
@@ -298,7 +310,7 @@ def create_mace_optimizer(
 def reset_model_optimizer(
     model: torch.nn.Module,
     training_setup: dict,
-    training_settings: dict,
+    training_settings: TrainingSettings,
     model_choice: str,
 ):
     if model_choice.lower() == "mace":

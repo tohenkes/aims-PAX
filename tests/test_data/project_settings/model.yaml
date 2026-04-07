@@ -1,0 +1,6 @@
+GENERAL:
+  model_choice: mace
+  name_exp: "exp"
+
+ARCHITECTURE:
+  model: MACE

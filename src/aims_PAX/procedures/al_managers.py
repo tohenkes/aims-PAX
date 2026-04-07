@@ -9,6 +9,8 @@ import numpy as np
 import threading
 import queue
 import shutil
+
+from ase.md.md import MolecularDynamics
 from mace import tools
 from .preparation import (
     ALCalculatorMLFF,
@@ -372,7 +374,7 @@ class TrainingOrchestrator:
             session.training_setups[tag] = reset_model_optimizer(
                 model,
                 training_setup, 
-                self.config.model_settings["TRAINING"],
+                self.config.model_settings.TRAINING,
                 model_choice=self.config.model_choice,
             )
             self.state_manager.ensemble_reset_opt[tag] = False
@@ -380,7 +382,7 @@ class TrainingOrchestrator:
 
         if logger is None:
             logger = tools.MetricsLogger(
-                directory=self.config.model_settings["GENERAL"]["loss_dir"],
+                directory=self.config.model_settings.GENERAL.loss_dir.as_posix(),
                 tag=tag + "_train",
             )
 
@@ -455,7 +457,7 @@ class TrainingOrchestrator:
             ensemble=self.ensemble_manager.ensemble,
             training_setups=session.training_setups,
             logger=logger,
-            log_errors=self.config.model_settings["MISC"]["error_table"],
+            log_errors=self.config.model_settings.MISC.error_table,
             epoch=self._get_validation_epoch(session, trajectory_idx),
             valid_loaders=self.valid_loader,
             multihead=self.config.use_multihead_model,
@@ -997,10 +999,10 @@ class ALTrainingManager:
         save_models(
             ensemble=self.ensemble_manager.ensemble,
             training_setups=session.training_setups,
-            model_dir=self.config.model_settings["GENERAL"]["model_dir"],
+            model_dir=self.config.model_settings.GENERAL.model_dir,
             current_epoch=session.current_epoch,
             convert_cueq_to_e3nn=self.config.enable_cueq_train,
-            model_settings=self.config.model_settings["ARCHITECTURE"],
+            model_settings=self.config.model_settings.ARCHITECTURE,
             model_choice=self.config.model_choice
         )
         # save model(s) and datasets in final results directory
@@ -1017,7 +1019,7 @@ class ALTrainingManager:
             model_dir=results_dir,
             current_epoch=self.state_manager.total_epoch,
             convert_cueq_to_e3nn=self.config.enable_cueq_train,
-            model_settings=self.config.model_settings["ARCHITECTURE"],
+            model_settings=self.config.model_settings.ARCHITECTURE,
             model_choice=self.config.model_choice
         )
 
@@ -1167,12 +1169,12 @@ class ALDFTManager:
             path_to_control (str): Path to the AIMS control file.
             species_dir (str): Path to the species directory of AIMS.
         """
-        if isinstance(control_source, str):
+        if isinstance(control_source, (str, Path)):
             aims_settings = self.control_parser(control_source)
             aims_settings["compute_forces"] = True
             aims_settings["species_dir"] = self.config.species_dir
             aims_settings["postprocess_anyway"] = (
-                True  # this is necesssary to check for convergence in ASI
+                True  # this is necessary to check for convergence in ASI
             )
             self.aims_settings = {
                 idx: aims_settings for idx in range(
@@ -1186,7 +1188,7 @@ class ALDFTManager:
                 aims_settings["compute_forces"] = True
                 aims_settings["species_dir"] = self.config.species_dir
                 aims_settings["postprocess_anyway"] = (
-                    True  # this is necesssary to check for convergence in ASI
+                    True  # this is necessary to check for convergence in ASI
                 )
                 if log:
                     logging.info(
@@ -1387,23 +1389,12 @@ class ALReferenceManagerPARSL:
             handle_parsl_logger(log_dir=parsl_log_dir / "parsl_al.log")
             parsl.load(self.parsl_config)
 
-        executor = self.config.cluster_settings.get("executor", "workqueue")
+        executor = self.config.cluster_settings.executor
         if executor == "workqueue":
-            cores_per_job = self.config.cluster_settings.get(
-                "cores_per_job", None
-            )
+            cores_per_job = self.config.cluster_settings.cores_per_job
             if cores_per_job is not None:
-                memory_per_job = self.config.cluster_settings.get(
-                    "memory_per_job", None
-                )
-                if memory_per_job is None:
-                    raise ValueError(
-                        "memory_per_job must be set in CLUSTER settings "
-                        "when cores_per_job is set."
-                    )
-                disk_per_job = self.config.cluster_settings.get(
-                    "disk_per_job", 1000
-                )
+                memory_per_job = self.config.cluster_settings.memory_per_job
+                disk_per_job = self.config.cluster_settings.disk_per_job
                 self.workqueue_resource_spec = {
                     "cores": cores_per_job,
                     "memory": memory_per_job,
@@ -1566,13 +1557,9 @@ class ALDFTReferenceManagerPARSL(ALReferenceManagerPARSL):
             "properties": self.config.properties,
         }
 
-        if self.config.cluster_settings["executor"] == "mpi":
-            num_nodes = self.config.cluster_settings["parsl_options"].get(
-                "nodes_per_block", 1
-            )
-            rank_per_nodes = self.config.cluster_settings.get(
-                "tasks_per_node", 1
-            )
+        if self.config.cluster_settings.executor == "mpi":
+            num_nodes = self.config.cluster_settings.parsl_options.nodes_per_block
+            rank_per_nodes = self.config.cluster_settings.tasks_per_node
             num_ranks = num_nodes * rank_per_nodes
             self.parsl_resource_specification = {
                 "num_nodes": num_nodes,
@@ -1595,7 +1582,7 @@ class ALDFTReferenceManagerPARSL(ALReferenceManagerPARSL):
         """
         Parses the AIMS control file to get the settings.
         """
-        if isinstance(control_source, str):
+        if isinstance(control_source, (str, Path)):
             aims_settings = self.control_parser(control_source)
             aims_settings["compute_forces"] = True
             aims_settings["species_dir"] = self.config.species_dir
@@ -1768,7 +1755,7 @@ class ALRunningManager:
         self,
         idx: int,
         md_manager: ALMD,
-        md_drivers: dict,
+        md_drivers: dict[int, MolecularDynamics],
         restart_manager: ALRestart,
         trajectories: dict,
     ):
