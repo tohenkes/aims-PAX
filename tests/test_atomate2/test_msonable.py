@@ -8,8 +8,8 @@ from ase import Atoms
 from ase.io import read
 from mace.calculators import MACECalculator
 
-from mace.modules.models import MACE
-from aims_PAX.atomate2.msonable.mace import MSONScaleShiftMACE
+from mace.modules.models import MACE, ScaleShiftMACE
+from aims_PAX.atomate2.msonable.serialization import register
 
 
 def test_msonable_mace(clean_dir, si, data_dir):
@@ -35,9 +35,10 @@ def test_msonable_mace(clean_dir, si, data_dir):
     atoms = read(si)
     data_orig = get_data_from_model(original_model, atoms)
     # Make the model serializable, then serialize and deserialize it
-    msonable_model = MSONScaleShiftMACE.from_parent(original_model)
-    model_dict = MSONScaleShiftMACE.as_dict(msonable_model)
-    deserialized_model = MSONScaleShiftMACE.from_dict(model_dict)
+    msonable_cls = register(ScaleShiftMACE)
+    msonable_model = msonable_cls.from_parent(original_model)
+    model_dict = msonable_model.as_dict()
+    deserialized_model = msonable_cls.from_dict(model_dict)
     deserialized_model.to("cpu")
 
     # Get energy and forces from the deserialized model
