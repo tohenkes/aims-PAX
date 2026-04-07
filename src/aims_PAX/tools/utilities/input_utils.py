@@ -53,7 +53,7 @@ def read_input_files(
 
 
 def read_geometry(
-    geometry_source: Union[str, Path, dict[int, str]],
+    geometry_source: Union[str, Path, dict[int, str | Path]],
     log: bool = False
 ) -> dict[int, ase.Atoms]:
     """
