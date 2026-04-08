@@ -30,20 +30,12 @@ ACTIVE_LEARNING:
 
 
 MD:
-  1:
-    stat_ensemble: NVT
-    thermostat: Langevin
-    temperature: 500
-    timestep: 1.
-    friction: 0.001
-    seed: 42
-  2:
-    stat_ensemble: NVT
-    thermostat: Langevin
-    temperature: 700
-    timestep: 1.
-    friction: 0.001
-    seed: 42
+  stat_ensemble: NVT
+  thermostat: Langevin
+  temperature: 500
+  timestep: 1.
+  friction: 0.001
+  seed: 42
 
 MISC:
   create_restart: True
