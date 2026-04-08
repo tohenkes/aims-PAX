@@ -8,6 +8,8 @@ from typing import Any
 from monty.json import MSONable
 
 from aims_PAX.atomate2.atomic_energies import AtomicEnergies
+from aims_PAX.atomate2.msonable.checkpoint_handler import MSONableCheckpointHandler
+from aims_PAX.atomate2.msonable.ema import MSONableEMA
 from aims_PAX.atomate2.msonable.serialization import MSONableModel, wrap
 from aims_PAX.settings import ModelSettings
 from aims_PAX.tools.model_tools.setup_MACE import setup_mace
@@ -62,7 +64,13 @@ class Ensemble(MSONable):
                 checkpoints_dir=model_settings.GENERAL.checkpoints_dir.as_posix()
             )
             # make some of the training setup parameters serializable
-            for key in ["lr_scheduler", "ema", "loss_fn", "checkpoint_handler", "optimizer"]:
+            if "ema" in training_setups[tag]:
+                training_setups[tag]["ema"] = MSONableEMA.from_parent(training_setups[tag]["ema"])
+            if "checkpoint_handler" in training_setups[tag]:
+                training_setups[tag]["checkpoint_handler"] = (
+                    MSONableCheckpointHandler.from_parent(training_setups[tag]["checkpoint_handler"]))
+
+            for key in ["lr_scheduler", "loss_fn", "optimizer"]:
                 if key in training_setups[tag]:
                     training_setups[tag][key] = wrap(training_setups[tag][key])
 
