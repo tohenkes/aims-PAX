@@ -8,13 +8,14 @@ from pathlib import Path
 from pickle import UnpicklingError
 
 import numpy as np
-from jobflow import Maker, job, Flow
+from jobflow import Maker, job, Flow, Response
 from pymatgen.core import Structure, Molecule
-from pymatgen.io.ase import MSONAtoms
+from pymatgen.io.ase import MSONAtoms, AseAtomsAdaptor
 
+from aims_PAX.atomate2 import AllowedMDMakers
 from aims_PAX.atomate2.atomic_energies import AtomicEnergies
 from aims_PAX.atomate2.msonable.ensemble import Ensemble
-from aims_PAX.atomate2.utils import get_model_dependent_inputs
+from aims_PAX.atomate2.utils import get_model_dependent_inputs, get_idg_makers_from_settings
 from aims_PAX.settings import ModelSettings
 from aims_PAX.settings.project import IDGSettings, MiscSettings, MDSettings
 from aims_PAX.tools.utilities.input_utils import read_geometry
@@ -86,6 +87,23 @@ class InitialDatasetGenerator(Maker):
         tags = list(seeds_tags_dict.keys())
         logger.debug(f"Using seeds: {seeds_tags_dict}")
 
+        # create MD and reference Makers (to create jobs later on)
+
+        # No CuEQ training during initial dataset generation
+        # (because avg_num_neighbors, mean, std, atomic energies etc
+        # are changing all the time; not possible to modify with CuEQ)
+        model_settings = {
+            "device": self.model_settings.MISC.device,
+            "default_dtype": self.model_settings.GENERAL.default_dtype,
+            "enable_cueq_train": False
+        }
+
+        md_makers, reference_maker = get_idg_makers_from_settings(
+            idg_settings=self.settings,
+            md_settings=self.md_settings,
+            misc_settings=self.misc_settings,
+            model_settings=model_settings)
+
         # create the initial job (create / read in trajectories / energies / etc)
         if restart:
             prepare_job = self.restart(
@@ -94,30 +112,13 @@ class InitialDatasetGenerator(Maker):
         else:
             prepare_job = self.run_from_scratch(tags=tags)
 
-        return Flow(prepare_job)
+        md_makers[1] = md_makers[1].update_kwargs(
+            {"n_steps": 100}
+        )
 
-
-        # these are the settings for the foundational model
-        #
-        # No CuEQ training during initial dataset generation
-        # (because avg_num_neighbors, mean, std, atomic energies etc
-        # are changing all the time; not possible to modify with CuEQ)
-        # model_settings = {
-        #     "device": self.model_settings.MISC.device,
-        #     "default_dtype": self.model_settings.GENERAL.default_dtype,
-        #     "enable_cueq_train": False
-        # }
-        # md_makers, reference_maker = get_idg_makers_from_settings(
-        #     idg_settings=self.settings,
-        #     md_settings=self.md_settings,
-        #     misc_settings=self.misc_settings,
-        #     model_settings=model_settings)
-        #
-        # md_makers[2] = md_makers[2].update_kwargs(
-        #     {"n_steps": 100}
-        # )
-        #
-        # return md_makers[2].make(self.structure)
+        md_job = self.create_md_job(md_makers[1], prepare_job.output.trajectories)
+        dummy_job = self.dummy_job(md_job.output)
+        return Flow([prepare_job, md_job, dummy_job])
 
 
     def get_logger(self):
@@ -233,6 +234,24 @@ class InitialDatasetGenerator(Maker):
     @job
     def step(self):
         """Do one step of the initial dataset creation: MD -> DFT -> training ensemble of models"""
+
+    @job
+    def create_md_job(self, maker: AllowedMDMakers, trajectories: dict[str, MSONAtoms]):
+        """Create an MD job for the initial dataset generation."""
+        # We will use the first structure in the trajectories for IDG.
+        # If I have several structures, what should happen then?
+
+        atoms = trajectories['0']
+        struct = AseAtomsAdaptor.get_structure(atoms) if all(atoms.get_pbc()) else AseAtomsAdaptor.get_molecule(atoms)
+        md_job = maker.make(struct)
+        return Response(replace=md_job)
+
+    @job
+    def dummy_job(self, output):
+        print(len(output.output.ionic_steps))
+        return {}
+
+
 
     def create_reference_jobs(self, structures: list[Structure | Molecule]):
         """Create a set of reference (DFT/reference model) jobs for the initial dataset generation."""
