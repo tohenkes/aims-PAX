@@ -8,6 +8,7 @@ import torch.serialization
 from pathlib import Path
 from typing import Type
 
+import torch_ema
 from monty.json import MSONable
 
 # e3nn <=0.5.x stores constants.pt with slice objects;
@@ -25,14 +26,14 @@ class MSONableModel(MSONable):
 
 
 # Tensor serialization and deserialization
-def _serialize_value(v):
+def serialize_value(v):
     """Convert non-JSON-serializable types to serializable ones."""
     if isinstance(v, torch.Tensor):
         return {"@tensor": v.detach().cpu().tolist()}
     return v
 
 
-def _deserialize_value(v):
+def deserialize_value(v):
     """Reconstruct types from their serialized form."""
     if isinstance(v, dict) and "@tensor" in v:
         return torch.tensor(v["@tensor"])
@@ -83,10 +84,19 @@ def _msonable_torch_stateless(torch_cls: Type) -> Type[MSONableModel]:
         _torch_cls = torch_cls
 
         def as_dict(self) -> dict:
+
+            # check if there is a custom serialization override
+            if self._torch_cls in _OVERRIDES:
+                as_dict_fn, _ = _OVERRIDES[self._torch_cls]
+                return {"@module": self.__class__.__module__,
+                        "@class": self.__class__.__name__,
+                        **as_dict_fn(self)}
+
+            # default: params with defaults only
             # Introspect __init__ params and pull their values from the instance
             sig = inspect.signature(self._torch_cls.__init__)
             params = {
-                name: _serialize_value(getattr(self, name, param.default))
+                name: serialize_value(getattr(self, name, param.default))
                 for name, param in sig.parameters.items()
                 if name != "self" and param.default is not inspect.Parameter.empty
             }
@@ -100,8 +110,16 @@ def _msonable_torch_stateless(torch_cls: Type) -> Type[MSONableModel]:
 
         @classmethod
         def from_dict(cls, d: dict):
+
+            # check if there is a custom deserialization override
+            if cls._torch_cls in _OVERRIDES:
+                _, from_dict_fn = _OVERRIDES[cls._torch_cls]
+                excluded = {"@module", "@class"}
+                kwargs = {k: deserialize_value(v) for k, v in d.items() if k not in excluded}
+                return cls.from_parent(from_dict_fn(cls._torch_cls, kwargs))
+
             excluded = {"@module", "@class", "torch_cls_module", "torch_cls_name"}
-            kwargs = {k: _deserialize_value(v) for k, v in d.items() if k not in excluded}
+            kwargs = {k: deserialize_value(v) for k, v in d.items() if k not in excluded}
             return cls.from_parent(cls._torch_cls(**kwargs))
 
     MSONableTorch.__name__ = f"MSONable{torch_cls.__name__}"
@@ -127,6 +145,8 @@ def _is_stateless(instance) -> bool:
 # Cache of MSONableTorch classes (to create them once in lazy manner)
 _REGISTRY: dict[Type, Type[MSONableModel]] = {}
 _REVERSE_REGISTRY: dict[Type[MSONableModel], Type] = {}  # MSONable cls -> original torch cls
+# Registry for custom serialization overrides: torch_cls -> (as_dict_fn, from_dict_fn)
+_OVERRIDES: dict[Type, tuple] = {}
 
 
 def register(torch_cls: Type, stateless: bool = False) -> Type[MSONableModel]:
@@ -149,6 +169,11 @@ def register(torch_cls: Type, stateless: bool = False) -> Type[MSONableModel]:
         _REVERSE_REGISTRY[msonable_cls] = torch_cls
 
     return _REGISTRY[torch_cls]
+
+
+def register_override(torch_cls: Type, as_dict_fn, from_dict_fn):
+    """Register custom serialization for classes that need special handling."""
+    _OVERRIDES[torch_cls] = (as_dict_fn, from_dict_fn)
 
 
 def wrap(instance: torch.nn.Module) -> MSONableModel:
