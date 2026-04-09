@@ -20,7 +20,7 @@ from aims_PAX.settings import ModelSettings
 from aims_PAX.settings.project import IDGSettings, MiscSettings, MDSettings
 from aims_PAX.tools.utilities.input_utils import read_geometry
 from aims_PAX.tools.utilities.utilities import setup_logger, log_yaml_block, get_seeds, create_seeds_tags_dict, \
-    get_atomic_energies_from_pt
+    get_atomic_energies_from_pt, create_keyspec
 
 
 @dataclass
@@ -98,6 +98,8 @@ class InitialDatasetGenerator(Maker):
             "enable_cueq_train": False
         }
 
+        # there can be several MD settings (hence, several MD makers)
+        # and several control.in files. How to deal with that here?
         md_makers, reference_maker = get_idg_makers_from_settings(
             idg_settings=self.settings,
             md_settings=self.md_settings,
@@ -116,7 +118,7 @@ class InitialDatasetGenerator(Maker):
             {"n_steps": 100}
         )
 
-        md_job = self.create_md_job(md_makers[1], prepare_job.output.trajectories)
+        md_job = self.create_md_job(md_makers, prepare_job.output.trajectories)
         dummy_job = self.dummy_job(md_job.output)
         return Flow([prepare_job, md_job, dummy_job])
 
@@ -133,7 +135,7 @@ class InitialDatasetGenerator(Maker):
         )
 
 
-    @job
+    @job(name="prepare")
     def restart(self, restart_path: Path, seeds_tags_dict: dict[str, int]):
         """Restart the initial dataset generation from a checkpoint."""
         logger = self.get_logger()
@@ -177,7 +179,7 @@ class InitialDatasetGenerator(Maker):
             "atomic_energies": ensemble_atomic_energies,
         }
 
-    @job
+    @job(name="prepare")
     def run_from_scratch(self, tags: list[str]):
         """
         Run the job from scratch based on the provided tags.
@@ -208,12 +210,23 @@ class InitialDatasetGenerator(Maker):
         else:
             logger.info("Using specified atomic energies.")
             ensemble_atomic_energies = AtomicEnergies.from_e(tags, default_atomic_energies)
-
+        key_specification = create_keyspec(
+            energy_key=self.misc_settings.energy_key,
+            forces_key=self.misc_settings.forces_key,
+            stress_key=self.misc_settings.stress_key,
+            dipole_key=self.misc_settings.dipole_key,
+            polarizability_key=self.misc_settings.polarizability_key,
+            head_key=self.misc_settings.head_key,
+            charges_key=self.misc_settings.charges_key,
+            total_charge_key=self.misc_settings.total_charge_key,
+            total_spin_key=self.misc_settings.total_spin_key,
+        )
         # get ensemble dicts
         ensemble = Ensemble.from_scratch(tags,
                                          self.model_settings,
                                          ensemble_atomic_energies,
-                                         model_inputs)
+                                         model_inputs,
+                                         key_specification)
 
         collect_losses = {
             "epoch": [],
@@ -230,20 +243,18 @@ class InitialDatasetGenerator(Maker):
             "losses": collect_losses
         }
 
-
     @job
     def step(self):
         """Do one step of the initial dataset creation: MD -> DFT -> training ensemble of models"""
 
-    @job
-    def create_md_job(self, maker: AllowedMDMakers, trajectories: dict[str, MSONAtoms]):
+    @job(name="md")
+    def create_md_job(self, makers: dict[str, AllowedMDMakers], trajectories: dict[str, MSONAtoms]):
         """Create an MD job for the initial dataset generation."""
         # We will use the first structure in the trajectories for IDG.
         # If I have several structures, what should happen then?
-
         atoms = trajectories['0']
         struct = AseAtomsAdaptor.get_structure(atoms) if all(atoms.get_pbc()) else AseAtomsAdaptor.get_molecule(atoms)
-        md_job = maker.make(struct)
+        md_job = makers['1'].make(struct)
         return Response(replace=md_job)
 
     @job
