@@ -7,6 +7,7 @@ import tempfile
 import pytest
 from pathlib import Path
 
+import yaml
 from pyfhiaims.geometry import AimsGeometry
 from pymatgen.core import Molecule
 
@@ -24,6 +25,10 @@ def species_dir(data_dir) -> Path:
 @pytest.fixture(scope="session")
 def control_molecule(data_dir) -> Path:
     return data_dir / "control_files" / "molecule.in"
+
+@pytest.fixture(scope="session")
+def control_periodic(data_dir) -> Path:
+    return data_dir / "control_files" / "periodic.in"
 
 @pytest.fixture(scope="session")
 def aspirin(data_dir) -> Path:

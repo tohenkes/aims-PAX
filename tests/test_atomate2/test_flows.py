@@ -8,11 +8,11 @@ from aims_PAX.settings import ModelSettings
 from aims_PAX.atomate2.flows.idg import InitialDatasetGenerator
 
 
-def test_idg_maker(data_dir, clean_dir, project_settings, control_molecule, si):
+def test_idg_maker(data_dir, clean_dir, project_settings, control_periodic, si):
     """
     Ensures that the InitialDatasetGenerator maker job can be run.
     """
-    settings = project_settings(control_molecule, si, clean_dir)
+    settings = project_settings(control_periodic, si, clean_dir)
     model_settings_file = data_dir / "project_settings" / "model.yaml"
     model_settings = ModelSettings.from_file(model_settings_file)
 
