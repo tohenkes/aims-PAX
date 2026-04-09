@@ -1,7 +1,10 @@
 """
 This module contains an MSONable version of mace CheckpointHandler.
 """
+import importlib
+
 from mace.tools import CheckpointIO, CheckpointHandler
+from monty.serialization import MontyDecoder
 
 from .serialization import register, register_override, wrap
 
@@ -26,17 +29,17 @@ def _checkpoint_handler_as_dict(instance) -> dict:
     }
 
 def _checkpoint_handler_from_dict(torch_cls, d: dict):
-    from monty.serialization import MontyDecoder
     handler = torch_cls.__new__(torch_cls)
     handler.io = MontyDecoder().process_decoded(d["io"])
     # Reconstruct builder from its fully qualified class name
     module_name, cls_name = d["builder_class"].rsplit(".", 1)
-    import importlib
     builder_cls = getattr(importlib.import_module(module_name), cls_name)
     handler.builder = builder_cls()
     return handler
 
 
+# as Checkpoint Handler has positional arguments at initialization time, we need
+# serialization functions override for it
 register_override(CheckpointIO,      _checkpoint_io_as_dict,      _checkpoint_io_from_dict)
 register_override(CheckpointHandler, _checkpoint_handler_as_dict, _checkpoint_handler_from_dict)
 

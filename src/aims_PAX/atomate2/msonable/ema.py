@@ -26,5 +26,7 @@ def _ema_from_dict(torch_cls, d: dict):
     return ema
 
 
+# as EMA has positional arguments at initialization time, we need
+# serialization functions override for EMA
 register_override(ExponentialMovingAverage, _ema_as_dict, _ema_from_dict)
 MSONableEMA = register(ExponentialMovingAverage, stateless=True)
