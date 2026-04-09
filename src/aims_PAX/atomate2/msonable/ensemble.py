@@ -5,15 +5,19 @@ This module contains an MSONable version of the Ensemble model and Ensemble.
 from dataclasses import dataclass
 from typing import Any
 
+from mace.tools import AtomicNumberTable
 from monty.json import MSONable
+from pymatgen.io.ase import MSONAtoms
 
 from aims_PAX.atomate2.atomic_energies import AtomicEnergies
 from aims_PAX.atomate2.msonable.checkpoint_handler import MSONableCheckpointHandler
 from aims_PAX.atomate2.msonable.ema import MSONableEMA
+from aims_PAX.atomate2.msonable.model import MaceModel
 from aims_PAX.atomate2.msonable.serialization import MSONableModel, wrap
 from aims_PAX.settings import ModelSettings
 from aims_PAX.tools.model_tools.setup_MACE import setup_mace
 from aims_PAX.tools.model_tools.training_tools import setup_model_training
+from aims_PAX.tools.utilities.data_handling import KeySpecification
 
 
 @dataclass
@@ -22,13 +26,15 @@ class Ensemble(MSONable):
     training_setups: dict[str, dict[str, Any]]
     ase_sets: dict[str, dict[str, list[Any]]]
     model_sets: dict[str, dict[str, Any]]
+    key_specification: KeySpecification
 
     @classmethod
     def from_scratch(cls,
                      tags: list[str],
                      model_settings: ModelSettings,
                      atomic_energies: AtomicEnergies,
-                     model_inputs: dict[str, Any]) -> "Ensemble":
+                     model_inputs: dict[str, Any],
+                     key_specification: KeySpecification) -> "Ensemble":
         """
         Generate an ensemble from model settings and tags list.
 
@@ -37,10 +43,12 @@ class Ensemble(MSONable):
             model_settings: a ModelSettings object.
             atomic_energies: atomic energies.
             model_inputs: model-dependent inputs (z_table)
+            key_specification: a KeySpecification object.
 
         Returns:
             an Ensemble object.
         """
+        # can we put calculate model inputs here?
         ensemble = {}
         training_setups = {}
         ase_sets = {}
@@ -50,10 +58,15 @@ class Ensemble(MSONable):
         for tag in tags:
             if model_choice == "mace":
                 model = setup_mace(model_settings, model_inputs["z_table"], atomic_energies.get(tag))
-                ensemble[tag] = wrap(model)
+                ensemble[tag] = MaceModel.from_parent(
+                    model,
+                    settings=model_settings,
+                    zs=model_inputs["z_table"].zs,
+                    atomic_energies=atomic_energies.get(tag)
+                )
             else:
                 raise NotImplementedError(f"{model_choice} is not supported yet. "
-                                          f"Supported models are: {['mace']}")
+                                          f"Supported models are: ['mace']")
             # TODO: checkpoints_dir is unneeded as model settings is already there
             training_setups[tag] = setup_model_training(
                 settings=model_settings,
@@ -76,12 +89,13 @@ class Ensemble(MSONable):
 
             ase_sets[tag] = {"train": [], "valid": []}
             # TODO: add multihead model support
-            # Why there are ase_sets and model_sets separately?
             model_sets[tag] = {"train": [], "valid": {"Default": []}}
         return cls(models=ensemble,
                    training_setups=training_setups,
                    ase_sets=ase_sets,
-                   model_sets=model_sets)
+                   model_sets=model_sets,
+                   key_specification=key_specification,
+                   zs=model_inputs["z_table"].zs)
 
     @classmethod
     def from_restart_data(cls):
@@ -93,3 +107,10 @@ class Ensemble(MSONable):
     def get_training_setup(self, tag: str) -> dict[str, Any]:
         return self.training_setups[tag]
 
+    @property
+    def z_table(self):
+        return AtomicNumberTable(self.zs)
+
+    def update_datasets(self, tag, train_set: list[MSONAtoms], test_set: list[MSONAtoms]):
+        """Updates datasets for the training and testing of the model.
+        """
