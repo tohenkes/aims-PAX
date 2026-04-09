@@ -9,6 +9,7 @@ from pathlib import Path
 from typing import Type
 
 import torch_ema
+from mace.modules import MACE
 from monty.json import MSONable
 
 # e3nn <=0.5.x stores constants.pt with slice objects;
@@ -181,3 +182,7 @@ def wrap(instance: torch.nn.Module) -> MSONableModel:
     torch_cls = type(instance)
     msonable_cls = register(torch_cls, _is_stateless(instance))
     return msonable_cls.from_parent(instance)
+
+
+# Specific classes
+MSONableMACE = register(MACE)
