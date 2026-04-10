@@ -206,10 +206,16 @@ class InitialDatasetGenerator(Maker):
         default_atomic_energies = self.model_settings.ARCHITECTURE.atomic_energies
         if default_atomic_energies is None:
             logger.info("No atomic energies specified. Fitting to training data.")
-            ensemble_atomic_energies = AtomicEnergies.from_z(tags, model_inputs["z"], need_updating=True)
+            ensemble_atomic_energies = {
+                tag: AtomicEnergies.from_z(model_inputs["z"], need_updating=True)
+                for tag in tags
+            }
         else:
             logger.info("Using specified atomic energies.")
-            ensemble_atomic_energies = AtomicEnergies.from_e(tags, default_atomic_energies)
+            ensemble_atomic_energies = {
+                tag: AtomicEnergies.from_e(default_atomic_energies)
+                for tag in tags
+            }
         key_specification = create_keyspec(
             energy_key=self.misc_settings.energy_key,
             forces_key=self.misc_settings.forces_key,
