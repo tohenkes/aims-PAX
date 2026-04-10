@@ -5,15 +5,15 @@ This module contains an MSONable version of the Ensemble model and Ensemble.
 from dataclasses import dataclass
 from typing import Any
 
-from mace.tools import AtomicNumberTable
+from ase import Atoms
 from monty.json import MSONable
 from pymatgen.io.ase import MSONAtoms
 
 from aims_PAX.atomate2.atomic_energies import AtomicEnergies
 from aims_PAX.atomate2.msonable.checkpoint_handler import MSONableCheckpointHandler
 from aims_PAX.atomate2.msonable.ema import MSONableEMA
-from aims_PAX.atomate2.msonable.model import MaceModel
-from aims_PAX.atomate2.msonable.serialization import MSONableModel, wrap
+from aims_PAX.atomate2.msonable.model import MaceModelTrainer, ModelTrainer
+from aims_PAX.atomate2.msonable.serialization import wrap
 from aims_PAX.settings import ModelSettings
 from aims_PAX.tools.model_tools.setup_MACE import setup_mace
 from aims_PAX.tools.model_tools.training_tools import setup_model_training
@@ -22,17 +22,14 @@ from aims_PAX.tools.utilities.data_handling import KeySpecification
 
 @dataclass
 class Ensemble(MSONable):
-    models: dict[str, MSONableModel]
+    models: dict[str, ModelTrainer]
     training_setups: dict[str, dict[str, Any]]
-    ase_sets: dict[str, dict[str, list[Any]]]
-    model_sets: dict[str, dict[str, Any]]
-    key_specification: KeySpecification
 
     @classmethod
     def from_scratch(cls,
                      tags: list[str],
                      model_settings: ModelSettings,
-                     atomic_energies: AtomicEnergies,
+                     atomic_energies: dict[str, AtomicEnergies],
                      model_inputs: dict[str, Any],
                      key_specification: KeySpecification) -> "Ensemble":
         """
@@ -51,23 +48,29 @@ class Ensemble(MSONable):
         # can we put calculate model inputs here?
         ensemble = {}
         training_setups = {}
-        ase_sets = {}
-        model_sets = {}
 
         model_choice = model_settings.GENERAL.model_choice.lower()
         for tag in tags:
             if model_choice == "mace":
-                model = setup_mace(model_settings, model_inputs["z_table"], atomic_energies.get(tag))
-                ensemble[tag] = MaceModel.from_parent(
+                model = setup_mace(
+                    model_settings,
+                    model_inputs["z_table"],
+                    atomic_energies[tag].as_dict()
+                )
+                ensemble[tag] = MaceModelTrainer.from_model(
                     model,
                     settings=model_settings,
+                    tag=tag,
+                    head="Default",
                     zs=model_inputs["z_table"].zs,
-                    atomic_energies=atomic_energies.get(tag)
+                    atomic_energies=atomic_energies[tag],
+                    key_specification=key_specification
                 )
             else:
                 raise NotImplementedError(f"{model_choice} is not supported yet. "
                                           f"Supported models are: ['mace']")
-            # TODO: checkpoints_dir is unneeded as model settings is already there
+            # leave training setups separate for now
+            # should it live on a Model?
             training_setups[tag] = setup_model_training(
                 settings=model_settings,
                 model=model,
@@ -87,30 +90,42 @@ class Ensemble(MSONable):
                 if key in training_setups[tag]:
                     training_setups[tag][key] = wrap(training_setups[tag][key])
 
-            ase_sets[tag] = {"train": [], "valid": []}
-            # TODO: add multihead model support
-            model_sets[tag] = {"train": [], "valid": {"Default": []}}
         return cls(models=ensemble,
-                   training_setups=training_setups,
-                   ase_sets=ase_sets,
-                   model_sets=model_sets,
-                   key_specification=key_specification,
-                   zs=model_inputs["z_table"].zs)
+                   training_setups=training_setups
+                  )
 
     @classmethod
     def from_restart_data(cls):
         raise NotImplementedError
 
-    def get_model(self, tag: str) -> MSONableModel:
+    def get_model(self, tag: str) -> ModelTrainer:
         return self.models[tag]
 
     def get_training_setup(self, tag: str) -> dict[str, Any]:
         return self.training_setups[tag]
 
-    @property
-    def z_table(self):
-        return AtomicNumberTable(self.zs)
-
-    def update_datasets(self, tag, train_set: list[MSONAtoms], test_set: list[MSONAtoms]):
-        """Updates datasets for the training and testing of the model.
+    def update_datasets(self,
+                        training_sets: dict[str, list[MSONAtoms | Atoms]]  = None,
+                        valid_sets: dict[str, list[MSONAtoms | Atoms]] = None
+                        ):
         """
+        Updates the datasets of the models in the ensemble.
+        Args:
+            training_sets: a dict of training sets, keyed by tag.
+            valid_sets: a dict of validation sets, keyed by tag.
+
+        """
+        training_sets = training_sets or {}
+        valid_sets = valid_sets or {}
+        # update models' datasets
+        for tag in self.models:
+            if tag in training_sets:
+                self.models[tag].update_train_set(training_sets[tag])
+            if tag in valid_sets:
+                self.models[tag].update_valid_set(valid_sets[tag])
+
+    def train(self):
+        """Train all models in the ensemble."""
+
+        for tag in self.models:
+            self.models[tag].train(self.training_setups[tag])
