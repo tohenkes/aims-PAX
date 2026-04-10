@@ -1,18 +1,24 @@
 """
 This module contains tests for the `msonable.Ensemble` module.
 """
+import logging
+
 from ase.io import read
 
 from aims_PAX.atomate2.atomic_energies import AtomicEnergies
 from aims_PAX.atomate2.msonable.ensemble import Ensemble
 from aims_PAX.atomate2.utils import get_model_dependent_inputs
-from aims_PAX.tools.model_tools import training_tools
 from aims_PAX.tools.utilities.input_utils import read_input_files, read_geometry
-from aims_PAX.tools.utilities.utilities import get_seeds, create_seeds_tags_dict, create_keyspec
+from aims_PAX.tools.utilities.utilities import get_seeds, create_seeds_tags_dict, create_keyspec, setup_logger
 
 
 def test_ensemble(data_dir, clean_dir, si):
     """Test the Ensemble class"""
+    setup_logger(
+        level=logging.INFO,
+        tag="test_ensemble",
+        directory=clean_dir.as_posix(),
+    )
     project_settings_file = data_dir / "project_settings" / "aimsPAX.yaml"
     model_settings_file = data_dir / "project_settings" / "model.yaml"
     # read config files
@@ -34,7 +40,7 @@ def test_ensemble(data_dir, clean_dir, si):
         model_settings=model_settings,
         dataset_dir=project_settings.MISC.dataset_dir,
     )
-    tags = list(seeds_tags_dict.keys())
+    tags: list[str] = list(seeds_tags_dict.keys())
     assert "exp-270" in tags
     # get trajectories and model-dependent inputs
     trajectories = read_geometry(si, log=True)
@@ -53,8 +59,12 @@ def test_ensemble(data_dir, clean_dir, si):
     )
     assert "z_table" in model_inputs
     # get atomic energies -- the last bit
-    atomic_energies = AtomicEnergies.from_z(tags, model_inputs["z"], need_updating=True)
-    assert atomic_energies.get(tags[0])[14] == 0.0
+    atomic_energies = {
+        tag: AtomicEnergies.from_z(model_inputs["z"], need_updating=True)
+        for tag in tags
+    }
+
+    assert atomic_energies[tags[0]].as_dict()[14] == 0.0
     # create the ensemble
     ensemble = Ensemble.from_scratch(
         tags,
@@ -66,13 +76,13 @@ def test_ensemble(data_dir, clean_dir, si):
     # get the datasets from files
     train_data_dir = data_dir / "datasets" / "initial" / "training"
     valid_data_dir = data_dir / "datasets" / "initial" / "validation"
-    # get ase sets from files
-    training_sets = {tag: read(train_data_dir / f"initial_train_set_{tag}.xyz",
+    # get ase sets from files (list constructors are used to avoid linter warnings)
+    training_sets = {tag: list(read(train_data_dir / f"initial_train_set_{tag}.xyz",
                                format="extxyz",
-                               index=":") for tag in tags}
-    valid_sets = {tag: read(valid_data_dir / f"initial_valid_set_{tag}.xyz",
+                               index=":")) for tag in tags}
+    valid_sets = {tag: list(read(valid_data_dir / f"initial_valid_set_{tag}.xyz",
                                format="extxyz",
-                               index=":") for tag in tags}
-
-
+                               index=":")) for tag in tags}
+    ensemble.update_datasets(training_sets, valid_sets)
+    ensemble.train()
 
