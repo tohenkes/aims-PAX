@@ -3,7 +3,7 @@ INITIAL_DATASET_GENERATION:
   desired_acc_scale_idg: 3.
   valid_ratio: 0.2
   n_points_per_sampling_step_idg: 5
-  valid_skip: 5
+  valid_skip:
   intermediate_epochs_idg: 5
   ensemble_size: 2
   skip_step_initial: 10
