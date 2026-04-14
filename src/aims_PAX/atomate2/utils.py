@@ -5,10 +5,11 @@ from pathlib import Path
 from typing import Any
 
 import numpy as np
-from ase import units
+from ase import units, Atoms
 from atomate2.ase.md import MDEnsemble
 from atomate2.forcefields import MLFF
 from pymatgen.io.aims.sets.core import StaticSetGenerator as AimsStaticSetGenerator
+from pymatgen.io.ase import MSONAtoms
 
 from aims_PAX.atomate2 import *
 from aims_PAX.atomate2.random import RandomState
@@ -119,3 +120,8 @@ def get_model_dependent_inputs(model_name: str, **kwargs) -> dict[str, Any]:
     model_inputs["z_table"] = create_ztable(model_inputs["z"])
     return model_inputs
 
+
+def to_msonatoms(a: Atoms):
+    """Convert Atoms instance to MSONAtoms in-place without losing all internal data"""
+    a.__class__ = MSONAtoms
+    return a
