@@ -6,6 +6,7 @@ from dataclasses import dataclass
 from typing import Any
 
 from ase import Atoms
+from mace import tools
 from monty.json import MSONable
 from pymatgen.io.ase import MSONAtoms
 
@@ -16,6 +17,7 @@ from aims_PAX.atomate2.msonable.model import MaceModelTrainer, ModelTrainer
 from aims_PAX.atomate2.msonable.serialization import wrap
 from aims_PAX.settings import ModelSettings
 from aims_PAX.tools.model_tools.setup_MACE import setup_mace
+from aims_PAX.tools.model_tools.train_epoch import validate_epoch_ensemble
 from aims_PAX.tools.model_tools.training_tools import setup_model_training
 from aims_PAX.tools.utilities.data_handling import KeySpecification
 
@@ -24,6 +26,8 @@ from aims_PAX.tools.utilities.data_handling import KeySpecification
 class Ensemble(MSONable):
     models: dict[str, ModelTrainer]
     training_setups: dict[str, dict[str, Any]]
+    log_settings: dict[str, Any]
+    epoch = 0
 
     @classmethod
     def from_scratch(cls,
@@ -49,7 +53,11 @@ class Ensemble(MSONable):
         ensemble = {}
         training_setups = {}
 
-        model_choice = model_settings.GENERAL.model_choice.lower()
+        model_choice = model_settings.GENERAL.model_choice
+        log_settings = dict(
+            loss_dir=model_settings.GENERAL.loss_dir.as_posix(),
+            log_errors=model_settings.MISC.error_table
+        )
         for tag in tags:
             if model_choice == "mace":
                 model = setup_mace(
@@ -91,7 +99,8 @@ class Ensemble(MSONable):
                     training_setups[tag][key] = wrap(training_setups[tag][key])
 
         return cls(models=ensemble,
-                   training_setups=training_setups
+                   training_setups=training_setups,
+                   log_settings=log_settings
                   )
 
     @classmethod
@@ -124,8 +133,38 @@ class Ensemble(MSONable):
             if tag in valid_sets:
                 self.models[tag].update_valid_set(valid_sets[tag])
 
-    def train(self):
+    @property
+    def ensemble(self):
+        """A dictionary of models in the ensemble."""
+        return {tag: m.model for tag, m in self.models.items()}
+
+    def train(self,
+              n_epochs: int,
+              valid_skip: int = 1):
         """Train all models in the ensemble."""
 
-        for tag in self.models:
-            self.models[tag].train(self.training_setups[tag])
+        logger = tools.MetricsLogger(
+            directory=self.log_settings["loss_dir"],
+            tag="ensemble_train",
+        )
+
+        for i_epoch in range(n_epochs):
+            for tag in self.models:
+                self.models[tag].train(self.training_setups[tag], 1)
+
+            if self.epoch % valid_skip == 0:
+                valid_loaders = {}
+                (
+                    ensemble_valid_losses,
+                    valid_loss,
+                    metrics,
+                    _
+                ) = validate_epoch_ensemble(
+                    ensemble=self.ensemble,
+                    training_setups=self.training_setups,
+                    valid_loaders=valid_loaders,
+                    logger=logger,
+                    log_errors=self.log_settings["log_errors"],
+                    epoch=self.epoch
+                )
+            self.epoch += 1
