@@ -34,14 +34,14 @@ def test_ensemble(data_dir, clean_dir, si):
     # get seeds and related tags
     ensemble_seeds = get_seeds(model_settings.GENERAL.seed,
                                project_settings.INITIAL_DATASET_GENERATION.ensemble_size)
-    assert 270 in ensemble_seeds
+    assert 102 in ensemble_seeds
     seeds_tags_dict = create_seeds_tags_dict(
         seeds=ensemble_seeds,
         model_settings=model_settings,
         dataset_dir=project_settings.MISC.dataset_dir,
     )
     tags: list[str] = list(seeds_tags_dict.keys())
-    assert "exp-270" in tags
+    assert "exp-102" in tags
     # get trajectories and model-dependent inputs
     trajectories = read_geometry(si, log=True)
     model_inputs = get_model_dependent_inputs(model_settings.GENERAL.model_choice,
@@ -84,5 +84,9 @@ def test_ensemble(data_dir, clean_dir, si):
                                format="extxyz",
                                index=":")) for tag in tags}
     ensemble.update_datasets(training_sets, valid_sets)
-    ensemble.train()
+    train_settings = dict(
+        n_epochs=project_settings.INITIAL_DATASET_GENERATION.intermediate_epochs_idg,
+        valid_skip=project_settings.INITIAL_DATASET_GENERATION.valid_skip,
+    )
+    ensemble.train(**train_settings)
 
