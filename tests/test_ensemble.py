@@ -6,7 +6,7 @@ import logging
 from ase.io import read
 
 from aims_PAX.atomate2.atomic_energies import AtomicEnergies
-from aims_PAX.atomate2.msonable.ensemble import Ensemble
+from aims_PAX.atomate2.msonable.ensemble import Stage, Ensemble
 from aims_PAX.atomate2.utils import get_model_dependent_inputs
 from aims_PAX.tools.utilities.input_utils import read_input_files, read_geometry
 from aims_PAX.tools.utilities.utilities import get_seeds, create_seeds_tags_dict, create_keyspec, setup_logger
@@ -43,20 +43,13 @@ def test_ensemble(data_dir, clean_dir, si):
     tags: list[str] = list(seeds_tags_dict.keys())
     assert "exp-102" in tags
     # get trajectories and model-dependent inputs
+
+    # a bad idea generally to get model_inputs like this: they should be constructed
+    # from training and validation sets. Alhthough we know that the test data is si only
     trajectories = read_geometry(si, log=True)
     model_inputs = get_model_dependent_inputs(model_settings.GENERAL.model_choice,
                                               trajectories=trajectories)
-    key_specification = create_keyspec(
-        energy_key=project_settings.MISC.energy_key,
-        forces_key=project_settings.MISC.forces_key,
-        stress_key=project_settings.MISC.stress_key,
-        dipole_key=project_settings.MISC.dipole_key,
-        polarizability_key=project_settings.MISC.polarizability_key,
-        head_key=project_settings.MISC.head_key,
-        charges_key=project_settings.MISC.charges_key,
-        total_charge_key=project_settings.MISC.total_charge_key,
-        total_spin_key=project_settings.MISC.total_spin_key,
-    )
+
     assert "z_table" in model_inputs
     # get atomic energies -- the last bit
     atomic_energies = {
@@ -67,11 +60,12 @@ def test_ensemble(data_dir, clean_dir, si):
     assert atomic_energies[tags[0]].as_dict()[14] == 0.0
     # create the ensemble
     ensemble = Ensemble.from_scratch(
+        Stage.IDG,
         tags,
+        project_settings.MISC,
         model_settings,
         atomic_energies,
         model_inputs,
-        key_specification
     )
     # get the datasets from files
     train_data_dir = data_dir / "datasets" / "initial" / "training"
@@ -87,6 +81,9 @@ def test_ensemble(data_dir, clean_dir, si):
     train_settings = dict(
         n_epochs=project_settings.INITIAL_DATASET_GENERATION.intermediate_epochs_idg,
         valid_skip=project_settings.INITIAL_DATASET_GENERATION.valid_skip,
+        analysis=project_settings.INITIAL_DATASET_GENERATION.analysis,
+        desired_accuracy=(project_settings.INITIAL_DATASET_GENERATION.desired_acc *
+                          project_settings.INITIAL_DATASET_GENERATION.desired_acc_scale_idg)
     )
     ensemble.train(**train_settings)
 

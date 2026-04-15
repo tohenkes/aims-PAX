@@ -14,7 +14,7 @@ from pymatgen.io.ase import MSONAtoms, AseAtomsAdaptor
 
 from aims_PAX.atomate2 import AllowedMDMakers
 from aims_PAX.atomate2.atomic_energies import AtomicEnergies
-from aims_PAX.atomate2.msonable.ensemble import Ensemble
+from aims_PAX.atomate2.msonable.ensemble import Ensemble, Stage
 from aims_PAX.atomate2.utils import get_model_dependent_inputs, get_idg_makers_from_settings
 from aims_PAX.settings import ModelSettings
 from aims_PAX.settings.project import IDGSettings, MiscSettings, MDSettings
@@ -228,11 +228,13 @@ class InitialDatasetGenerator(Maker):
             total_spin_key=self.misc_settings.total_spin_key,
         )
         # get ensemble dicts
-        ensemble = Ensemble.from_scratch(tags,
-                                         self.model_settings,
-                                         ensemble_atomic_energies,
-                                         model_inputs,
-                                         key_specification)
+        ensemble = Ensemble.from_scratch(
+            Stage.IDG,
+            tags,
+            self.misc_settings,
+            self.model_settings,
+            ensemble_atomic_energies,
+            model_inputs)
 
         collect_losses = {
             "epoch": [],
