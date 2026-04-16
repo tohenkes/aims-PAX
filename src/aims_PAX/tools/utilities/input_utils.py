@@ -36,6 +36,8 @@ def read_input_files(
     """
     aimsPAX_settings = AimsPAXSettings.from_file(path_to_aimsPAX_settings)
     model_settings = ModelSettings.from_file(path_to_model_settings)
+    # set the relative directories on model settings
+    model_settings.resolve_dirs(output_dir=aimsPAX_settings.MISC.output_dir)
 
     all_teacher = aimsPAX_settings.MISC.all_teacher
     if all_teacher:
