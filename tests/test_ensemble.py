@@ -29,8 +29,6 @@ def test_ensemble(data_dir, clean_dir, si):
             procedure="full",
         )
     )
-    # patch the paths to make sure the outputs go to the clean_dir
-    project_settings.MISC.output_dir = clean_dir
     # get seeds and related tags
     ensemble_seeds = get_seeds(model_settings.GENERAL.seed,
                                project_settings.INITIAL_DATASET_GENERATION.ensemble_size)
@@ -86,4 +84,5 @@ def test_ensemble(data_dir, clean_dir, si):
                           project_settings.INITIAL_DATASET_GENERATION.desired_acc_scale_idg)
     )
     ensemble.train(**train_settings)
+
 
