@@ -21,11 +21,11 @@ from aims_PAX.atomate2.msonable.ema import MSONableEMA
 from aims_PAX.atomate2.msonable.losses import LossesCollection
 from aims_PAX.atomate2.msonable.model import MaceModelTrainer, ModelTrainer
 from aims_PAX.atomate2.msonable.serialization import wrap
-from aims_PAX.settings import ModelSettings, AimsPAXSettings
+from aims_PAX.settings import ModelSettings
 from aims_PAX.settings.project import MiscSettings
 from aims_PAX.tools.model_tools.setup_MACE import setup_mace
 from aims_PAX.tools.model_tools.training_tools import setup_model_training
-from aims_PAX.tools.utilities.data_handling import KeySpecification, save_datasets
+from aims_PAX.tools.utilities.data_handling import save_datasets
 from aims_PAX.tools.utilities.utilities import save_checkpoint, create_keyspec
 
 
@@ -69,6 +69,7 @@ class Ensemble(MSONable):
     step: int = 0
     valid_loss: float = np.inf
     eval_metrics: dict[str, Any] = None
+    done: bool = False
 
     @classmethod
     def from_scratch(cls,
@@ -99,7 +100,6 @@ class Ensemble(MSONable):
         model_choice = model_settings.GENERAL.model_choice
         # this goes to the instance attribute
         log_settings = dict(
-            create_restart=misc_settings.create_restart,
             output_dir=misc_settings.output_dir.as_posix(),
             dataset_dir=misc_settings.dataset_dir.as_posix(),
             loss_dir=model_settings.GENERAL.loss_dir.as_posix(),
@@ -262,7 +262,6 @@ class Ensemble(MSONable):
                         keep_last=False,
                     )
                 ensemble_ase_sets = {tag: m.ase_sets for tag, m in self.models.items()}
-                print("Dataset dir: ", self.log_settings["dataset_dir"])
                 save_datasets(
                     self.ensemble,
                     ensemble_ase_sets,
@@ -270,24 +269,14 @@ class Ensemble(MSONable):
                     initial=(self.stage is Stage.IDG),
                 )
 
-                if self.log_settings["create_restart"]:
-                    restart_path = (
-                            Path(self.log_settings["output_dir"])
-                            / "restart"
-                            / self.stage.value
-                            / f"{self.stage.value}_restart.npy"
-                    )
-                    self._update_restart_dict()
-                    np.save(
-                        restart_path,
-                        self.init_ds_restart_dict,
-                    )
                 if desired_accuracy >= current_valid:
                     logging.info(
-                        f"Accuracy criterion reached at epoch {self.epoch}."
+                        f"Accuracy criterion reached at epoch {self.epoch}. Breaking."
                     )
                     logging.info(
                         f"Criterion: {desired_accuracy}; Current accuracy: {current_valid}."
                     )
+                    self.done = True
+                    break
             self.epoch += 1
-
+        return self.done

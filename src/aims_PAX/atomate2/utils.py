@@ -125,3 +125,50 @@ def to_msonatoms(a: Atoms):
     """Convert Atoms instance to MSONAtoms in-place without losing all internal data"""
     a.__class__ = MSONAtoms
     return a
+
+
+def create_restart_point(
+        trajectories: dict[int, Atoms],
+        ensemble,
+        analysis: bool = False):
+    """
+    Creates a restart point for molecular dynamics (MD) simulations. The method
+    saves the current state of the simulation, including the trajectories and step,
+    to a file to allow restarting the simulation from the saved state.
+
+    Args:
+        trajectories (dict): A dictionary where keys are identifiers of the
+            trajectories, and values are atomic configurations (`ase.Atoms` objects)
+            representing each trajectory.
+        ensemble (Ensemble): An Ensemble of models that are being trained.
+        analysis: A boolean flag indicating whether the losses data should be written
+            to the restart point
+    """
+
+    restart_path = (
+            Path(ensemble.log_settings["output_dir"])
+            / "restart"
+            / ensemble.stage.value
+            / f"{ensemble.stage.value}_restart.npy"
+    )
+    restart_path.parent.mkdir(parents=True, exist_ok=True)
+    restart_dict = {}
+    # collect last points of trajectories
+    # to restart the MD later
+    last_points = {}
+    for idx, atoms in trajectories.items():
+        current_point = atoms.copy()
+        current_point.set_velocities(atoms.get_velocities())
+        current_point.set_masses(atoms.get_masses())
+        last_points[idx] = current_point
+    restart_dict["trajectories"] = last_points
+    restart_dict["step"] = ensemble.step
+    restart_dict[f"{ensemble.stage.value}_done"] = ensemble.done
+    if analysis:
+        restart_dict["last_initial_losses"] = (
+            ensemble.losses.get()
+        )
+    np.save(
+        restart_path,
+        restart_dict,
+    )

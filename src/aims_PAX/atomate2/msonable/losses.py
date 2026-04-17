@@ -10,7 +10,7 @@ from dataclasses import dataclass, field
 
 @dataclass
 class LossesCollection(MSONable):
-    epoch: list = field(default_factory=list)
+    epochs: list = field(default_factory=list)
     avg_losses: list = field(default_factory=list)
     ensemble_losses: list = field(default_factory=list)
 
@@ -18,7 +18,7 @@ class LossesCollection(MSONable):
     def from_scratch(cls):
         """Create a LossesCollection object from scratch."""
         return cls(
-            epoch=[],
+            epochs=[],
             avg_losses=[],
             ensemble_losses=[],
         )
@@ -28,7 +28,7 @@ class LossesCollection(MSONable):
         """Create a LossesCollection object from a npz file."""
         data = np.load(path)
         return cls(
-            epoch=data["epoch"].tolist(),
+            epochs=data["epoch"].tolist(),
             avg_losses=data["avg_losses"].tolist(),
             ensemble_losses=data["ensemble_losses"].tolist(),
         )
@@ -36,11 +36,17 @@ class LossesCollection(MSONable):
     def __getitem__(self, key):
         return getattr(self, key)
 
-    def get(self, epoch: int):
-        """Return the losses for a given epoch."""
-        if epoch not in self.epoch:
+    def get(self, epoch: int = None):
+        """Return the losses for a given epoch. If epoch is None, return all losses."""
+        if epoch is None:
+            return {
+                "epoch": self.epochs,
+                "avg_loss": self.avg_losses,
+                "ensemble_losses": self.ensemble_losses
+            }
+        if epoch not in self.epochs:
             raise ValueError(f"Epoch {epoch} not found in losses collection.")
-        idx = self.epoch.index(epoch)
+        idx = self.epochs.index(epoch)
         return {
             "epoch": epoch,
             "avg_loss": self.avg_losses[idx],
@@ -68,10 +74,10 @@ class LossesCollection(MSONable):
         """
         if not save_path.parent.exists():
             save_path.parent.mkdir(parents=True)
-        self.epoch.append(epoch)
+        self.epochs.append(epoch)
         self.avg_losses.append(valid_loss)
         self.ensemble_losses.append(ensemble_valid_losses)
         np.savez(save_path,
-                 epoch=self.epoch,
+                 epoch=self.epochs,
                  avg_losses=self.avg_losses,
                  ensemble_losses=self.ensemble_losses)

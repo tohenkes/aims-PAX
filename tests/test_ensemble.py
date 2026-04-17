@@ -7,7 +7,7 @@ from ase.io import read
 
 from aims_PAX.atomate2.atomic_energies import AtomicEnergies
 from aims_PAX.atomate2.msonable.ensemble import Stage, Ensemble
-from aims_PAX.atomate2.utils import get_model_dependent_inputs
+from aims_PAX.atomate2.utils import get_model_dependent_inputs, create_restart_point
 from aims_PAX.tools.utilities.input_utils import read_input_files, read_geometry
 from aims_PAX.tools.utilities.utilities import get_seeds, create_seeds_tags_dict, create_keyspec, setup_logger
 
@@ -76,13 +76,17 @@ def test_ensemble(data_dir, clean_dir, si):
                                format="extxyz",
                                index=":")) for tag in tags}
     ensemble.update_datasets(training_sets, valid_sets)
+    analysis = project_settings.INITIAL_DATASET_GENERATION.analysis
+
     train_settings = dict(
         n_epochs=project_settings.INITIAL_DATASET_GENERATION.intermediate_epochs_idg,
         valid_skip=project_settings.INITIAL_DATASET_GENERATION.valid_skip,
-        analysis=project_settings.INITIAL_DATASET_GENERATION.analysis,
+        analysis=analysis,
         desired_accuracy=(project_settings.INITIAL_DATASET_GENERATION.desired_acc *
                           project_settings.INITIAL_DATASET_GENERATION.desired_acc_scale_idg)
     )
     ensemble.train(**train_settings)
+    if project_settings.MISC.create_restart:
+        create_restart_point(trajectories, ensemble, analysis=analysis)
 
 
