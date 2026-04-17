@@ -9,6 +9,7 @@ from ase import Atoms
 from ase.io import read
 
 from aims_PAX.atomate2.atomic_energies import AtomicEnergies
+from aims_PAX.atomate2.cli import get_args_parser
 from aims_PAX.atomate2.msonable.ensemble import Ensemble, Stage
 from aims_PAX.atomate2.utils import create_restart_point
 from aims_PAX.tools.utilities.input_utils import read_input_files, read_geometry
@@ -124,21 +125,7 @@ def idg(path_to_aimspax_settings: str, path_to_model_settings: str):
 
 def main():
     """The main function for the command line execution."""
-    parser = argparse.ArgumentParser(
-        description="Create initial dataset for aims-PAX."
-    )
-    parser.add_argument(
-        "--model-settings",
-        type=str,
-        default="./model.yaml",
-        help="Path to model settings file",
-    )
-    parser.add_argument(
-        "--aimsPAX-settings",
-        type=str,
-        default="./aimsPAX.yaml",
-        help="Path to aimsPAX settings file",
-    )
+    parser = get_args_parser(description="Aims-PAX initial dataset generation algorithm")
     args = parser.parse_args()
     idg(args.aimsPAX_settings, args.model_settings)
 

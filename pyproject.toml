@@ -48,6 +48,7 @@ where = ["src"]
 aims-PAX = "aims_PAX.cli.__main__:main"
 aims-PAX-initial-ds = "aims_PAX.cli.create_initial_ds:main"
 aims-PAX-idg-v2 = "aims_PAX.atomate2.cli.idg:main"
+aims-PAX-idg-split = "aims_PAX.atomate2.cli.datasets:main"
 aims-PAX-al = "aims_PAX.cli.al_procedure_only:main"
 aims-PAX-recalc = "aims_PAX.cli.recalculate_data:main"
 aims-PAX-test = "aims_PAX.cli.test_ensemble:main"
