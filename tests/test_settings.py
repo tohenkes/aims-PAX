@@ -17,5 +17,9 @@ def test_model(tmp_path, monkeypatch, data_dir):
     monkeypatch.chdir(tmp_path)
     settings_file = data_dir / "project_settings" / "model.yaml"
     settings = ModelSettings.from_file(settings_file)
+    # as all dirs in the model can be relative to output_dir, we need to resolve them
+    # against the output_dir first
+    settings.resolve_dirs(tmp_path)
     assert(settings.GENERAL.seed == 42)
     assert (tmp_path / "checkpoints").is_dir()
+

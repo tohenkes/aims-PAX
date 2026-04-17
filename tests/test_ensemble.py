@@ -9,7 +9,8 @@ from aims_PAX.atomate2.atomic_energies import AtomicEnergies
 from aims_PAX.atomate2.msonable.ensemble import Stage, Ensemble
 from aims_PAX.atomate2.utils import get_model_dependent_inputs, create_restart_point
 from aims_PAX.tools.utilities.input_utils import read_input_files, read_geometry
-from aims_PAX.tools.utilities.utilities import get_seeds, create_seeds_tags_dict, create_keyspec, setup_logger
+from aims_PAX.tools.utilities.utilities import get_seeds, create_seeds_tags_dict, create_keyspec, setup_logger, \
+    save_models
 
 
 def test_ensemble(data_dir, clean_dir, si):
@@ -89,4 +90,12 @@ def test_ensemble(data_dir, clean_dir, si):
     if project_settings.MISC.create_restart:
         create_restart_point(trajectories, ensemble, analysis=analysis)
 
+    save_models(
+        ensemble=ensemble.ensemble,
+        training_setups=ensemble.training_setups,
+        model_dir=model_settings.GENERAL.model_dir,
+        current_epoch=ensemble.epoch,
+        model_settings=model_settings.ARCHITECTURE,
+        model_choice=model_settings.GENERAL.model_choice
+    )
 

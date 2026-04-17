@@ -262,10 +262,11 @@ class Ensemble(MSONable):
                         keep_last=False,
                     )
                 ensemble_ase_sets = {tag: m.ase_sets for tag, m in self.models.items()}
+                stage = "initial" if self.stage is Stage.IDG else "final"
                 save_datasets(
                     self.ensemble,
                     ensemble_ase_sets,
-                    path=Path(self.log_settings["dataset_dir"]) / self.stage.value,
+                    path=Path(self.log_settings["dataset_dir"]) / stage,
                     initial=(self.stage is Stage.IDG),
                 )
 
