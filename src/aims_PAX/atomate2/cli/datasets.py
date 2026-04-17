@@ -56,7 +56,7 @@ def split_dataset(
         procedure="full",
     )
     # create seeds and related tags
-    ensemble_size = model_settings.GENERAL.ensemble_size
+    ensemble_size = project_settings.INITIAL_DATASET_GENERATION.ensemble_size
     ensemble_seeds = get_seeds(model_settings.GENERAL.seed,
                                ensemble_size)
     seeds_tags_dict = create_seeds_tags_dict(

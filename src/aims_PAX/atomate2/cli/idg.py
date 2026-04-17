@@ -60,8 +60,8 @@ def idg(path_to_aimspax_settings: str, path_to_model_settings: str):
 
     # get trajectories and model-dependent inputs:
     # - get the datasets from files
-    train_data_dir = project_settings.MISC.dataset_dir / "datasets" / "initial" / "training"
-    valid_data_dir = project_settings.MISC.dataset_dir / "datasets" / "initial" / "validation"
+    train_data_dir = project_settings.MISC.dataset_dir /  "initial" / "training"
+    valid_data_dir = project_settings.MISC.dataset_dir /  "initial" / "validation"
     # - get ase sets from files (list constructors are used to avoid linter warnings)
     training_sets = {tag: list(read(train_data_dir / f"initial_train_set_{tag}.xyz",
                                format="extxyz",
