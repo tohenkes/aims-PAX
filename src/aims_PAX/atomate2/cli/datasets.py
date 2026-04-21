@@ -1,8 +1,6 @@
 """Command line utilities for working with datasets."""
-import argparse
 import random
 
-import numpy as np
 from ase.io import read
 
 from aims_PAX.atomate2.cli import get_args_parser
@@ -73,7 +71,7 @@ def split_dataset(
     # split each chunk into training and validation sets
     ase_sets = {}
     for tag, chunk in zip(tags, chunks):
-        test, train = split_by_ratio(chunks[0], project_settings.INITIAL_DATASET_GENERATION.valid_ratio)
+        test, train = split_by_ratio(chunk, project_settings.INITIAL_DATASET_GENERATION.valid_ratio)
         ase_sets[tag] = {"train": train, "valid": test}
     # in the next line only tags are needed from the ensemble
     # so we can mimic ensemble dict

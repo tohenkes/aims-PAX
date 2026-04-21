@@ -2,7 +2,7 @@
 The module with Initial Dataset generation algorithm rewritten for
 existing models.
 """
-import argparse
+import logging
 
 import numpy as np
 from ase import Atoms
@@ -16,6 +16,7 @@ from aims_PAX.tools.utilities.input_utils import read_input_files, read_geometry
 from aims_PAX.tools.utilities.utilities import get_seeds, create_seeds_tags_dict, save_models, Z_from_geometry, \
     create_ztable
 
+logger = logging.getLogger(__name__)
 
 def get_species(dataset: dict) -> set:
     """Extract the set of all chemical species from a dictionary of Atoms lists."""
@@ -107,8 +108,10 @@ def idg(path_to_aimspax_settings: str, path_to_model_settings: str):
         desired_accuracy=(project_settings.INITIAL_DATASET_GENERATION.desired_acc *
                           project_settings.INITIAL_DATASET_GENERATION.desired_acc_scale_idg)
     )
-    while not ensemble.done:
+    while not (ensemble.done or ensemble.epoch > project_settings.INITIAL_DATASET_GENERATION.max_initial_epochs):
         ensemble.train(**train_settings)
+    if ensemble.done:
+        logger.info("Ensemble training completed successfully.")
     if project_settings.MISC.create_restart:
         trajectories = read_geometry(path_to_geometry, log=True)
         create_restart_point(trajectories, ensemble, analysis=analysis)
