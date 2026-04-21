@@ -1,6 +1,7 @@
 """Command line utilities for working with datasets."""
 import random
 import logging
+import warnings
 
 from ase.io import read
 
@@ -8,6 +9,9 @@ from aims_PAX.atomate2.cli import get_args_parser
 from aims_PAX.tools.utilities.data_handling import save_datasets
 from aims_PAX.tools.utilities.input_utils import read_input_files
 from aims_PAX.tools.utilities.utilities import get_seeds, create_seeds_tags_dict
+
+# silence torch jit warnings
+warnings.filterwarnings("ignore", category=UserWarning, module="torch.jit._check")
 
 logging.basicConfig(
     level=logging.INFO,

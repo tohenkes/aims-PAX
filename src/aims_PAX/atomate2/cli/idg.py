@@ -3,6 +3,7 @@ The module with Initial Dataset generation algorithm rewritten for
 existing models.
 """
 import logging
+import warnings
 
 import numpy as np
 from ase import Atoms
@@ -16,6 +17,13 @@ from aims_PAX.tools.utilities.input_utils import read_input_files, read_geometry
 from aims_PAX.tools.utilities.utilities import get_seeds, create_seeds_tags_dict, save_models, Z_from_geometry, \
     create_ztable
 
+# silence torch jit warnings
+warnings.filterwarnings("ignore", category=UserWarning, module="torch.jit._check")
+
+logging.basicConfig(
+    level=logging.INFO,
+    format='%(asctime)s - %(levelname)s - %(message)s'
+)
 logger = logging.getLogger(__name__)
 
 def get_species(dataset: dict) -> set:
