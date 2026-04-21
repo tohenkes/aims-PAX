@@ -1,5 +1,6 @@
 """Command line utilities for working with datasets."""
 import random
+import logging
 
 from ase.io import read
 
@@ -7,6 +8,13 @@ from aims_PAX.atomate2.cli import get_args_parser
 from aims_PAX.tools.utilities.data_handling import save_datasets
 from aims_PAX.tools.utilities.input_utils import read_input_files
 from aims_PAX.tools.utilities.utilities import get_seeds, create_seeds_tags_dict
+
+logging.basicConfig(
+    level=logging.INFO,
+    format='%(asctime)s - %(levelname)s - %(message)s'
+)
+logger = logging.getLogger(__name__)
+
 
 def to_chunks(lst, n):
     """
@@ -37,6 +45,7 @@ def to_chunks(lst, n):
         start = end
     return chunks
 
+
 def split_by_ratio(lst, ratio):
     split_idx = int(len(lst) * ratio)
     return lst[:split_idx], lst[split_idx:]
@@ -55,6 +64,7 @@ def split_dataset(
     )
     # create seeds and related tags
     ensemble_size = project_settings.INITIAL_DATASET_GENERATION.ensemble_size
+    logger.info(f"Splitting dataset {path_to_dataset} into {ensemble_size} chunks")
     ensemble_seeds = get_seeds(model_settings.GENERAL.seed,
                                ensemble_size)
     seeds_tags_dict = create_seeds_tags_dict(
@@ -63,6 +73,7 @@ def split_dataset(
         dataset_dir=project_settings.MISC.dataset_dir,
     )
     tags: list[str] = list(seeds_tags_dict.keys())
+    logger.info(f"Tags used: {tags}")
     # read and shuffle dataset
     dataset = list(read(path_to_dataset, format="extxyz", index=":"))
     random.shuffle(dataset)
@@ -70,8 +81,13 @@ def split_dataset(
     chunks = to_chunks(dataset, ensemble_size)
     # split each chunk into training and validation sets
     ase_sets = {}
+    logger.info(f"Test / Train ratio used: {project_settings.INITIAL_DATASET_GENERATION.valid_ratio}")
     for tag, chunk in zip(tags, chunks):
+        logger.info(f" - Tag: {tag}")
+        logger.info(f"   Chunk size: {len(chunk)}")
         test, train = split_by_ratio(chunk, project_settings.INITIAL_DATASET_GENERATION.valid_ratio)
+        logger.info(f"   Train size: {len(train)}")
+        logger.info(f"   Test size: {len(test)}")
         ase_sets[tag] = {"train": train, "valid": test}
     # in the next line only tags are needed from the ensemble
     # so we can mimic ensemble dict
@@ -82,6 +98,7 @@ def split_dataset(
         initial=True,
         save_combined_initial=True
     )
+    logger.info(f"Datasets saved successfully at {project_settings.MISC.dataset_dir / "initial"}.")
 
 
 def main():
