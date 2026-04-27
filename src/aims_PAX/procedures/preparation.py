@@ -489,7 +489,7 @@ class PrepareInitialDatasetProcedure:
                     timestep=md_settings["timestep"] * units.fs,
                     friction=md_settings["friction"] / units.fs,
                     temperature_K=md_settings["temperature"],
-                    rng=np.random.RandomState(md_settings["MD_seed"]),
+                    rng=np.random.RandomState(md_settings["seed"]),
                 )
         elif md_settings["stat_ensemble"].lower() == "npt":
             if md_settings["barostat"].lower() == "berendsen":
@@ -1728,7 +1728,7 @@ class ALMD:
                 timestep=md_settings["timestep"] * units.fs,
                 friction=md_settings["friction"] / units.fs,
                 temperature_K=md_settings["temperature"],
-                rng=np.random.RandomState(md_settings["MD_seed"]),
+                rng=np.random.RandomState(md_settings["seed"]),
             )
         else:
             raise ValueError(f"Unsupported thermostat: {thermostat}")

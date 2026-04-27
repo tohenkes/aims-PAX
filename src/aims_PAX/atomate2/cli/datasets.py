@@ -102,7 +102,7 @@ def split_dataset(
         initial=True,
         save_combined_initial=True
     )
-    logger.info(f"Datasets saved successfully at {project_settings.MISC.dataset_dir / "initial"}.")
+    logger.info(f"Datasets saved successfully at {project_settings.MISC.dataset_dir / 'initial'}.")
 
 
 def main():
