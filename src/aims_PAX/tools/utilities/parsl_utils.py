@@ -11,9 +11,6 @@ import re
 import logging
 from ase.io import ParseError
 from pathlib import Path
-from typing import Optional
-
-from zmq.backend.cffi import socket
 
 from aims_PAX.settings.project import ClusterSettings
 
