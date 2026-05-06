@@ -1,4 +1,5 @@
 """Command line utilities for working with datasets."""
+import argparse
 import random
 import logging
 import warnings
@@ -20,7 +21,7 @@ logging.basicConfig(
 logger = logging.getLogger(__name__)
 
 
-def to_chunks(lst, n):
+def to_chunks(lst, n, dropout_args: dict[str, bool | float]):
     """
     Divides a list into n approximately equal chunks.
 
@@ -30,6 +31,7 @@ def to_chunks(lst, n):
     given to the earlier positions in the resulting list of chunks.
 
     Args:
+        dropout_args: a dictionary containing dropout settings.
         lst: The list to be divided into chunks.
         n: The number of chunks to divide the list into.
 
@@ -40,13 +42,17 @@ def to_chunks(lst, n):
     Raises:
         ValueError: If n is less than or equal to 0.
     """
-    k, remainder = divmod(len(lst), n)
-    start = 0
     chunks = []
-    for i in range(n):
-        end = start + k + (1 if i < remainder else 0)
-        chunks.append(lst[start:end])
-        start = end
+    if dropout_args["dropout_on"]:
+        dropped_number = int(len(lst) * dropout_args["dropout_ratio"])
+        chunks = [random.choices(lst, k=len(lst) - dropped_number) for _ in range(n)]
+    else:
+        k, remainder = divmod(len(lst), n)
+        start = 0
+        for i in range(n):
+            end = start + k + (1 if i < remainder else 0)
+            chunks.append(lst[start:end])
+            start = end
     return chunks
 
 
@@ -57,9 +63,32 @@ def split_by_ratio(lst, ratio):
 
 def split_dataset(
         path_to_dataset: str,
+        dropout_args: dict[str, bool | float],
         path_to_aimspax_settings: str,
         path_to_model_settings: str
 ):
+    """
+    Splits a dataset into multiple training and validation subsets based on ensemble
+    size and other configuration settings provided. This function organizes and
+    shuffles the data, applies a split ratio, assigns appropriate tags, and saves
+    the resulting subsets in the defined directories.
+
+    Args:
+        path_to_dataset (str): Path to the original dataset, formatted as "extxyz".
+        dropout_args (dict[str, bool | float]): Dictionary specifying dropout settings.
+        path_to_aimspax_settings (str): Path to the AIMSPAX configuration settings file.
+        path_to_model_settings (str): Path to the model configuration settings file.
+
+    Raises:
+        FileNotFoundError: If any of the provided paths to settings or dataset is invalid.
+        KeyError: If the required keys are missing in the configuration settings.
+        ValueError: If the dataset cannot be read or if invalid split ratios are provided.
+        Exception: For any other error that may arise during dataset processing or file IO.
+
+    Returns:
+        None
+    """
+
     # prepare directories
     model_settings, project_settings, _, _ = read_input_files(
         path_to_model_settings,
@@ -79,10 +108,13 @@ def split_dataset(
     tags: list[str] = list(seeds_tags_dict.keys())
     logger.info(f"Tags used: {tags}")
     # read and shuffle dataset
+    if dropout_args["dropout_on"]:
+        logger.info(f"Using random dropout with ratio {dropout_args['dropout_ratio']}.")
+
     dataset = list(read(path_to_dataset, format="extxyz", index=":"))
     random.shuffle(dataset)
     # split dataset using ensemble size
-    chunks = to_chunks(dataset, ensemble_size)
+    chunks = to_chunks(dataset, ensemble_size, dropout_args)
     # split each chunk into training and validation sets
     ase_sets = {}
     logger.info(f"Test / Train ratio used: {project_settings.INITIAL_DATASET_GENERATION.valid_ratio}")
@@ -113,8 +145,33 @@ def main():
         type=str,
         help="Path to the dataset XYZ file to split"
     )
+    parser.add_argument(
+        "--dropout",
+        action="store_true",
+        default=False,
+        help="Whether to split datasets with random dropout"
+    )
+    parser.add_argument(
+        "--dropout-ratio",
+        type=validated_ratio,
+        default=0.1,
+        help="Random dropout ratio. Should be between 0 and 1.",
+    )
+
     args = parser.parse_args()
-    split_dataset(args.dataset, args.aimsPAX_settings, args.model_settings)
-    
+    dropout = {
+        "dropout_on": args.dropout,
+        "dropout_ratio": args.dropout_ratio
+    }
+    split_dataset(args.dataset, dropout, args.aimsPAX_settings, args.model_settings)
+
+
+def validated_ratio(value: str) -> float:
+    """Validator for a dropout ratio."""
+    ratio = float(value)
+    if not 0 < ratio < 1:
+        raise argparse.ArgumentTypeError("must be between 0 and 1")
+    return ratio
+
 if __name__ == "__main__":
     main()
