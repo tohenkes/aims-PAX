@@ -21,7 +21,10 @@ logging.basicConfig(
 logger = logging.getLogger(__name__)
 
 
-def to_chunks(lst, n, dropout_args: dict[str, bool | float]):
+def to_chunks(lst,
+              n,
+              dropout_args: dict[str, bool | float],
+              to_keep: list[str]):
     """
     Divides a list into n approximately equal chunks.
 
@@ -34,6 +37,7 @@ def to_chunks(lst, n, dropout_args: dict[str, bool | float]):
         dropout_args: a dictionary containing dropout settings.
         lst: The list to be divided into chunks.
         n: The number of chunks to divide the list into.
+        to_keep: A list of configuration types to keep in the dataset.
 
     Returns:
         A list of n chunks, each being a sublist of the input list. The
@@ -42,11 +46,15 @@ def to_chunks(lst, n, dropout_args: dict[str, bool | float]):
     Raises:
         ValueError: If n is less than or equal to 0.
     """
-    chunks = []
     if dropout_args["dropout_on"]:
-        dropped_number = int(len(lst) * dropout_args["dropout_ratio"])
-        chunks = [random.choices(lst, k=len(lst) - dropped_number) for _ in range(n)]
+        configs_to_keep = [a for a in lst if a.info.get('config_type', '') in to_keep]
+        configs_to_drop = [a for a in lst if a.info.get('config_type', '') not in to_keep]
+        if configs_to_keep:
+            logger.info(f"Keeping {len(configs_to_keep)} configs of type {to_keep}")
+        chunk_len = int(len(lst) * (1 - dropout_args["dropout_ratio"]) - len(configs_to_keep))
+        chunks = [random.choices(configs_to_drop, k=chunk_len) + configs_to_keep for _ in range(n)]
     else:
+        chunks = []
         k, remainder = divmod(len(lst), n)
         start = 0
         for i in range(n):
@@ -64,6 +72,7 @@ def split_by_ratio(lst, ratio):
 def split_dataset(
         path_to_dataset: str,
         dropout_args: dict[str, bool | float],
+        to_keep: list[str],
         path_to_aimspax_settings: str,
         path_to_model_settings: str
 ):
@@ -76,6 +85,7 @@ def split_dataset(
     Args:
         path_to_dataset (str): Path to the original dataset, formatted as "extxyz".
         dropout_args (dict[str, bool | float]): Dictionary specifying dropout settings.
+        to_keep (list[str]): A list of configuration types to keep in the dataset.
         path_to_aimspax_settings (str): Path to the AIMSPAX configuration settings file.
         path_to_model_settings (str): Path to the model configuration settings file.
 
@@ -114,7 +124,8 @@ def split_dataset(
     dataset = list(read(path_to_dataset, format="extxyz", index=":"))
     random.shuffle(dataset)
     # split dataset using ensemble size
-    chunks = to_chunks(dataset, ensemble_size, dropout_args)
+    logger.info(f"Full dataset length: {len(dataset)}.")
+    chunks = to_chunks(dataset, ensemble_size, dropout_args, to_keep)
     # split each chunk into training and validation sets
     ase_sets = {}
     logger.info(f"Test / Train ratio used: {project_settings.INITIAL_DATASET_GENERATION.valid_ratio}")
@@ -157,13 +168,27 @@ def main():
         default=0.1,
         help="Random dropout ratio. Should be between 0 and 1.",
     )
-
+    parser.add_argument(
+        "--keep-isolated-atoms",
+        action="store_true",
+        help="Whether to keep isolated atoms (should have `info.config_type = 'IsolatedAtom'`) in all datasets"
+    )
+    parser.add_argument(
+        "--keep-dimers",
+        action="store_true",
+        help="Whether to keep dimers (should have `info.config_type = 'dimer'`) in all datasets"
+    )
     args = parser.parse_args()
+    to_keep = []
+    if args.keep_isolated_atoms:
+        to_keep.append("IsolatedAtom")
+    if args.keep_dimers:
+        to_keep.append("dimer")
     dropout = {
         "dropout_on": args.dropout,
         "dropout_ratio": args.dropout_ratio
     }
-    split_dataset(args.dataset, dropout, args.aimsPAX_settings, args.model_settings)
+    split_dataset(args.dataset, dropout, to_keep, args.aimsPAX_settings, args.model_settings)
 
 
 def validated_ratio(value: str) -> float:
