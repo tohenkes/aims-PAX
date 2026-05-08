@@ -52,7 +52,7 @@ def to_chunks(lst,
         if configs_to_keep:
             logger.info(f"Keeping {len(configs_to_keep)} configs of type {to_keep}")
         chunk_len = int(len(lst) * (1 - dropout_args["dropout_ratio"]) - len(configs_to_keep))
-        chunks = [random.choices(configs_to_drop, k=chunk_len) + configs_to_keep for _ in range(n)]
+        chunks = [random.sample(configs_to_drop, k=chunk_len) + configs_to_keep for _ in range(n)]
     else:
         chunks = []
         k, remainder = divmod(len(lst), n)
