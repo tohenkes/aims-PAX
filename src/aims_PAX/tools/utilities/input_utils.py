@@ -108,8 +108,8 @@ def read_geometry(
         atoms_dict = {}
         for key, value in geometry_source.items():
             assert (
-                type(value) is str
-            ), "All entries in the geometry dictionary must be strings."
+                type(value) in (str, Path)
+            ), "All entries in the geometry dictionary must be strings or paths."
             assert (
                 type(key) is int
             ), "All keys in the geometry dictionary must be integers."
