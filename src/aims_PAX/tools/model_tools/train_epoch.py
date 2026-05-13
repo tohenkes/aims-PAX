@@ -3,7 +3,6 @@ from contextlib import contextmanager
 import numpy as np
 from torch.optim import LBFGS
 from so3krates_torch.tools.train import valid_err_log
-#from mace.tools.train import valid_err_log
 from mace.tools.utils import MetricsLogger
 from torch.utils.data import DataLoader
 from torch_ema import ExponentialMovingAverage

@@ -348,6 +348,7 @@ class PrepareInitialDatasetProcedure:
             polarizability_key=self.misc.polarizability_key,
             head_key=self.misc.head_key,
             charges_key=self.misc.charges_key,
+            hirshfeld_ratios_key=self.misc.hirshfeld_ratios_key,
             total_charge_key=self.misc.total_charge_key,
             total_spin_key=self.misc.total_spin_key,
         )
@@ -964,6 +965,7 @@ class ALConfiguration:
             polarizability_key=self.misc.polarizability_key,
             head_key=self.misc.head_key,
             charges_key=self.misc.charges_key,
+            hirshfeld_ratios_key=self.misc.hirshfeld_ratios_key,
             total_charge_key=self.misc.total_charge_key,
             total_spin_key=self.misc.total_spin_key,
         )

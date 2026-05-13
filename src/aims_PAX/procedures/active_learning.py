@@ -1151,6 +1151,14 @@ class ALProcedurePARSL(ALProcedure):
                 received_point.arrays["REF_forces"] = job_result["forces"]
                 if self.config.compute_stress:
                     received_point.info["REF_stress"] = job_result["stress"]
+                if "hirshfeld_ratios" in job_result:
+                    received_point.arrays["REF_hirshfeld_ratios"] = (
+                        job_result["hirshfeld_ratios"]
+                    )
+                if "hirshfeld_charges" in job_result:
+                    received_point.arrays["REF_charges"] = (
+                        job_result["hirshfeld_charges"]
+                    )
 
                 if self.config.update_md_checkpoints:
                     self.state_manager.MD_checkpoints[idx] = atoms_full_copy(

@@ -612,6 +612,7 @@ class MiscSettings(ProjectBaseModel):
     polarizability_key: str = "REF_polarizability"
     head_key: str = "head"
     charges_key: str = "REF_charges"
+    hirshfeld_ratios_key: str = "REF_hirshfeld_ratios"
     total_charge_key: str = "total_charge"
     total_spin_key: str = "total_spin"
     mol_idxs: list[int] | None  = Field(

@@ -256,7 +256,10 @@ def recalc_dft_parsl(
         dict: Results of the DFT calculation.
     """
     from ase.calculators.aims import Aims, AimsProfile
-    from aims_PAX.tools.utilities.utilities import get_free_vols
+    from aims_PAX.tools.utilities.utilities import (
+        get_free_vols,
+        get_hirshfeld_charges,
+    )
     import os
     from ase import Atoms
     from ase.io import ParseError
@@ -293,14 +296,18 @@ def recalc_dft_parsl(
     try:
         calc.calculate(atoms=atoms, properties=properties, system_changes=None)
         results = calc.results
-        if "hirshfeld_volumes" in results.keys():
-            with open(os.path.join(directory, aims_output_file), "r") as f:
+        aims_output_path = os.path.join(directory, aims_output_file)
+        if os.path.exists(aims_output_path):
+            with open(aims_output_path, "r") as f:
                 aims_output = f.readlines()
-            free_vols = get_free_vols(aims_output)
-            hirshfeld_vols = results["hirshfeld_volumes"]
-            hirshfeld_ratios = hirshfeld_vols / free_vols
-            results["hirshfeld_ratios"] = hirshfeld_ratios
-        return calc.results
+            if "hirshfeld_volumes" in results.keys():
+                free_vols = get_free_vols(aims_output)
+                hirshfeld_vols = results["hirshfeld_volumes"]
+                results["hirshfeld_ratios"] = hirshfeld_vols / free_vols
+            hirshfeld_charges = get_hirshfeld_charges(aims_output)
+            if hirshfeld_charges:
+                results["hirshfeld_charges"] = np.array(hirshfeld_charges)
+        return results
     except ParseError as pe:
         return None
     except Exception as e:
