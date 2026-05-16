@@ -1814,6 +1814,7 @@ class ALMD:
         else:
             return MTKNPT(**npt_settings)
 
+
     def _initialize_velocities(self, atoms: ase.Atoms, md_settings: dict):
         """
         Initialize Maxwell-Boltzmann velocity distribution
