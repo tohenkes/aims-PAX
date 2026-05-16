@@ -1150,6 +1150,10 @@ class InitialDatasetPARSL(InitialDatasetFoundational):
             current_point.arrays["REF_hirshfeld_ratios"] = result_dict[
                 "hirshfeld_ratios"
             ]
+        if "hirshfeld_charges" in result_dict:
+            current_point.arrays["REF_charges"] = result_dict[
+                "hirshfeld_charges"
+            ]
         if "dipole" in result_dict:
             current_point.info["REF_dipole"] = result_dict["dipole"]
         return current_point
