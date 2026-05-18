@@ -1,4 +1,3 @@
-import os
 import logging
 import ase
 from ase.io import read
@@ -12,6 +11,8 @@ import shutil
 
 from ase.md.md import MolecularDynamics
 from mace import tools
+from pyfhiaims import AimsControl
+
 from .preparation import (
     ALCalculatorMLFF,
     ALEnsemble,
@@ -1170,7 +1171,11 @@ class ALDFTManager:
             species_dir (str): Path to the species directory of AIMS.
         """
         if isinstance(control_source, (str, Path)):
-            aims_settings = self.control_parser(control_source)
+            aims_control = AimsControl.from_file(control_source)
+            aims_settings = aims_control.parameters
+            # Create ASE dict from pyfhiaims
+            if aims_control.outputs:
+                aims_settings["output"] = aims_control.outputs
             aims_settings["compute_forces"] = True
             aims_settings["species_dir"] = self.config.species_dir
             aims_settings["postprocess_anyway"] = (
@@ -1184,7 +1189,11 @@ class ALDFTManager:
         elif isinstance(control_source, dict):
             self.aims_settings = {}
             for key, value in control_source.items():
-                aims_settings = self.control_parser(value)
+                aims_control = AimsControl.from_file(value)
+                aims_settings = aims_control.parameters
+                # Create ASE dict from pyfhiaims
+                if aims_control.outputs:
+                    aims_settings["output"] = aims_control.outputs
                 aims_settings["compute_forces"] = True
                 aims_settings["species_dir"] = self.config.species_dir
                 aims_settings["postprocess_anyway"] = (
@@ -1583,7 +1592,11 @@ class ALDFTReferenceManagerPARSL(ALReferenceManagerPARSL):
         Parses the AIMS control file to get the settings.
         """
         if isinstance(control_source, (str, Path)):
-            aims_settings = self.control_parser(control_source)
+            aims_control = AimsControl.from_file(control_source)
+            aims_settings = aims_control.parameters
+            # Create ASE dict from pyfhiaims
+            if aims_control.outputs:
+                aims_settings["output"] = aims_control.outputs
             aims_settings["compute_forces"] = True
             aims_settings["species_dir"] = self.config.species_dir
             aims_settings["postprocess_anyway"] = True
@@ -1594,7 +1607,11 @@ class ALDFTReferenceManagerPARSL(ALReferenceManagerPARSL):
         elif isinstance(control_source, dict):
             self.aims_settings = {}
             for key, value in control_source.items():
-                aims_settings = self.control_parser(value)
+                aims_control = AimsControl.from_file(value)
+                aims_settings = aims_control.parameters
+                # Create ASE dict from pyfhiaims
+                if aims_control.outputs:
+                    aims_settings["output"] = aims_control.outputs
                 aims_settings["compute_forces"] = True
                 aims_settings["species_dir"] = self.config.species_dir
                 aims_settings["postprocess_anyway"] = True
