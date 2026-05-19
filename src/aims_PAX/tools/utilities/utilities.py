@@ -18,8 +18,8 @@ from so3krates_torch.tools.multihead_utils import reduce_mh_model_to_sh
 from so3krates_torch.tools.finetune import setup_finetuning
 
 from aims_PAX.settings import ModelSettings
-from aims_PAX.settings.model import MACEArchitectureSettings, BaseArchitectureSettings
-from aims_PAX.settings.project import MDSettings, MiscSettings
+from aims_PAX.settings.model import BaseArchitectureSettings
+from aims_PAX.settings.project import MDSettings
 from aims_PAX.tools.model_tools.setup_MACE import setup_mace
 from aims_PAX.tools.model_tools.setup_so3 import setup_so3krates, setup_so3lr, setup_multihead_so3lr
 from aims_PAX.tools.model_tools.training_tools import setup_model_training
@@ -35,6 +35,7 @@ from copy import deepcopy
 from mace.data.utils import (
     KeySpecification
 )
+from ase.io import write
 
 
 # Many functions are taken from or inspired by the MACE code:
@@ -1109,6 +1110,28 @@ def save_ensemble(
                 model,
                 Path(model_settings["GENERAL"]["model_dir"]) / (tag + ".model"),
             )
+
+
+def log_ensemble(
+        seeds_tags_dict: dict[str, Any],
+        trajectory: ase.Atoms,
+        filename: str="md.extxyz"
+):
+    atoms = trajectory.copy()
+    # get all the info together
+    atoms.arrays["velocities"] = atoms.get_velocities()
+    # get forces from the groups
+    forces_comm = trajectory.calc.results["forces_comm"]
+    for i, seed in enumerate(seeds_tags_dict):
+        atoms.arrays[f"forces_{seeds_tags_dict[seed]}"] = forces_comm[i]
+
+    # write one frame
+    write(
+        filename,
+        atoms,
+        format="extxyz",
+        append=True,
+    )
 
 
 class ModifyMD:

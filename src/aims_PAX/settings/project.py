@@ -336,6 +336,8 @@ class ALSettings(ProjectBaseModel):
 
     use_teacher_reference: bool = False
     teacher_reference_settings: FMSettings | None = None
+    save_trajectories: bool = Field(default=True)
+    save_trajectories_interval: int = Field(default=5)
 
     @model_validator(mode="after")
     def check_at_least_one_required(self) -> "ALSettings":

@@ -40,7 +40,7 @@ from aims_PAX.tools.utilities.utilities import (
     apply_model_settings,
     apply_finetuning_settings,
     AIMSControlParser,
-    ModifyMD,
+    ModifyMD, log_ensemble,
 )
 from aims_PAX.tools.utilities.input_utils import read_geometry
 from aims_PAX.tools.model_tools.train_epoch import (
@@ -2134,7 +2134,11 @@ class PrepareALProcedure:
         comm_handler: CommHandler = None,
     ):
         """Initialize the active learning procedure."""
-        # Setup communication first
+        # Check for config first
+        if aimsPAX_settings.ACTIVE_LEARNING is None:
+            raise ValueError("Active learning needs configuration")
+
+        # Setup communication
         self._setup_communication(comm_handler, use_mpi)
 
         # Initialize configuration
@@ -2213,6 +2217,17 @@ class PrepareALProcedure:
             self.md_manager.setup_md_drivers(
                 self.state_manager.trajectories, self.mlff_manager.mlff_calc
             )
+            if aimsPAX_settings.ACTIVE_LEARNING.save_trajectories:
+                Path("trajectories").mkdir(parents=True, exist_ok=True)
+                for idx in self.md_manager.md_drivers:
+                    traj = self.state_manager.trajectories[idx]
+                    self.md_manager.md_drivers[idx].attach(
+                        lambda i=idx, t=traj: log_ensemble(
+                            self.state_manager.seeds_tags_dict,
+                            t,
+                            filename=f"trajectories/{i}.extxyz"),
+                        interval=aimsPAX_settings.ACTIVE_LEARNING.save_trajectories_interval
+                    )
 
         # TODO: Remove hardcode
         self.use_scheduler = False
