@@ -118,7 +118,7 @@ def read_geometry(
                 atoms_dict[key] = atoms
                 if log:
                     logging.info(
-                        f"Geometry {key}: {value.split('.')[0]} is at index {key}."
+                        f"Geometry {value} is at index {key}."
                     )
             except Exception as e:
                 logging.error(f"Failed to read geometry file {value}: {e}")
