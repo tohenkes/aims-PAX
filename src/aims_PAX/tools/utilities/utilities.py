@@ -3,7 +3,6 @@ import re
 import sys
 import os
 
-import GPUtil
 import torch
 import numpy as np
 from typing import Optional, Any, Dict, Union
@@ -1564,6 +1563,7 @@ class GPUMonitor(Thread):
         self.start()
 
     def run(self):
+        import GPUtil  # optional monitoring dependency
         while not self.stopped:
             # Get GPU utilization data
             gpus = GPUtil.getGPUs()
