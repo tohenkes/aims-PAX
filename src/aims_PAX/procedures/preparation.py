@@ -1363,8 +1363,10 @@ class ALEnsemble:
         )
 
         for tag in self.ensemble_ase_sets.keys():
-            self.ensemble_model_sets[tag]["train_subset"] = {}
-            self.ensemble_model_sets[tag]["valid_subset"] = {}
+            if "train_subset" not in self.ensemble_model_sets[tag]:
+                self.ensemble_model_sets[tag]["train_subset"] = {}
+            if "valid_subset" not in self.ensemble_model_sets[tag]:
+                self.ensemble_model_sets[tag]["valid_subset"] = {}
 
             if self.config.replay_strategy == "random_subset":
                 train_subset_size = self._check_subset_size(
