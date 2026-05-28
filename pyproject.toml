@@ -25,13 +25,13 @@ dependencies = [
     "ase==3.26.0",
     "parsl==2024.12.16",
     "pydantic>=2.0,<3.0.0",
-    "pyfhiaims"
+    "pyfhiaims",
+    "pymatgen-io-aims",
+    "monty"
 ]
 
 [project.optional-dependencies]
 atomate2 = [
-    "pyfhiaims",
-    "pymatgen-io-aims",
     "atomate2",
 ]
 tests = [
