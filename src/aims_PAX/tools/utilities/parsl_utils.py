@@ -178,9 +178,11 @@ def create_parsl_config(cluster_settings: ClusterSettings, output_dir: Path = Pa
     worker_init_str = cluster_settings.worker_str
     slurm_options_str = cluster_settings.slurm_str
 
-    # Extract the cluster partition from the slurm options string
+    # Extract the cluster partition from the slurm options string.
+    # Handles both --partition and -p, with = or space separator, after any
+    # whitespace (including newlines from multi-line SBATCH headers).
     match = re.search(
-        r"(?: --partition| -p) *= *([\w-]*)",
+        r"(?:--partition|-p)\s*[=\s]\s*([\w-]+)",
         slurm_options_str,
         re.IGNORECASE,
     )
