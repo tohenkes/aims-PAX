@@ -2,6 +2,7 @@
 Pydantic settings for aimsPAX project.
 """
 import io
+import logging
 import sys
 import yaml
 from pathlib import Path
@@ -76,9 +77,9 @@ MODEL_MAP = {
 class IDGSettings(ProjectBaseModel):
     """Pydantic settings for Initial Dataset Generation"""
 
-    species_dir: DirectoryPath = Field(
-        ...,
-        description="Path to the directory containing the FHI AIMS species defaults.",
+    species_dir: DirectoryPath | None = Field(
+        default=None,
+        description="Path to FHI-aims species defaults. Required unless use_teacher_reference=True.",
     )
     n_points_per_sampling_step_idg: int = Field(
         ...,
@@ -180,6 +181,32 @@ class IDGSettings(ProjectBaseModel):
     )
 
     @model_validator(mode="after")
+    def validate_species_dir(self) -> "IDGSettings":
+        if self.species_dir is None and not self.use_teacher_reference:
+            raise ValueError(
+                "INITIAL_DATASET_GENERATION.species_dir is required "
+                "unless use_teacher_reference: true"
+            )
+        return self
+
+    @model_validator(mode="after")
+    def validate_teacher_reference(self) -> "IDGSettings":
+        if not self.use_teacher_reference:
+            return self
+        if self.initial_sampling != "foundational":
+            raise ValueError(
+                "INITIAL_DATASET_GENERATION: use_teacher_reference=True requires "
+                "initial_sampling: foundational"
+            )
+        trs = self.teacher_reference_settings
+        if isinstance(trs, dict) and "model_type" not in trs:
+            raise ValueError(
+                "INITIAL_DATASET_GENERATION.teacher_reference_settings must contain "
+                "'model_type' when use_teacher_reference=True"
+            )
+        return self
+
+    @model_validator(mode="after")
     def check_at_least_one_required(self) -> "IDGSettings":
         """Ensures stopping criteria are set."""
         # If all these are at their 'unlimited' defaults, the simulation runs forever
@@ -208,9 +235,9 @@ class IDGSettings(ProjectBaseModel):
 
 
 class ALSettings(ProjectBaseModel):
-    species_dir: str = Field(
-        ...,
-        description="Path to the directory containing the FHI-aims species defaults."
+    species_dir: str | None = Field(
+        default=None,
+        description="Path to FHI-aims species defaults. Required unless use_teacher_reference=True."
     )
     num_trajectories: int = Field(
         ...,
@@ -334,7 +361,37 @@ class ALSettings(ProjectBaseModel):
     foundational_model_settings: FMSettings | None = None
 
     use_teacher_reference: bool = False
-    teacher_reference_settings: FMSettings | None = None
+    teacher_reference_settings: Dict[str, Any] | None = Field(
+        default=None,
+        description="Teacher reference model settings. Must contain 'model_type' when use_teacher_reference=True."
+    )
+
+    @model_validator(mode="after")
+    def validate_species_dir(self) -> "ALSettings":
+        if self.species_dir is None and not self.use_teacher_reference:
+            raise ValueError(
+                "ACTIVE_LEARNING.species_dir is required "
+                "unless use_teacher_reference: true"
+            )
+        return self
+
+    @model_validator(mode="after")
+    def validate_teacher_reference(self) -> "ALSettings":
+        if not self.use_teacher_reference:
+            return self
+        trs = self.teacher_reference_settings
+        if trs is None or "model_type" not in trs:
+            raise ValueError(
+                "ACTIVE_LEARNING.teacher_reference_settings must contain "
+                "'model_type' when use_teacher_reference=True"
+            )
+        if self.analysis:
+            logging.warning(
+                "ACTIVE_LEARNING: analysis=True is incompatible with "
+                "use_teacher_reference=True. Disabling analysis."
+            )
+            self.analysis = False
+        return self
 
     @model_validator(mode="after")
     def check_at_least_one_required(self) -> "ALSettings":
@@ -418,11 +475,15 @@ class MTKNPT(TrajectoryMDBase):
     )
 
 
+class IsotropicMTKNPT(MTKNPT):
+    barostat: Literal["isomtk"] = "isomtk"
+
+
 NPTEnsemble = Annotated[
-    Union[BerendsenNPT, MTKNPT],
+    Union[BerendsenNPT, MTKNPT, IsotropicMTKNPT],
     Field(
         discriminator="barostat",
-        description="Barostat used when `NPT` is chosen, either `mtk` or `berendsen`. MTK stands for Full"
+        description="Barostat used when `NPT` is chosen: `berendsen`, `mtk`, or `isomtk`. MTK stands for Full"
                     " [Martyna-Tobias-Klein barostat](https://doi.org/10.1063/1.467468)."
     )
 ]
@@ -518,10 +579,32 @@ class ParslSettings(ProjectBaseModel):
         return self
 
 
-class ClusterSettings(ProjectBaseModel):
+class LocalClusterSettings(ProjectBaseModel):
+    type: Literal["local"] = "local"
+    executor: Literal["local"] = "local"
+    max_workers: int = Field(
+        default=4,
+        gt=0,
+        description="Number of threads for the local PARSL thread pool executor."
+    )
+    launch_str: str | None = Field(
+        default=None,
+        description="Command to run FHI-aims locally. Required when DFT is used."
+    )
+    calc_dir: Path = Field(
+        default=Path("./aims_ase_calcs"),
+        description="Path to the directory used for calculation outputs."
+    )
+    clean_dirs: bool = Field(
+        default=True,
+        description="Whether to remove calculation directories after DFT computations."
+    )
+
+
+class SlurmClusterSettings(ProjectBaseModel):
     type: Literal["slurm"] = Field(
         default="slurm",
-        description="Cluster backend type. Currently only 'slurm' is available."
+        description="Cluster backend type."
     )
     parsl_options: ParslSettings = Field(
         ...,
@@ -538,17 +621,17 @@ class ClusterSettings(ProjectBaseModel):
             "Ensure 'export WORK_QUEUE_DISABLE_SHARED_PORT=1' is included if necessary."
         )
     )
-    launch_str: str = Field(
-        ...,
-        description="Command to run FHI aims, e.g., 'srun path/to/aims >> aims.out'."
+    launch_str: str | None = Field(
+        default=None,
+        description="Command to run FHI-aims, e.g., 'srun path/to/aims >> aims.out'. Required when DFT is used."
     )
     calc_dir: Path = Field(
-        "./aims_ase_calcs",
+        default=Path("./aims_ase_calcs"),
         description="Path to the directory used for calculation outputs."
     )
     executor: Literal["workqueue", "mpi"] = Field(
         default="workqueue",
-        description="The workload executor. can be `workqueue` or `mpi`.`"
+        description="The workload executor. Can be `workqueue` or `mpi`."
     )
     tasks_per_node: int = Field(
         default=1,
@@ -563,12 +646,18 @@ class ClusterSettings(ProjectBaseModel):
     disk_per_job: int = 1000
 
     @model_validator(mode="after")
-    def validate_cluster_settings(self) -> "ClusterSettings":
+    def validate_cluster_settings(self) -> "SlurmClusterSettings":
         if self.cores_per_job is not None:
             if self.memory_per_job is None:
                 raise ValueError("memory_per_job must be set in CLUSTER settings "
                                  "when cores_per_job is set.")
         return self
+
+
+ClusterSettings = Annotated[
+    Union[LocalClusterSettings, SlurmClusterSettings],
+    Field(discriminator="type")
+]
 
 
 PathOrIndexedPaths = Union[FilePath, Dict[int, FilePath]]
@@ -681,4 +770,28 @@ class AimsPAXSettings(ProjectBaseModel):
                 "Incomplete Configuration: You must provide settings for "
                 "'ACTIVE_LEARNING' or 'INITIAL_DATASET_GENERATION', or both."
             )
+        return self
+
+    @model_validator(mode="after")
+    def validate_cluster_requirements(self) -> "AimsPAXSettings":
+        idg = self.INITIAL_DATASET_GENERATION
+        al = self.ACTIVE_LEARNING
+
+        idg_teacher = idg is not None and idg.use_teacher_reference
+        al_teacher = al is not None and al.use_teacher_reference
+
+        if (idg_teacher or al_teacher) and self.CLUSTER is None:
+            raise ValueError(
+                "CLUSTER settings are required when use_teacher_reference=True "
+                "(teacher reference calculations are dispatched via PARSL)"
+            )
+
+        idg_needs_dft = idg is not None and not idg_teacher
+        al_needs_dft = al is not None and not al_teacher
+        if (idg_needs_dft or al_needs_dft) and self.CLUSTER is not None:
+            if self.CLUSTER.launch_str is None:
+                raise ValueError(
+                    "CLUSTER.launch_str is required when DFT calculations are "
+                    "dispatched via PARSL (set use_teacher_reference=True to skip DFT)"
+                )
         return self

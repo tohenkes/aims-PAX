@@ -41,12 +41,11 @@ MD:
   temperature: 500
   timestep: 1.
   friction: 0.001
-  seed: 42
+  MD_seed: 42
 
 MISC:
   create_restart: True
 
 CLUSTER:
   type: local
-  executor: local
   max_workers: 1

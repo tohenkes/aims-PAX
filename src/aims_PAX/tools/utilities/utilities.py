@@ -1122,7 +1122,7 @@ def save_ensemble(
         with param_context:
             torch.save(
                 model,
-                Path(model_settings["GENERAL"]["model_dir"]) / (tag + ".model"),
+                Path(model_settings.GENERAL.model_dir) / (tag + ".model"),
             )
 
 

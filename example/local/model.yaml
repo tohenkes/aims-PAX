@@ -1,12 +1,12 @@
 GENERAL:
   name_exp: test_local
-  model_choice: mace
   checkpoints_dir: ./checkpoints
   model_dir: ./model
   default_dtype: float32
   seed: 100
 
 ARCHITECTURE:
+  model_choice: mace
   r_max: 5.
   num_channels: 32
   max_L: 1

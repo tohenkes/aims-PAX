@@ -35,28 +35,17 @@ def main():
         )
     )
 
-    if (
-        aimsPAX_settings["INITIAL_DATASET_GENERATION"][
-            "initial_sampling"
-        ].lower()
-        == "aimd"
-    ):
+    idg = aimsPAX_settings.INITIAL_DATASET_GENERATION
+    if idg.initial_sampling.lower() == "aimd":
         initial_ds = InitialDatasetAIMD(
             model_settings=model_settings,
             aimsPAX_settings=aimsPAX_settings,
             path_to_control=path_to_control,
             path_to_geometry=path_to_geometry,
         )
-    elif (
-        aimsPAX_settings["INITIAL_DATASET_GENERATION"][
-            "initial_sampling"
-        ].lower()
-        == "foundational"
-    ):
-        if aimsPAX_settings.get("CLUSTER", False):
-            if aimsPAX_settings["INITIAL_DATASET_GENERATION"].get(
-                "use_teacher_reference", False
-            ):
+    elif idg.initial_sampling.lower() == "foundational":
+        if aimsPAX_settings.CLUSTER is not None:
+            if idg.use_teacher_reference:
                 initial_ds = InitialDatasetPARSLTeacher(
                     model_settings=model_settings,
                     aimsPAX_settings=aimsPAX_settings,
@@ -77,10 +66,15 @@ def main():
                 path_to_control=path_to_control,
                 path_to_geometry=path_to_geometry,
             )
+    else:
+        raise ValueError(
+            f"Unknown initial_sampling: {idg.initial_sampling!r}. "
+            "Expected 'aimd' or 'foundational'."
+        )
 
     if not initial_ds.check_initial_ds_done():
         initial_ds.run()
-    if aimsPAX_settings["ACTIVE_LEARNING"].get("converge_initial", False):
+    if idg.converge_initial:
         initial_ds.converge()
 
 

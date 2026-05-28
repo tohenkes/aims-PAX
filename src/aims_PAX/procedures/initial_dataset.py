@@ -1280,10 +1280,8 @@ class InitialDatasetPARSLTeacher(InitialDatasetPARSL):
             close_parsl=close_parsl,
         )
 
-        idg_settings = aimsPAX_settings["INITIAL_DATASET_GENERATION"]
-        self.teacher_reference_settings = idg_settings[
-            "teacher_reference_settings"
-        ]
+        idg_settings = aimsPAX_settings.INITIAL_DATASET_GENERATION
+        self.teacher_reference_settings = idg_settings.teacher_reference_settings
         if self.rank == 0:
             logging.info(
                 "Using teacher model for reference calculations "

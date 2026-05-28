@@ -55,6 +55,7 @@ from aims_PAX.tools.utilities.parsl_utils import (
     recalc_dft_parsl,
     recalc_teacher_model_parsl,
     handle_parsl_logger,
+    preload_teacher_calculator,
 )
 from aims_PAX.tools.uncertainty import (
     get_threshold,
@@ -827,11 +828,11 @@ class ALTrainingManager:
         tag = list(self.ensemble_manager.ensemble.keys())[0]
         mh_model = list(self.ensemble_manager.ensemble.values())[0]
         avg_num_neighbors = mh_model.avg_num_neighbors
-        settings = self.config.model_settings["ARCHITECTURE"].copy()
+        settings = self.config.model_settings.ARCHITECTURE.model_dump()
         # removing aims-PAX specific kwargs
         settings.pop("use_multihead_model", None)
         settings.pop("num_multihead_heads", None)
-        settings.pop("model", None)
+        settings.pop("model_choice", None)
         settings.pop("atomic_energies", None)
         
         # convert mh model to sh model
@@ -1645,6 +1646,17 @@ class ALTeacherModelManagerPARSL(ALReferenceManagerPARSL):
             for k, v in teacher_reference_settings.items()
             if k not in ("model_type", "model_path")
         }
+        self.model_settings.setdefault("default_dtype", config.dtype)
+        # Pre-create the calculator in the main thread so that
+        # torch.fx.symbolic_trace (called inside SymmetricContraction.__init__
+        # and mace.tools.compile.simplify) never runs in a PARSL worker thread
+        # concurrently with MLFF model forward passes.
+        preload_teacher_calculator(
+            model_type=self.model_type,
+            model_path=self.model_path,
+            model_settings=self.model_settings,
+            properties=config.properties,
+        )
 
     def _submit_parsl_job(self, idx, data, job_no):
         """Submit a teacher model calculation via PARSL."""
@@ -2204,9 +2216,7 @@ class ALAnalysisManager:
                         models=list(self.ensemble_manager.ensemble.values()),
                         atoms_list=[point],
                         device=self.config.device,
-                        dtype=self.config.model_settings["GENERAL"][
-                            "default_dtype"
-                        ],
+                        dtype=self.config.model_settings.GENERAL.default_dtype,
                     )
                 self.comm_handler.barrier()
                 self.state_manager.trajectories_analysis_prediction[idx] = (
