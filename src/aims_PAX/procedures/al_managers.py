@@ -758,9 +758,6 @@ class ALTrainingManager:
 
     def converge(self):
         """Converge the ensemble on the acquired dataset."""
-        if self.rank != 0:
-            return
-
         self._setup_convergence()
 
         # Create training session for convergence
@@ -1835,25 +1832,6 @@ class ALRunningManager:
             tuple: Contains point, prediction, uncertainty,
                     and current MD step.
         """
-        # Initialize data on non-root ranks
-        if self.rank != 0:
-            uncertainty = None
-            prediction = None
-            point = None
-            self.state_manager.threshold = None
-            current_MD_step = None
-
-        # Broadcast data from root to all ranks
-        self.comm_handler.barrier()
-        self.state_manager.threshold = self.comm_handler.bcast(
-            self.state_manager.threshold, root=0
-        )
-        point = self.comm_handler.bcast(point, root=0)
-        uncertainty = self.comm_handler.bcast(uncertainty, root=0)
-        prediction = self.comm_handler.bcast(prediction, root=0)
-        current_MD_step = self.comm_handler.bcast(current_MD_step, root=0)
-        self.comm_handler.barrier()
-
         return point, prediction, uncertainty, current_MD_step
 
     def process_uncertainty_decision(

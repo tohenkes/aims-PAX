@@ -1467,8 +1467,6 @@ class ALCalculatorMLFF:
     def handle_atomic_energies(self):
         """Handle atomic energies initialization."""
         self.update_atomic_energies = False
-        if self.rank != 0:
-            return
 
         if self.config.atomic_energies_dict is None:
             self._load_atomic_energies_from_source()
@@ -1696,9 +1694,6 @@ class ALMD:
 
     def setup_md_drivers(self, trajectories: dict, mlff_calculator):
         """Setup MD drivers for all trajectories."""
-        if self.rank != 0:
-            return
-
         for trajectory in trajectories.values():
             trajectory.calc = mlff_calculator
 
