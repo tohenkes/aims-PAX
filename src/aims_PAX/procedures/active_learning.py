@@ -67,7 +67,6 @@ class ALProcedure(PrepareALProcedure):
             ensemble_manager=self.ensemble_manager,
             mlff_manager=self.mlff_manager,
             comm_handler=self.comm_handler,
-            rank=self.rank,
             dft_manager=self.dft_manager,
         )
 
@@ -106,24 +105,21 @@ class ALProcedure(PrepareALProcedure):
                 self.state_manager.num_MD_limits_reached
                 == self.config.num_trajectories
             ):
-                if self.rank == 0:
-                    logging.info("All trajectories reached maximum MD steps.")
+                logging.info("All trajectories reached maximum MD steps.")
                 break
 
             if (
                 self.ensemble_manager.train_dataset_len
                 >= self.config.max_train_set_size
             ):
-                if self.rank == 0:
-                    logging.info("Maximum size of training set reached.")
+                logging.info("Maximum size of training set reached.")
                 break
 
             if (
                 self.state_manager.current_valid_error
                 < self.config.desired_accuracy
             ):
-                if self.rank == 0:
-                    logging.info("Desired accuracy reached.")
+                logging.info("Desired accuracy reached.")
                 break
         self.dft_manager.finalize_dft()
 
@@ -140,8 +136,7 @@ class ALProcedure(PrepareALProcedure):
 
         if self.config.restart and self.first_wait_after_restart[idx]:
             self.point = None
-            if self.rank == 0:
-                self.point = self.trajectories[idx].copy()
+            self.point = self.trajectories[idx].copy()
 
             self.dft_manager.handle_dft_call(point=self.point, idx=idx)
             self.first_wait_after_restart[idx] = False
@@ -160,19 +155,17 @@ class ALProcedure(PrepareALProcedure):
         Args:
             idx (int): Index of the trajectory worker.
         """
-        if self.rank == 0:
-            self.ensemble_manager.ensemble_model_sets = (
-                self.train_manager.prepare_training(
-                    model_sets=self.ensemble_manager.ensemble_model_sets
-                )
+        self.ensemble_manager.ensemble_model_sets = (
+            self.train_manager.prepare_training(
+                model_sets=self.ensemble_manager.ensemble_model_sets
             )
+        )
 
-            logging.info(f"Trajectory worker {idx} is training.")
-            self.train_manager.perform_training(idx)
+        logging.info(f"Trajectory worker {idx} is training.")
+        self.train_manager.perform_training(idx)
 
         # update calculators with the new models
-        if self.rank == 0:
-            self._assign_models_to_trajectories()
+        self._assign_models_to_trajectories()
 
         if (
             self.state_manager.trajectory_total_epochs[idx]
@@ -181,8 +174,7 @@ class ALProcedure(PrepareALProcedure):
             self.state_manager.trajectory_status[idx] = "running"
             self.state_manager.num_workers_training -= 1
             self.state_manager.trajectory_total_epochs[idx] = 0
-            if self.rank == 0:
-                logging.info(f"Trajectory worker {idx} finished training.")
+            logging.info(f"Trajectory worker {idx} finished training.")
 
     def _assign_models_to_trajectories(self):
         
@@ -259,60 +251,58 @@ class ALProcedure(PrepareALProcedure):
         Saves the datasets, restart information and analysis results.
         """
 
-        if self.rank == 0:
-            logging.info("Starting active learning procedure.")
+        logging.info("Starting active learning procedure.")
 
         self._al_loop()
 
-        if self.rank == 0:
-            logging.info(
-                "Active learning procedure finished. The best ensemble member"
-                " based on validation loss is "
-                f"{self.train_manager.best_member}."
-            )
+        logging.info(
+            "Active learning procedure finished. The best ensemble member"
+            " based on validation loss is "
+            f"{self.train_manager.best_member}."
+        )
+        save_datasets(
+            ensemble=self.ensemble,
+            ensemble_ase_sets=self.ensemble_manager.ensemble_ase_sets,
+            path=self.config.dataset_dir / "final",
+        )
+        save_models(
+            ensemble=self.ensemble,
+            training_setups=self.ensemble_manager.training_setups,
+            model_dir=self.config.model_settings.GENERAL.model_dir,
+            current_epoch=self.state_manager.total_epoch,
+            model_settings=self.config.model_settings.ARCHITECTURE,
+            model_choice=self.config.model_choice
+        )
+
+        # save final results in new directory called results:
+        if not self.config.converge_al:
+            results_dir = self.config.output_dir / "results"
+            results_dir.mkdir(parents=True, exist_ok=True)
             save_datasets(
                 ensemble=self.ensemble,
                 ensemble_ase_sets=self.ensemble_manager.ensemble_ase_sets,
-                path=self.config.dataset_dir / "final",
+                path=results_dir,
             )
             save_models(
                 ensemble=self.ensemble,
                 training_setups=self.ensemble_manager.training_setups,
-                model_dir=self.config.model_settings.GENERAL.model_dir,
+                model_dir=results_dir,
                 current_epoch=self.state_manager.total_epoch,
                 model_settings=self.config.model_settings.ARCHITECTURE,
                 model_choice=self.config.model_choice
             )
+        #  else: handled in convergence call
 
-            # save final results in new directory called results:
-            if not self.config.converge_al:
-                results_dir = self.config.output_dir / "results"
-                results_dir.mkdir(parents=True, exist_ok=True)
-                save_datasets(
-                    ensemble=self.ensemble,
-                    ensemble_ase_sets=self.ensemble_manager.ensemble_ase_sets,
-                    path=results_dir,
-                )
-                save_models(
-                    ensemble=self.ensemble,
-                    training_setups=self.ensemble_manager.training_setups,
-                    model_dir=results_dir,
-                    current_epoch=self.state_manager.total_epoch,
-                    model_settings=self.config.model_settings.ARCHITECTURE,
-                    model_choice=self.config.model_choice
-                )
-            #  else: handled in convergence call
+        if self.config.analysis:
+            self.analysis_manager.save_analysis()
 
-            if self.config.analysis:
-                self.analysis_manager.save_analysis()
-
-            if self.config.create_restart:
-                self.restart_manager.update_restart_dict(
-                    trajectories_keys=self.trajectories.keys(),
-                    md_drivers=self.md_manager.md_drivers,
-                    save_restart=self.config.al_restart_path,
-                )
-                self.restart_manager.al_restart_dict["al_done"] = True
+        if self.config.create_restart:
+            self.restart_manager.update_restart_dict(
+                trajectories_keys=self.trajectories.keys(),
+                md_drivers=self.md_manager.md_drivers,
+                save_restart=self.config.al_restart_path,
+            )
+            self.restart_manager.al_restart_dict["al_done"] = True
 
 
 class ALProcedureSerial(ALProcedure):
@@ -341,7 +331,6 @@ class ALProcedureSerial(ALProcedure):
             ensemble_manager=self.ensemble_manager,
             state_manager=self.state_manager,
             comm_handler=self.comm_handler,
-            rank=self.rank,
         )
 
         self.train_manager = ALTrainingManager(
@@ -351,7 +340,6 @@ class ALProcedureSerial(ALProcedure):
             state_manager=self.state_manager,
             md_manager=self.md_manager,
             restart_manager=self.restart_manager,
-            rank=self.rank,
         )
         self.converge = self.train_manager.converge
 
@@ -372,7 +360,6 @@ class ALProcedureSerial(ALProcedure):
             state_manager=self.state_manager,
             md_manager=self.md_manager,
             comm_handler=self.comm_handler,
-            rank=self.rank,
         )
 
         self.run_manager = ALRunningManager(
@@ -381,7 +368,6 @@ class ALProcedureSerial(ALProcedure):
             ensemble_manager=self.ensemble_manager,
             mlff_manager=self.mlff_manager,
             comm_handler=self.comm_handler,
-            rank=self.rank,
             dft_manager=self.dft_manager,
         )
     
@@ -424,7 +410,6 @@ class ALProcedurePARSL(ALProcedure):
             ensemble_manager=self.ensemble_manager,
             state_manager=self.state_manager,
             comm_handler=self.comm_handler,
-            rank=self.rank,
         )
 
         self.train_manager = ALTrainingManager(
@@ -434,7 +419,6 @@ class ALProcedurePARSL(ALProcedure):
             state_manager=self.state_manager,
             md_manager=self.md_manager,
             restart_manager=self.restart_manager,
-            rank=self.rank,
         )
         self.converge = self.train_manager.converge
 
@@ -472,7 +456,6 @@ class ALProcedurePARSL(ALProcedure):
             ensemble_manager=self.ensemble_manager,
             mlff_manager=self.mlff_manager,
             comm_handler=self.comm_handler,
-            rank=self.rank,
             dft_manager=self.reference_manager,
         )
 

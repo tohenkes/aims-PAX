@@ -105,198 +105,196 @@ class InitialDatasetProcedure(PrepareInitialDatasetProcedure):
         Returns:
             bool: Returns True if the maximum number of epochs is reached.
         """
-        if self.rank == 0:
-            random.shuffle(self.sampled_points)
-            # each ensemble member collects their respective points
-            for number, (tag, model) in enumerate(self.ensemble.items()):
+        random.shuffle(self.sampled_points)
+        # each ensemble member collects their respective points
+        for number, (tag, model) in enumerate(self.ensemble.items()):
 
-                member_points = self._get_member_points(number)
+            member_points = self._get_member_points(number)
 
-                (
-                    self.ensemble_ase_sets[tag],
-                    self.ensemble_model_sets[tag],
-                ) = update_datasets(
-                    new_points=member_points,
-                    model_set=self.ensemble_model_sets[tag],
-                    ase_set=self.ensemble_ase_sets[tag],
-                    valid_split=self.valid_ratio,
-                    z_table=self.z_table,
-                    seed=self.seed,
-                    r_max=self.r_max,
-                    r_max_lr=self.r_max_lr,
-                    all_heads=self.all_heads,
-                    key_specification=self.key_specification
-                )
+            (
+                self.ensemble_ase_sets[tag],
+                self.ensemble_model_sets[tag],
+            ) = update_datasets(
+                new_points=member_points,
+                model_set=self.ensemble_model_sets[tag],
+                ase_set=self.ensemble_ase_sets[tag],
+                valid_split=self.valid_ratio,
+                z_table=self.z_table,
+                seed=self.seed,
+                r_max=self.r_max,
+                r_max_lr=self.r_max_lr,
+                all_heads=self.all_heads,
+                key_specification=self.key_specification
+            )
 
-                batch_size = (
-                    1
-                    if len(self.ensemble_model_sets[tag]["train"])
-                    < self.set_batch_size
-                    else self.set_batch_size
-                )
+            batch_size = (
+                1
+                if len(self.ensemble_model_sets[tag]["train"])
+                < self.set_batch_size
+                else self.set_batch_size
+            )
                 
                 
-                smallest_valid_set = 0
-                for valid_set in self.ensemble_model_sets[tag][
-                    "valid"].values():
-                    if (
-                        smallest_valid_set == 0
-                        or len(valid_set) < smallest_valid_set
-                    ):
-                        smallest_valid_set = len(valid_set)
-                        
-                valid_batch_size = (
-                    1
-                    if smallest_valid_set
-                    < self.set_valid_batch_size
-                    else self.set_valid_batch_size
-                )
-                
-                (
-                    self.ensemble_model_sets[tag]["train_loader"],
-                    self.ensemble_model_sets[tag]["valid_loader"],
-                ) = create_dataloader(
-                    self.ensemble_model_sets[tag]["train"],
-                    self.ensemble_model_sets[tag]["valid"],
-                    batch_size,
-                    valid_batch_size,
-                )
-                
-                update_model_auxiliaries(
-                    model=model,
-                    model_choice=self.model_choice,
-                    model_sets=self.ensemble_model_sets[tag],
-                    atomic_energies_list=self.ensemble_atomic_energies[tag],
-                    scaling=self.scaling,
-                    update_atomic_energies=self.update_atomic_energies,
-                    z_table=self.z_table,
-                    atomic_energies_dict=self.ensemble_atomic_energies_dict[
-                        tag
-                    ],
-                    update_avg_num_neighbors=self.update_avg_num_neighbors,
-                    dtype=self.dtype,
-                    device=self.device,
-                )
-                logging.info(
-                    f"Training set size for '{tag}': "
-                    f"{len(self.ensemble_model_sets[tag]['train'])}; Validation"
-                    f" set size: "
-                )
-                for head, valid_set in self.ensemble_model_sets[tag][
-                    "valid"
-                ].items():
-                    logging.info(f"  Head '{head}': {len(valid_set)}")
-
-            logging.info("Training.")
-            ensemble_valid_losses = {
-                tag: np.inf for tag in self.ensemble.keys()
-            }
-            for _ in range(self.intermediate_epochs_idg):
-                # each member gets trained individually
-                for tag, model in self.ensemble.items():
-
-                    logger = tools.MetricsLogger(
-                        directory=self.model_settings.GENERAL.loss_dir,
-                        tag=tag + "_train",
-                    )
-                    train_epoch(
-                        model=model,
-                        train_loader=self.ensemble_model_sets[tag][
-                            "train_loader"
-                        ],
-                        loss_fn=self.training_setups[tag]["loss_fn"],
-                        optimizer=self.training_setups[tag]["optimizer"],
-                        lr_scheduler=self.training_setups[tag]["lr_scheduler"],
-                        epoch=self.epoch,
-                        start_epoch=0,
-                        valid_loss=ensemble_valid_losses[tag],
-                        logger=logger,
-                        device=self.training_setups[tag]["device"],
-                        max_grad_norm=self.training_setups[tag][
-                            "max_grad_norm"
-                        ],
-                        output_args=self.training_setups[tag]["output_args"],
-                        ema=self.training_setups[tag]["ema"],
-                    )
-                # the validation errors are averages over the ensemble members
+            smallest_valid_set = 0
+            for valid_set in self.ensemble_model_sets[tag][
+                "valid"].values():
                 if (
-                    self.epoch % self.valid_skip == 0
-                    or (self.epoch + 1) % self.valid_skip == 0
+                    smallest_valid_set == 0
+                    or len(valid_set) < smallest_valid_set
                 ):
-                    (
-                        ensemble_valid_losses,
-                        valid_loss,
-                        metrics,
-                        _
-                    ) = validate_epoch(
-                        ensemble=self.ensemble,
-                        training_setups=self.training_setups,
-                        valid_loaders=self.ensemble_model_sets[tag][
-                            "valid_loader"
-                            ],
-                        logger=logger,
-                        log_errors=self.model_settings.MISC.error_table,
-                        epoch=self.epoch,
-                        multihead=self.use_multihead_model,
-                    )
-                    self.current_valid = metrics["mae_f"]
+                    smallest_valid_set = len(valid_set)
+                        
+            valid_batch_size = (
+                1
+                if smallest_valid_set
+                < self.set_valid_batch_size
+                else self.set_valid_batch_size
+            )
+                
+            (
+                self.ensemble_model_sets[tag]["train_loader"],
+                self.ensemble_model_sets[tag]["valid_loader"],
+            ) = create_dataloader(
+                self.ensemble_model_sets[tag]["train"],
+                self.ensemble_model_sets[tag]["valid"],
+                batch_size,
+                valid_batch_size,
+            )
+                
+            update_model_auxiliaries(
+                model=model,
+                model_choice=self.model_choice,
+                model_sets=self.ensemble_model_sets[tag],
+                atomic_energies_list=self.ensemble_atomic_energies[tag],
+                scaling=self.scaling,
+                update_atomic_energies=self.update_atomic_energies,
+                z_table=self.z_table,
+                atomic_energies_dict=self.ensemble_atomic_energies_dict[
+                    tag
+                ],
+                update_avg_num_neighbors=self.update_avg_num_neighbors,
+                dtype=self.dtype,
+                device=self.device,
+            )
+            logging.info(
+                f"Training set size for '{tag}': "
+                f"{len(self.ensemble_model_sets[tag]['train'])}; Validation"
+                f" set size: "
+            )
+            for head, valid_set in self.ensemble_model_sets[tag][
+                "valid"
+            ].items():
+                logging.info(f"  Head '{head}': {len(valid_set)}")
 
-                    if self.analysis:
-                        self._handle_analysis(
-                            valid_loss=valid_loss,
-                            ensemble_valid_losses=ensemble_valid_losses,
-                        )
+        logging.info("Training.")
+        ensemble_valid_losses = {
+            tag: np.inf for tag in self.ensemble.keys()
+        }
+        for _ in range(self.intermediate_epochs_idg):
+            # each member gets trained individually
+            for tag, model in self.ensemble.items():
 
-                    for tag, model in self.ensemble.items():
-                        save_checkpoint(
-                            checkpoint_handler=self.training_setups[tag][
-                                "checkpoint_handler"
-                            ],
-                            training_setup=self.training_setups[tag],
-                            model=model,
-                            epoch=self.epoch,
-                            keep_last=False,
-                        )
-                        save_datasets(
-                            self.ensemble,
-                            self.ensemble_ase_sets,
-                            path=self.dataset_dir / "initial",
-                            initial=True,
-                        )
-                    if self.create_restart:
-                        self._update_restart_dict()
-                        np.save(
-                            self.initial_ds_restart_path,
-                            self.init_ds_restart_dict,
-                        )
-                    if (
-                        self.desired_acc * self.desired_acc_scale_idg
-                        >= self.current_valid
-                    ):
-                        logging.info(
-                            f"Accuracy criterion reached at step {self.step}."
-                        )
-                        logging.info(
-                            f"Criterion: {self.desired_acc * self.desired_acc_scale_idg}; Current accuracy: {self.current_valid}."
-                        )
-
-                        break
-
-                self.epoch += 1
-
+                logger = tools.MetricsLogger(
+                    directory=self.model_settings.GENERAL.loss_dir,
+                    tag=tag + "_train",
+                )
+                train_epoch(
+                    model=model,
+                    train_loader=self.ensemble_model_sets[tag][
+                        "train_loader"
+                    ],
+                    loss_fn=self.training_setups[tag]["loss_fn"],
+                    optimizer=self.training_setups[tag]["optimizer"],
+                    lr_scheduler=self.training_setups[tag]["lr_scheduler"],
+                    epoch=self.epoch,
+                    start_epoch=0,
+                    valid_loss=ensemble_valid_losses[tag],
+                    logger=logger,
+                    device=self.training_setups[tag]["device"],
+                    max_grad_norm=self.training_setups[tag][
+                        "max_grad_norm"
+                    ],
+                    output_args=self.training_setups[tag]["output_args"],
+                    ema=self.training_setups[tag]["ema"],
+                )
+            # the validation errors are averages over the ensemble members
             if (
-                self.epoch == self.max_initial_epochs
-            ):  # TODO: change to a different variable (shares with al-algo right now)
-                logging.info("Maximum number of epochs reached.")
-                return True
+                self.epoch % self.valid_skip == 0
+                or (self.epoch + 1) % self.valid_skip == 0
+            ):
+                (
+                    ensemble_valid_losses,
+                    valid_loss,
+                    metrics,
+                    _
+                ) = validate_epoch(
+                    ensemble=self.ensemble,
+                    training_setups=self.training_setups,
+                    valid_loaders=self.ensemble_model_sets[tag][
+                        "valid_loader"
+                        ],
+                    logger=logger,
+                    log_errors=self.model_settings.MISC.error_table,
+                    epoch=self.epoch,
+                    multihead=self.use_multihead_model,
+                )
+                self.current_valid = metrics["mae_f"]
+
+                if self.analysis:
+                    self._handle_analysis(
+                        valid_loss=valid_loss,
+                        ensemble_valid_losses=ensemble_valid_losses,
+                    )
+
+                for tag, model in self.ensemble.items():
+                    save_checkpoint(
+                        checkpoint_handler=self.training_setups[tag][
+                            "checkpoint_handler"
+                        ],
+                        training_setup=self.training_setups[tag],
+                        model=model,
+                        epoch=self.epoch,
+                        keep_last=False,
+                    )
+                    save_datasets(
+                        self.ensemble,
+                        self.ensemble_ase_sets,
+                        path=self.dataset_dir / "initial",
+                        initial=True,
+                    )
+                if self.create_restart:
+                    self._update_restart_dict()
+                    np.save(
+                        self.initial_ds_restart_path,
+                        self.init_ds_restart_dict,
+                    )
+                if (
+                    self.desired_acc * self.desired_acc_scale_idg
+                    >= self.current_valid
+                ):
+                    logging.info(
+                        f"Accuracy criterion reached at step {self.step}."
+                    )
+                    logging.info(
+                        f"Criterion: {self.desired_acc * self.desired_acc_scale_idg}; Current accuracy: {self.current_valid}."
+                    )
+
+                    break
+
+            self.epoch += 1
+
+        if (
+            self.epoch == self.max_initial_epochs
+        ):  # TODO: change to a different variable (shares with al-algo right now)
+            logging.info("Maximum number of epochs reached.")
+            return True
 
     def _sample_and_train(self):
         """
         Combines the sampling of points and the training of the ensemble members
         in one method (easier for overwritting for derived classes).
         """
-        if self.rank == 0:
-            logging.info(f"Sampling new points at step {self.step}.")
+        logging.info(f"Sampling new points at step {self.step}.")
         self.sampled_points = []
         # in case SCF fails to converge no point is returned
         while len(self.sampled_points) == 0:
@@ -362,14 +360,13 @@ class InitialDatasetProcedure(PrepareInitialDatasetProcedure):
             )
             self.md_drivers[idx] = dyn
 
-        if self.rank == 0:
-            logging.info(
-                f'Using following settings for MDs:'
-            )
-            log_yaml_block(
-                "MD_SETTINGS",
-                self.md_settings
-            )
+        logging.info(
+            f'Using following settings for MDs:'
+        )
+        log_yaml_block(
+            "MD_SETTINGS",
+            self.md_settings
+        )
 
         self._setup_calcs()
 
@@ -383,28 +380,27 @@ class InitialDatasetProcedure(PrepareInitialDatasetProcedure):
 
             self._sample_and_train()
         
-        if self.rank == 0:
             
-            if self.converge_initial:
-                logging.info("Converging initial dataset models.")
-                self.converge()
+        if self.converge_initial:
+            logging.info("Converging initial dataset models.")
+            self.converge()
 
-            save_models(
-                ensemble=self.ensemble,
-                training_setups=self.training_setups,
-                model_dir=self.model_settings.GENERAL.model_dir,
-                current_epoch=self.epoch,
-                model_settings=self.model_settings.ARCHITECTURE,
-                model_choice=self.model_choice
+        save_models(
+            ensemble=self.ensemble,
+            training_setups=self.training_setups,
+            model_dir=self.model_settings.GENERAL.model_dir,
+            current_epoch=self.epoch,
+            model_settings=self.model_settings.ARCHITECTURE,
+            model_choice=self.model_choice
+        )
+
+        if self.create_restart:
+            self._update_restart_dict()
+            self.init_ds_restart_dict["initial_ds_done"] = True
+            np.save(
+                self.initial_ds_restart_path,
+                self.init_ds_restart_dict,
             )
-
-            if self.create_restart:
-                self._update_restart_dict()
-                self.init_ds_restart_dict["initial_ds_done"] = True
-                np.save(
-                    self.initial_ds_restart_path,
-                    self.init_ds_restart_dict,
-                )
         self.logger.handlers.clear()
         self._close_aims()
         return 0
@@ -555,8 +551,7 @@ class InitialDatasetFoundational(InitialDatasetProcedure):
                 ]
             return current_point
         else:
-            if self.rank == 0:
-                logging.info("SCF not converged.")
+            logging.info("SCF not converged.")
             return None
 
     def _num_samples_per_traj(self) -> int:
@@ -591,21 +586,20 @@ class InitialDatasetFoundational(InitialDatasetProcedure):
             f"Sampling {samples_per_step} points from using foundational model."
         )
         self.sampled_points = {idx: [] for idx in self.trajectories.keys()}
-        if self.rank == 0:
-            for idx in self.trajectories.keys():
-                logging.info(f"Sampling from trajectory {idx}. Number of MD steps: "
-                             f"{self.skip_step_initial * samples_per_trajectory}.")
-                dyn = self.md_drivers[idx]
-                atoms = self.trajectories[idx]
-                for _ in range(
-                    samples_per_trajectory
-                ):
-                    current_point = self._run_MD(atoms, dyn)
-                    self.sampled_points[idx].append(current_point)
-            total_points_sampled = sum(len(points) for points in self.sampled_points.values())
-            logging.info(
-                f"Sampled {total_points_sampled} points using foundational model."
-            )
+        for idx in self.trajectories.keys():
+            logging.info(f"Sampling from trajectory {idx}. Number of MD steps: "
+                         f"{self.skip_step_initial * samples_per_trajectory}.")
+            dyn = self.md_drivers[idx]
+            atoms = self.trajectories[idx]
+            for _ in range(
+                samples_per_trajectory
+            ):
+                current_point = self._run_MD(atoms, dyn)
+                self.sampled_points[idx].append(current_point)
+        total_points_sampled = sum(len(points) for points in self.sampled_points.values())
+        logging.info(
+            f"Sampled {total_points_sampled} points using foundational model."
+        )
 
     def _sample_points(self) -> list:
         """
@@ -616,8 +610,7 @@ class InitialDatasetFoundational(InitialDatasetProcedure):
             list: List of ASE Atoms objects.
         """
         self._md_w_foundational()
-        if self.rank == 0:
-            logging.info("Recalculating energies and forces with reference method.")
+        logging.info("Recalculating energies and forces with reference method.")
         recalculated_points = []
         for idx in self.trajectories.keys():
             for atoms in self.sampled_points[idx]:
@@ -638,13 +631,12 @@ class InitialDatasetFoundational(InitialDatasetProcedure):
                 " without using PARSL for multiple geometries."
             )
         self.aims_calc = self._setup_aims_calculator(self.atoms[0])
-        if self.rank == 0:
-            logging.info(
-                f"Initial dataset generation with foundational model: {self.foundational_model}."
-            )
-            foundational_calc = self._setup_foundational()
-            for idx in self.trajectories.keys():
-                self.trajectories[idx].calc = foundational_calc
+        logging.info(
+            f"Initial dataset generation with foundational model: {self.foundational_model}."
+        )
+        foundational_calc = self._setup_foundational()
+        for idx in self.trajectories.keys():
+            self.trajectories[idx].calc = foundational_calc
 
     def _close_aims(self):
         """
@@ -687,61 +679,60 @@ class InitialDatasetPARSL(InitialDatasetFoundational):
                 " to use this feature."
             )
 
-        if self.rank == 0:
-            logging.info("Setting up PARSL for initial dataset generation.")
-            parsl_setup_dict = prepare_parsl(
-                cluster_settings=self.cluster_settings,
-                output_dir=self.output_dir,
-            )
-            self.config = parsl_setup_dict["config"]
-            self.calc_dir = parsl_setup_dict["calc_dir"]
-            self.clean_dirs = parsl_setup_dict["clean_dirs"]
-            self.launch_str = parsl_setup_dict["launch_str"]
-            self.calc_idx = parsl_setup_dict["calc_idx"]
+        logging.info("Setting up PARSL for initial dataset generation.")
+        parsl_setup_dict = prepare_parsl(
+            cluster_settings=self.cluster_settings,
+            output_dir=self.output_dir,
+        )
+        self.config = parsl_setup_dict["config"]
+        self.calc_dir = parsl_setup_dict["calc_dir"]
+        self.clean_dirs = parsl_setup_dict["clean_dirs"]
+        self.launch_str = parsl_setup_dict["launch_str"]
+        self.calc_idx = parsl_setup_dict["calc_idx"]
             
-            self.parsl_func_input = {
-                "ase_aims_command": self.launch_str,
-                "properties": self.properties,
+        self.parsl_func_input = {
+            "ase_aims_command": self.launch_str,
+            "properties": self.properties,
+        }
+            
+        if self.cluster_settings.executor == "mpi":
+            
+            num_nodes = self.cluster_settings.parsl_options.nodes_per_block
+            rank_per_nodes = self.cluster_settings.tasks_per_node
+
+            num_ranks = num_nodes * rank_per_nodes
+            self.parsl_resource_specification = {
+                "num_nodes": num_nodes,
+                "ranks_per_node": rank_per_nodes,
+                "num_ranks": num_ranks,
             }
-            
-            if self.cluster_settings.executor == "mpi":
-            
-                num_nodes = self.cluster_settings.parsl_options.nodes_per_block
-                rank_per_nodes = self.cluster_settings.tasks_per_node
-
-                num_ranks = num_nodes * rank_per_nodes
-                self.parsl_resource_specification = {
-                    "num_nodes": num_nodes,
-                    "ranks_per_node": rank_per_nodes,
-                    "num_ranks": num_ranks,
-                }
-                self.parsl_func_input["parsl_resource_specification"] = (
-                    self.parsl_resource_specification
-                )
-
-            if self.cluster_settings.executor == "workqueue":
-                cores_per_job = self.cluster_settings.cores_per_job
-                if cores_per_job is not None:
-                    memory_per_job = self.cluster_settings.memory_per_job
-                    disk_per_job = self.cluster_settings.disk_per_job
-                    self.workqueue_resource_spec = {
-                        "cores": cores_per_job,
-                        "memory": memory_per_job,
-                        "disk": disk_per_job,
-                    }
-                else:
-                    self.workqueue_resource_spec = None
-
-            if self.workqueue_resource_spec is not None:
-                self.parsl_func_input["parsl_resource_specification"] = (
-                    self.workqueue_resource_spec
-                )
-
-            handle_parsl_logger(
-                log_dir=self.log_dir / "parsl_initial_dataset.log",
+            self.parsl_func_input["parsl_resource_specification"] = (
+                self.parsl_resource_specification
             )
-            logging.info("Using following settings for the HPC environment:")
-            log_yaml_block("CLUSTER:", self.cluster_settings.model_dump())
+
+        if self.cluster_settings.executor == "workqueue":
+            cores_per_job = self.cluster_settings.cores_per_job
+            if cores_per_job is not None:
+                memory_per_job = self.cluster_settings.memory_per_job
+                disk_per_job = self.cluster_settings.disk_per_job
+                self.workqueue_resource_spec = {
+                    "cores": cores_per_job,
+                    "memory": memory_per_job,
+                    "disk": disk_per_job,
+                }
+            else:
+                self.workqueue_resource_spec = None
+
+        if self.workqueue_resource_spec is not None:
+            self.parsl_func_input["parsl_resource_specification"] = (
+                self.workqueue_resource_spec
+            )
+
+        handle_parsl_logger(
+            log_dir=self.log_dir / "parsl_initial_dataset.log",
+        )
+        logging.info("Using following settings for the HPC environment:")
+        log_yaml_block("CLUSTER:", self.cluster_settings.model_dump())
 
     def _submit_reference_job(self, atoms, idx):
         """
@@ -821,81 +812,77 @@ class InitialDatasetPARSL(InitialDatasetFoundational):
         """
         self._md_w_foundational()
         recalculated_points = []
-        if self.rank == 0:
-            logging.info("Recalculating energies and forces with reference method.")
-            job_results = {idx: {} for idx in self.sampled_points.keys()}
-            calc_launched = 0
-            # loop over different systems
-            for idx in self.sampled_points.keys():
-                # loop over geometries of different systems
-                for i, atoms in enumerate(self.sampled_points[idx]):
-                    temp_result = self._submit_reference_job(atoms, idx)
-                    job_results[idx][i] = temp_result
-                    calc_launched += 1
+        logging.info("Recalculating energies and forces with reference method.")
+        job_results = {idx: {} for idx in self.sampled_points.keys()}
+        calc_launched = 0
+        # loop over different systems
+        for idx in self.sampled_points.keys():
+            # loop over geometries of different systems
+            for i, atoms in enumerate(self.sampled_points[idx]):
+                temp_result = self._submit_reference_job(atoms, idx)
+                job_results[idx][i] = temp_result
+                calc_launched += 1
 
-            while calc_launched > 0:
-                for idx in job_results.keys():
-                    for i in list(job_results[idx].keys()):
-                        result = job_results[idx][i]
-                        if result.done():
-                            temp = result.result()
-                            current_point = self.sampled_points[idx][i]
-                            processed = self._process_reference_result(
-                                temp, current_point
+        while calc_launched > 0:
+            for idx in job_results.keys():
+                for i in list(job_results[idx].keys()):
+                    result = job_results[idx][i]
+                    if result.done():
+                        temp = result.result()
+                        current_point = self.sampled_points[idx][i]
+                        processed = self._process_reference_result(
+                            temp, current_point
+                        )
+                        if processed is None:
+                            logging.warning(
+                                f"Reference calculation failed for point {i}. Skipping."
                             )
-                            if processed is None:
-                                logging.warning(
-                                    f"Reference calculation failed for point {i}. Skipping."
-                                )
-                            else:
-                                recalculated_points.append(processed)
-                            logging.info(
-                                f"Recalculated {len(recalculated_points)} points."
-                            )
-                            del job_results[idx][i]
-                            calc_launched -= 1
-                    time.sleep(0.5)
+                        else:
+                            recalculated_points.append(processed)
+                        logging.info(
+                            f"Recalculated {len(recalculated_points)} points."
+                        )
+                        del job_results[idx][i]
+                        calc_launched -= 1
+                time.sleep(0.5)
 
-            if self.clean_dirs:
-                try:
-                    for calc_dir in self.calc_dir.glob("initial_calc_*"):
-                        shutil.rmtree(calc_dir)
-                except Exception as e:
-                    logging.error(
-                        f"Error while cleaning directories: {e}. "
-                        "Please check the directories manually."
-                    )
+        if self.clean_dirs:
+            try:
+                for calc_dir in self.calc_dir.glob("initial_calc_*"):
+                    shutil.rmtree(calc_dir)
+            except Exception as e:
+                logging.error(
+                    f"Error while cleaning directories: {e}. "
+                    "Please check the directories manually."
+                )
 
         return recalculated_points
 
     def run(self):
-        if self.rank == 0:
-            parsl.load(self.config)
+        parsl.load(self.config)
         super().run()
-        if self.rank == 0:
-            if self.clean_dirs:
-                try:
-                    shutil.rmtree(self.calc_dir)
-                except Exception as e:
-                    logging.error(
-                        f"Error while cleaning directories: {e}. "
-                        "Please check the directories manually."
-                    )
+        if self.clean_dirs:
+            try:
+                shutil.rmtree(self.calc_dir)
+            except Exception as e:
+                logging.error(
+                    f"Error while cleaning directories: {e}. "
+                    "Please check the directories manually."
+                )
 
     def _setup_calcs(
         self,
     ) -> None:
-        if self.rank == 0:
-            logging.info(
-                "Initial dataset generation with foundational "
-                f"model: {self.foundational_model}."
-            )
-            foundational_calc = self._setup_foundational(
-                model_choice=self.foundational_model,
-                foundational_model_settings=self.foundational_model_settings,
-            )
-            for idx in self.trajectories.keys():
-                self.trajectories[idx].calc = foundational_calc
+        logging.info(
+            "Initial dataset generation with foundational "
+            f"model: {self.foundational_model}."
+        )
+        foundational_calc = self._setup_foundational(
+            model_choice=self.foundational_model,
+            foundational_model_settings=self.foundational_model_settings,
+        )
+        for idx in self.trajectories.keys():
+            self.trajectories[idx].calc = foundational_calc
 
     def _close_aims(self):
         if self.close_parsl:
@@ -934,15 +921,14 @@ class InitialDatasetPARSLTeacher(InitialDatasetPARSL):
 
         idg_settings = aimsPAX_settings.INITIAL_DATASET_GENERATION
         self.teacher_reference_settings = idg_settings.teacher_reference_settings
-        if self.rank == 0:
-            logging.info(
-                "Using teacher model for reference calculations "
-                f"(type: {self.teacher_reference_settings['model_type']})."
-            )
-            log_yaml_block(
-                "teacher_reference_settings:",
-                self.teacher_reference_settings,
-            )
+        logging.info(
+            "Using teacher model for reference calculations "
+            f"(type: {self.teacher_reference_settings['model_type']})."
+        )
+        log_yaml_block(
+            "teacher_reference_settings:",
+            self.teacher_reference_settings,
+        )
 
     def _submit_reference_job(self, atoms, idx):
         """
@@ -1011,14 +997,13 @@ class InitialDatasetPARSLTeacher(InitialDatasetPARSL):
         Sets up only the foundational model for MD sampling.
         No AIMS / DFT settings are needed for teacher mode.
         """
-        if self.rank == 0:
-            logging.info(
-                "Initial dataset generation with foundational "
-                f"model: {self.foundational_model}."
-            )
-            foundational_calc = self._setup_foundational(
-                model_choice=self.foundational_model,
-                foundational_model_settings=self.foundational_model_settings,
-            )
-            for idx in self.trajectories.keys():
-                self.trajectories[idx].calc = foundational_calc
+        logging.info(
+            "Initial dataset generation with foundational "
+            f"model: {self.foundational_model}."
+        )
+        foundational_calc = self._setup_foundational(
+            model_choice=self.foundational_model,
+            foundational_model_settings=self.foundational_model_settings,
+        )
+        for idx in self.trajectories.keys():
+            self.trajectories[idx].calc = foundational_calc
