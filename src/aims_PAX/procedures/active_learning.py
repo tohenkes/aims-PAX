@@ -143,10 +143,6 @@ class ALProcedure(PrepareALProcedure):
             if self.rank == 0:
                 self.point = self.trajectories[idx].copy()
 
-            self.comm_handler.barrier()
-            self.point = self.comm_handler.bcast(self.point, root=0)
-            self.comm_handler.barrier()
-
             self.dft_manager.handle_dft_call(point=self.point, idx=idx)
             self.first_wait_after_restart[idx] = False
 
@@ -175,24 +171,8 @@ class ALProcedure(PrepareALProcedure):
             self.train_manager.perform_training(idx)
 
         # update calculators with the new models
-        self.comm_handler.barrier()
-        self.state_manager.current_valid_error = self.comm_handler.bcast(
-            self.state_manager.current_valid_error, root=0
-        )
-        self.comm_handler.barrier()
         if self.rank == 0:
             self._assign_models_to_trajectories()
-
-        self.comm_handler.barrier()
-        self.state_manager.total_epoch = self.comm_handler.bcast(
-            self.state_manager.total_epoch, root=0
-        )
-        self.state_manager.trajectory_total_epochs[idx] = (
-            self.comm_handler.bcast(
-                self.state_manager.trajectory_total_epochs[idx], root=0
-            )
-        )
-        self.comm_handler.barrier()
 
         if (
             self.state_manager.trajectory_total_epochs[idx]
@@ -282,7 +262,6 @@ class ALProcedure(PrepareALProcedure):
         if self.rank == 0:
             logging.info("Starting active learning procedure.")
 
-        self.comm_handler.barrier()
         self._al_loop()
 
         if self.rank == 0:

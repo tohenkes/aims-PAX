@@ -382,15 +382,6 @@ class InitialDatasetProcedure(PrepareInitialDatasetProcedure):
         ):
 
             self._sample_and_train()
-            # only one worker is doing the training right now,
-            # so we have to broadcast the criterion so they
-            # don't get stuck in the while loop
-            self.comm_handler.barrier()
-            self.current_valid = self.comm_handler.bcast(
-                self.current_valid, root=0
-            )
-            self.epoch = self.comm_handler.bcast(self.epoch, root=0)
-            self.comm_handler.barrier()
         
         if self.rank == 0:
             
@@ -594,7 +585,6 @@ class InitialDatasetFoundational(InitialDatasetProcedure):
         Thus, the total number of points sampled are n * n_geometries.
         """
 
-        self.comm_handler.barrier()
         samples_per_trajectory = self._num_samples_per_traj()
         samples_per_step = samples_per_trajectory * len(self.trajectories)
         logging.info(
@@ -616,11 +606,6 @@ class InitialDatasetFoundational(InitialDatasetProcedure):
             logging.info(
                 f"Sampled {total_points_sampled} points using foundational model."
             )
-        self.comm_handler.barrier()
-        self.sampled_points = self.comm_handler.bcast(
-            self.sampled_points, root=0
-        )
-        self.comm_handler.barrier()
 
     def _sample_points(self) -> list:
         """
@@ -757,7 +742,6 @@ class InitialDatasetPARSL(InitialDatasetFoundational):
             )
             logging.info("Using following settings for the HPC environment:")
             log_yaml_block("CLUSTER:", self.cluster_settings.model_dump())
-            self.comm_handler.barrier()
 
     def _submit_reference_job(self, atoms, idx):
         """

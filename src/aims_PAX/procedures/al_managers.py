@@ -224,13 +224,6 @@ class ALDataManager:
                 self.ensemble_manager.ensemble_ase_sets[tag]["train"]
             )
 
-        # Synchronize dataset length across all processes
-        self.comm_handler.barrier()
-        self.ensemble_manager.train_dataset_len = self.comm_handler.bcast(
-            self.ensemble_manager.train_dataset_len, root=0
-        )
-        self.comm_handler.barrier()
-
         # Check if maximum dataset size is reached
         if (
             self.ensemble_manager.train_dataset_len
@@ -1061,7 +1054,6 @@ class ALDFTManager:
         if self.rank == 0:
             logging.info(f"Trajectory worker {idx} is running DFT.")
 
-        self.comm_handler.barrier()
         self.point = self.recalc_dft(point)
         if not self.aims_calculator.asi.is_scf_converged:
             if self.rank == 0:
@@ -1104,7 +1096,6 @@ class ALDFTManager:
             self.state_manager.trajectory_status[idx] = "waiting"
             self.state_manager.num_workers_training += 1
 
-            self.comm_handler.barrier()
             self.state_manager.trajectory_status[idx] = "waiting"
             if self.rank == 0:
                 logging.info(
@@ -2097,25 +2088,12 @@ class ALAnalysisManager:
                         device=self.config.device,
                         dtype=self.config.model_settings.GENERAL.default_dtype,
                     )
-                self.comm_handler.barrier()
-                self.state_manager.trajectories_analysis_prediction[idx] = (
-                    self.comm_handler.bcast(
-                        self.state_manager.trajectories_analysis_prediction[
-                            idx
-                        ],
-                        root=0,
-                    )
-                )
-                self.comm_handler.barrier()
-
-            self.comm_handler.barrier()
             send_point = atoms_full_copy(point)
             send_point.arrays["forces_comm"] = (
                 self.state_manager.trajectories_analysis_prediction[idx]
             )
             send_point.info["current_MD_step"] = current_MD_step
             converged = self._analysis_dft_call(point=send_point, idx=idx)
-            self.comm_handler.barrier()
 
             self._process_analysis(
                 idx,

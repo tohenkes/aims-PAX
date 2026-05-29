@@ -215,10 +215,6 @@ class PrepareInitialDatasetProcedure:
                     + 1
                 )
 
-        self.comm_handler.barrier()
-        self.epoch = self.comm_handler.bcast(self.epoch, root=0)
-        self.comm_handler.barrier()
-
         # each ensemble member has their own initial dataset.
         # we create a ASE and model dataset because it makes
         # conversion and saving easier
@@ -1325,11 +1321,7 @@ class ALEnsemble:
 
     def _broadcast_dataset_info(self):
         """Broadcast dataset information to all ranks."""
-        self.comm_handler.barrier()
-        self.train_dataset_len = self.comm_handler.bcast(
-            self.train_dataset_len, root=0
-        )
-        self.comm_handler.barrier()
+        pass
 
     def _check_subset_size(self, data_set, set_subset_size):
 
@@ -2012,46 +2004,8 @@ class ALRestart:
                     )
 
     def _broadcast_restart_state(self):
-        """Broadcast restart state from rank 0 to all processes."""
-        self.comm_handler.barrier()
-
-        # Define attributes to broadcast
-        broadcast_attributes = [
-            "trajectory_status",
-            "trajectory_MD_steps",
-            "trajectory_total_epochs",
-            "current_valid_error",
-            "total_points_added",
-            "train_points_added",
-            "valid_points_added",
-            "num_MD_limits_reached",
-            "num_workers_training",
-            "num_workers_waiting",
-            "total_epoch",
-            "check",
-            "uncertainties",
-            "uncert_not_crossed",
-            "last_point_added",
-        ]
-
-        if self.config.analysis:
-            analysis_broadcast = [
-                "t_intervals",
-                "analysis_checks",
-                "collect_losses",
-                "collect_thresholds",
-            ]
-            if self.config.mol_idxs is not None:
-                analysis_broadcast.append("uncertainty_checks")
-            broadcast_attributes.extend(analysis_broadcast)
-
-        # Broadcast all attributes
-        for attr in broadcast_attributes:
-            value = getattr(self.state_manager, attr)
-            broadcasted_value = self.comm_handler.bcast(value, root=0)
-            setattr(self.state_manager, attr, broadcasted_value)
-
-        self.comm_handler.barrier()
+        """No-op: previously broadcast state across MPI ranks, now single-process."""
+        pass
 
     def _is_nvt_or_npt_ensemble(self) -> bool:
         """Check if ensemble type is NVT or NPT."""
