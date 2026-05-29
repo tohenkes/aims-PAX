@@ -634,7 +634,10 @@ class InitialDatasetFoundational(InitialDatasetProcedure):
         logging.info(
             f"Initial dataset generation with foundational model: {self.foundational_model}."
         )
-        foundational_calc = self._setup_foundational()
+        foundational_calc = self._setup_foundational(
+            model_choice=self.foundational_model,
+            foundational_model_settings=self.foundational_model_settings,
+        )
         for idx in self.trajectories.keys():
             self.trajectories[idx].calc = foundational_calc
 
