@@ -45,7 +45,6 @@ class ALProcedure(PrepareALProcedure):
         aimsPAX_settings: AimsPAXSettings,
         path_to_control: str = "./control.in",
         path_to_geometry: str = "./geometry.in",
-        use_mpi: bool = True,
         comm_handler: CommHandler = None,
     ):
 
@@ -54,7 +53,6 @@ class ALProcedure(PrepareALProcedure):
             aimsPAX_settings=aimsPAX_settings,
             path_to_control=path_to_control,
             path_to_geometry=path_to_geometry,
-            use_mpi=use_mpi,
             comm_handler=comm_handler,
         )
 
@@ -438,7 +436,6 @@ class ALProcedurePARSL(ALProcedure):
             aimsPAX_settings=aimsPAX_settings,
             path_to_control=path_to_control,
             path_to_geometry=path_to_geometry,
-            use_mpi=False,
         )
 
         logging.info("Using following settings for the HPC environment:")

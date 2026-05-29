@@ -11,7 +11,6 @@ from typing import List
 from pathlib import Path
 
 RANK = 0
-WORLD_SIZE = 1
 from yaml import safe_load
 
 

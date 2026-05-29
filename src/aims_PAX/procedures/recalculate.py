@@ -15,7 +15,6 @@ import shutil
 import time
 
 RANK = 0
-WORLD_SIZE = 1
 try:
     import parsl
 except ImportError:

@@ -675,8 +675,8 @@ class InitialDatasetFoundationalParallel(InitialDatasetFoundational):
     training of the ensemble members and the saving of the datasets.
 
     Uses a "foundational" model to sample points. These are then recomputed
-    using DFT. Runs in parallel using MPI. The MD using the foundational
-    model is propagted while DFT is being run.
+    using DFT via PARSL. The MD using the foundational
+    model is propagated while DFT is being run.
 
     !!! WARNING: Not recommended (especially for large systems) as the
         model can generate strange geometries when run to long, which
@@ -1023,7 +1023,6 @@ class InitialDatasetPARSL(InitialDatasetFoundational):
             aimsPAX_settings=aimsPAX_settings,
             path_to_control=path_to_control,
             path_to_geometry=path_to_geometry,
-            use_mpi=False,
         )
         self.close_parsl = close_parsl
         self.workqueue_resource_spec = None

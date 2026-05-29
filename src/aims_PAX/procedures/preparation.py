@@ -81,7 +81,6 @@ class PrepareInitialDatasetProcedure:
         aimsPAX_settings: AimsPAXSettings,
         path_to_control: str = "./control.in", #TODO: Rename
         path_to_geometry: str = "./geometry.in",
-        use_mpi: bool = True,
     ) -> None:
         """
         Args:
@@ -91,10 +90,9 @@ class PrepareInitialDatasetProcedure:
                                                 Defaults to "./control.in".
             path_to_geometry (str, optional): Path to the initial geometry.
                                                 Defaults to "./geometry.in".
-            use_mpi (bool, optional): Whether to use MPI. Defaults to True.
         """
 
-        self.comm_handler = CommHandler(use_mpi=use_mpi)
+        self.comm_handler = CommHandler()
         self.rank = self.comm_handler.get_rank()
         self.world_size = self.comm_handler.get_size()
 
@@ -2155,12 +2153,11 @@ class PrepareALProcedure:
         aimsPAX_settings: AimsPAXSettings,
         path_to_control: str = "./control.in",
         path_to_geometry: str = "./geometry.in",
-        use_mpi: bool = True,
         comm_handler: CommHandler = None,
     ):
         """Initialize the active learning procedure."""
         # Setup communication first
-        self._setup_communication(comm_handler, use_mpi)
+        self._setup_communication(comm_handler)
 
         # Initialize configuration
         self.config = ALConfiguration(
@@ -2242,12 +2239,12 @@ class PrepareALProcedure:
         # TODO: Remove hardcode
         self.use_scheduler = False
 
-    def _setup_communication(self, comm_handler: CommHandler, use_mpi: bool):
-        """Setup MPI communication."""
+    def _setup_communication(self, comm_handler: CommHandler):
+        """Setup communication."""
         if comm_handler is not None:
             self.comm_handler = comm_handler
         else:
-            self.comm_handler = CommHandler(use_mpi=use_mpi)
+            self.comm_handler = CommHandler()
 
         self.rank = self.comm_handler.get_rank()
         self.world_size = self.comm_handler.get_size()
