@@ -35,7 +35,6 @@ from aims_PAX.tools.utilities.utilities import (
     mh_to_sh_model,
     AIMSControlParser,
 )
-from aims_PAX.tools.utilities.mpi_utils import CommHandler
 from aims_PAX.tools.model_tools.training_tools import (
     setup_model_training,
     reset_model_optimizer,
@@ -81,13 +80,11 @@ class ALDataManager:
         config: ALConfiguration,
         ensemble_manager: ALEnsemble,
         state_manager: ALStateManager,
-        comm_handler: CommHandler,
     ):
 
         self.config = config
         self.ensemble_manager = ensemble_manager
         self.state_manager = state_manager
-        self.comm_handler = comm_handler
 
     def handle_received_point(
         self, idx: int, received_point: np.ndarray
@@ -1016,12 +1013,10 @@ class ALDFTManager:
         config: ALConfiguration,
         ensemble_manager: ALEnsemble,
         state_manager: ALStateManager,
-        comm_handler: CommHandler,
     ):
         self.config = config
         self.ensemble_manager = ensemble_manager
         self.state_manager = state_manager
-        self.comm_handler = comm_handler
 
         self.control_parser = AIMSControlParser()
         self._handle_aims_settings(path_to_control)
@@ -1181,7 +1176,6 @@ class ALDFTManagerSerial(ALDFTManager):
         config: ALConfiguration,
         ensemble_manager: ALEnsemble,
         state_manager: ALStateManager,
-        comm_handler: CommHandler,
         data_manager: ALDataManager,
         path_to_geometry: str = "geometry.in",
     ):
@@ -1190,7 +1184,6 @@ class ALDFTManagerSerial(ALDFTManager):
             config=config,
             ensemble_manager=ensemble_manager,
             state_manager=state_manager,
-            comm_handler=comm_handler,
         )
         self.aims_calculator = self._setup_aims_calculator(
             atoms=read(path_to_geometry)
@@ -1216,7 +1209,7 @@ class ALDFTManagerSerial(ALDFTManager):
             )
 
         calc = asi4py.asecalc.ASI_ASE_calculator(
-            self.config.ASI_path, init_via_ase, self.comm_handler.comm, atoms
+            self.config.ASI_path, init_via_ase, None, atoms
         )
         return calc
     
@@ -1239,12 +1232,10 @@ class ALReferenceManagerPARSL:
         config: ALConfiguration,
         ensemble_manager: ALEnsemble,
         state_manager: ALStateManager,
-        comm_handler: CommHandler,
     ):
         self.config = config
         self.ensemble_manager = ensemble_manager
         self.state_manager = state_manager
-        self.comm_handler = comm_handler
 
         parsl_setup_dict = prepare_parsl(
             cluster_settings=self.config.cluster_settings,
@@ -1411,13 +1402,11 @@ class ALDFTReferenceManagerPARSL(ALReferenceManagerPARSL):
         config: ALConfiguration,
         ensemble_manager: ALEnsemble,
         state_manager: ALStateManager,
-        comm_handler: CommHandler,
     ):
         super().__init__(
             config=config,
             ensemble_manager=ensemble_manager,
             state_manager=state_manager,
-            comm_handler=comm_handler,
         )
 
         self.control_parser = AIMSControlParser()
@@ -1504,13 +1493,11 @@ class ALTeacherModelManagerPARSL(ALReferenceManagerPARSL):
         config: ALConfiguration,
         ensemble_manager: ALEnsemble,
         state_manager: ALStateManager,
-        comm_handler: CommHandler,
     ):
         super().__init__(
             config=config,
             ensemble_manager=ensemble_manager,
             state_manager=state_manager,
-            comm_handler=comm_handler,
         )
         self.teacher_reference_settings = teacher_reference_settings
         self.model_type = teacher_reference_settings["model_type"]
@@ -1566,14 +1553,12 @@ class ALRunningManager:
         state_manager: ALStateManager,
         ensemble_manager: ALEnsemble,
         mlff_manager: ALCalculatorMLFF,
-        comm_handler: CommHandler,
         dft_manager: ALDFTManager,
     ):
         self.config = config
         self.state_manager = state_manager
         self.ensemble_manager = ensemble_manager
         self.mlff_manager = mlff_manager
-        self.comm_handler = comm_handler
         self.dft_manager = dft_manager
 
     def check_all_trajectories_reached_limit(self) -> bool:
@@ -1917,13 +1902,11 @@ class ALAnalysisManager:
         dft_manager: ALDFTManager,
         state_manager: ALStateManager,
         md_manager: ALMD,
-        comm_handler: CommHandler,
     ):
         self.config = config
         self.ensemble_manager = ensemble_manager
         self.dft_manager = dft_manager
         self.state_manager = state_manager
-        self.comm_handler = comm_handler
         self.md_manager = md_manager
 
         self.aims_calculator = self.dft_manager.aims_calculator
@@ -2169,7 +2152,6 @@ class ALAnalysisManagerPARSL(ALAnalysisManager):
         dft_manager: ALDFTReferenceManagerPARSL,
         state_manager: ALStateManager,
         md_manager: ALMD,
-        comm_handler: CommHandler,
     ):
         super().__init__(
             config=config,
@@ -2177,7 +2159,6 @@ class ALAnalysisManagerPARSL(ALAnalysisManager):
             dft_manager=dft_manager,
             state_manager=state_manager,
             md_manager=md_manager,
-            comm_handler=comm_handler,
         )
         self.analysis_queue = queue.Queue()
         self.analysis_counter = {

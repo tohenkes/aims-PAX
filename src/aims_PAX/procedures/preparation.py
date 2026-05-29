@@ -48,7 +48,6 @@ from aims_PAX.tools.model_tools.train_epoch import (
     validate_epoch_ensemble,
 )
 from aims_PAX.tools.model_tools.training_tools import setup_model_training
-from aims_PAX.tools.utilities.mpi_utils import CommHandler
 import ase
 import logging
 from ase.calculators.aims import Aims, AimsProfile
@@ -92,7 +91,6 @@ class PrepareInitialDatasetProcedure:
                                                 Defaults to "./geometry.in".
         """
 
-        self.comm_handler = CommHandler()
 
         self.log_dir = Path(aimsPAX_settings.MISC.log_dir)
         logger_level = getattr(logging, model_settings.MISC.log_level, logging.INFO)
@@ -413,7 +411,7 @@ class PrepareInitialDatasetProcedure:
                 "Please install it to use the AIMS calculator."
             )
         calc = asi4py.asecalc.ASI_ASE_calculator(
-            self.ASI_path, init_via_ase, self.comm_handler.comm, atoms
+            self.ASI_path, init_via_ase, None, atoms
         )
         return calc
 
@@ -996,9 +994,8 @@ class ALConfiguration:
 class ALStateManager:
     """Manages the state of trajectories, ensembles, and analysis data."""
 
-    def __init__(self, config: ALConfiguration, comm_handler):
+    def __init__(self, config: ALConfiguration):
         self.config = config
-        self.comm_handler = comm_handler
 
         # Initialize state dictionaries
         self.trajectories = {}
@@ -1181,9 +1178,8 @@ class ALStateManager:
 class ALEnsemble:
     """Manages ensemble setup and dataset handling for active learning."""
 
-    def __init__(self, config: ALConfiguration, comm_handler):
+    def __init__(self, config: ALConfiguration):
         self.config = config
-        self.comm_handler = comm_handler
 
         # System properties
         self.z = None
@@ -1413,11 +1409,9 @@ class ALCalculatorMLFF:
         self,
         config: ALConfiguration,
         ensemble_manager: ALEnsemble,
-        comm_handler,
     ):
         self.config = config
         self.ensemble_manager = ensemble_manager
-        self.comm_handler = comm_handler
 
         # model calculator
         self.models = None
@@ -1641,11 +1635,9 @@ class ALMD:
         self,
         config: ALConfiguration,
         state_manager: ALStateManager,
-        comm_handler,
     ):
         self.config = config
         self.state_manager = state_manager
-        self.comm_handler = comm_handler
         self.train_dataset_len = 0
 
         self.md_settings, _ = normalize_md_settings(
@@ -1841,14 +1833,12 @@ class ALRestart:
         self,
         config: ALConfiguration,
         state_manager: ALStateManager,
-        comm_handler,
         md_manager: ALMD,
         ensemble_manager: ALEnsemble,
     ):
         self.config = config
         self.state_manager = state_manager
         self.md_manager = md_manager
-        self.comm_handler = comm_handler
         self.ensemble_manager = ensemble_manager
 
         if config.create_restart:
@@ -2078,12 +2068,8 @@ class PrepareALProcedure:
         aimsPAX_settings: AimsPAXSettings,
         path_to_control: str = "./control.in",
         path_to_geometry: str = "./geometry.in",
-        comm_handler: CommHandler = None,
     ):
         """Initialize the active learning procedure."""
-        # Setup communication first
-        self._setup_communication(comm_handler)
-
         # Initialize configuration
         self.config = ALConfiguration(
             model_settings,
@@ -2108,18 +2094,17 @@ class PrepareALProcedure:
         )
         log_yaml_block(self.config.model_choice, model_settings.model_dump())
         # Initialize all managers
-        self.state_manager = ALStateManager(self.config, self.comm_handler)
-        self.ensemble_manager = ALEnsemble(self.config, self.comm_handler)
+        self.state_manager = ALStateManager(self.config)
+        self.ensemble_manager = ALEnsemble(self.config)
         self.mlff_manager = ALCalculatorMLFF(
-            self.config, self.ensemble_manager, self.comm_handler
+            self.config, self.ensemble_manager
         )
         self.md_manager = ALMD(
-            self.config, self.state_manager, self.comm_handler
+            self.config, self.state_manager
         )
         self.restart_manager = ALRestart(
             self.config,
             self.state_manager,
-            self.comm_handler,
             self.md_manager,
             self.ensemble_manager,
         )
@@ -2159,14 +2144,6 @@ class PrepareALProcedure:
 
         # TODO: Remove hardcode
         self.use_scheduler = False
-
-    def _setup_communication(self, comm_handler: CommHandler):
-        """Setup communication."""
-        if comm_handler is not None:
-            self.comm_handler = comm_handler
-        else:
-            self.comm_handler = CommHandler()
-
 
     def _setup_logging(self):
         """Setup logging configuration."""

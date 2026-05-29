@@ -23,7 +23,6 @@ from aims_PAX.tools.utilities.utilities import (
     save_models,
     log_yaml_block,
 )
-from aims_PAX.tools.utilities.mpi_utils import CommHandler
 from ..settings import AimsPAXSettings, ModelSettings
 
 try:
@@ -45,7 +44,6 @@ class ALProcedure(PrepareALProcedure):
         aimsPAX_settings: AimsPAXSettings,
         path_to_control: str = "./control.in",
         path_to_geometry: str = "./geometry.in",
-        comm_handler: CommHandler = None,
     ):
 
         super().__init__(
@@ -53,7 +51,6 @@ class ALProcedure(PrepareALProcedure):
             aimsPAX_settings=aimsPAX_settings,
             path_to_control=path_to_control,
             path_to_geometry=path_to_geometry,
-            comm_handler=comm_handler,
         )
 
         self.data_manager = None
@@ -66,7 +63,6 @@ class ALProcedure(PrepareALProcedure):
             state_manager=self.state_manager,
             ensemble_manager=self.ensemble_manager,
             mlff_manager=self.mlff_manager,
-            comm_handler=self.comm_handler,
             dft_manager=self.dft_manager,
         )
 
@@ -330,7 +326,6 @@ class ALProcedureSerial(ALProcedure):
             config=self.config,
             ensemble_manager=self.ensemble_manager,
             state_manager=self.state_manager,
-            comm_handler=self.comm_handler,
         )
 
         self.train_manager = ALTrainingManager(
@@ -348,7 +343,6 @@ class ALProcedureSerial(ALProcedure):
             config=self.config,
             ensemble_manager=self.ensemble_manager,
             state_manager=self.state_manager,
-            comm_handler=self.comm_handler,
             data_manager=self.data_manager,
             path_to_geometry=path_to_geometry,
         )
@@ -359,7 +353,6 @@ class ALProcedureSerial(ALProcedure):
             dft_manager=self.dft_manager,
             state_manager=self.state_manager,
             md_manager=self.md_manager,
-            comm_handler=self.comm_handler,
         )
 
         self.run_manager = ALRunningManager(
@@ -367,7 +360,6 @@ class ALProcedureSerial(ALProcedure):
             state_manager=self.state_manager,
             ensemble_manager=self.ensemble_manager,
             mlff_manager=self.mlff_manager,
-            comm_handler=self.comm_handler,
             dft_manager=self.dft_manager,
         )
     
@@ -409,7 +401,6 @@ class ALProcedurePARSL(ALProcedure):
             config=self.config,
             ensemble_manager=self.ensemble_manager,
             state_manager=self.state_manager,
-            comm_handler=self.comm_handler,
         )
 
         self.train_manager = ALTrainingManager(
@@ -428,7 +419,6 @@ class ALProcedurePARSL(ALProcedure):
                 config=self.config,
                 ensemble_manager=self.ensemble_manager,
                 state_manager=self.state_manager,
-                comm_handler=self.comm_handler,
             )
         else:
             self.reference_manager = ALDFTReferenceManagerPARSL(
@@ -436,7 +426,6 @@ class ALProcedurePARSL(ALProcedure):
                 config=self.config,
                 ensemble_manager=self.ensemble_manager,
                 state_manager=self.state_manager,
-                comm_handler=self.comm_handler,
             )
         # Backward-compatible alias
         self.dft_manager = self.reference_manager
@@ -448,14 +437,12 @@ class ALProcedurePARSL(ALProcedure):
                 dft_manager=self.reference_manager,
                 state_manager=self.state_manager,
                 md_manager=self.md_manager,
-                comm_handler=self.comm_handler,
             )
         self.run_manager = ALRunningManager(
             config=self.config,
             state_manager=self.state_manager,
             ensemble_manager=self.ensemble_manager,
             mlff_manager=self.mlff_manager,
-            comm_handler=self.comm_handler,
             dft_manager=self.reference_manager,
         )
 
