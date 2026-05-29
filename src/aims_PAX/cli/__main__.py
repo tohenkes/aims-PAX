@@ -6,16 +6,10 @@ from aims_PAX.procedures.initial_dataset import (
 )
 from aims_PAX.procedures.active_learning import (
     ALProcedureSerial,
-    ALProcedureParallel,
     ALProcedurePARSL,
 )
 from aims_PAX.tools.utilities.input_utils import read_input_files
 import argparse
-
-try:
-    from mpi4py import MPI
-except (ImportError, RuntimeError):
-    MPI = None
 
 
 def main():
@@ -84,14 +78,7 @@ def main():
     if aimsPAX_settings.INITIAL_DATASET_GENERATION.converge_initial:
         initial_ds.converge()
 
-    if aimsPAX_settings.ACTIVE_LEARNING.parallel:
-        al = ALProcedureParallel(
-            model_settings=model_settings,
-            aimsPAX_settings=aimsPAX_settings,
-            path_to_control=path_to_control,
-            path_to_geometry=path_to_geometry,
-        )
-    elif "CLUSTER" in aimsPAX_settings.model_fields_set:
+    if "CLUSTER" in aimsPAX_settings.model_fields_set:
         al = ALProcedurePARSL(
             model_settings=model_settings,
             aimsPAX_settings=aimsPAX_settings,
@@ -111,9 +98,6 @@ def main():
 
     if aimsPAX_settings.ACTIVE_LEARNING.converge_al:
         al.converge()
-
-    if MPI is not None:
-        MPI.Finalize()
 
 
 if __name__ == "__main__":

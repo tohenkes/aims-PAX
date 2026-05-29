@@ -342,10 +342,6 @@ class ALSettings(ProjectBaseModel):
         default=None,
         description="Path to the compiled FHI-aims library for direct force and energy evaluation via API."
     )
-    parallel: bool = Field(
-        default=False,
-        description="Whether to run multiple active learning trajectories in parallel using multiprocessing."
-    )
     intermol_crossed_limit: int = Field(
         default=10,
         description="Max uncertainty threshold crossings allowed for intermolecular interactions before stopping."
