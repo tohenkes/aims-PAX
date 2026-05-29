@@ -1970,7 +1970,6 @@ class ALRestart:
                     )
 
     def _broadcast_restart_state(self):
-        """No-op: previously broadcast state across MPI ranks, now single-process."""
         pass
 
     def _is_nvt_or_npt_ensemble(self) -> bool:

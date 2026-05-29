@@ -223,11 +223,7 @@ class ALProcedure(PrepareALProcedure):
             )
         )
 
-        self.point, prediction, uncertainty, current_MD_step = (
-            self.run_manager.synchronize_mpi_data(
-                point, prediction, uncertainty, current_MD_step
-            )
-        )
+        self.point = point
         self.run_manager.process_uncertainty_decision(
             idx, uncertainty, self.point
         )
@@ -371,8 +367,7 @@ class ALProcedurePARSL(ALProcedure):
     Implementation of the active learning procedure using PARSL.
     This class handles the DFT calculations using PARSL via
     threads. Multiple DFT calculations can be run in parallel
-    without the need for MPI and ML tasks run in parallel to
-    DFT.
+    with ML tasks running concurrently with DFT.
     """
 
     def __init__(

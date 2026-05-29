@@ -1761,28 +1761,6 @@ class ALRunningManager:
 
         return should_freeze
 
-    def synchronize_mpi_data(
-        self,
-        point: ase.Atoms,
-        prediction: np.ndarray,
-        uncertainty: float,
-        current_MD_step: int,
-    ) -> tuple:
-        """
-        Synchronize data across MPI ranks.
-
-        Args:
-            point (ase.Atoms): Current point.
-            prediction (np.ndarray): Prediction data.
-            uncertainty (float): Uncertainty value.
-            current_MD_step (int): Current MD step.
-
-        Returns:
-            tuple: Contains point, prediction, uncertainty,
-                    and current MD step.
-        """
-        return point, prediction, uncertainty, current_MD_step
-
     def process_uncertainty_decision(
         self, idx: int, uncertainty: np.ndarray, point: ase.Atoms
     ):
