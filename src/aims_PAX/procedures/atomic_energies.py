@@ -6,14 +6,12 @@ from aims_PAX.tools.utilities import (
 )
 import ase
 import logging
-from mpi4py import MPI
 from asi4py.asecalc import ASI_ASE_calculator
 from typing import List
 from pathlib import Path
 
-WORLD_COMM = MPI.COMM_WORLD
-WORLD_SIZE = WORLD_COMM.Get_size()
-RANK = WORLD_COMM.Get_rank()
+RANK = 0
+WORLD_SIZE = 1
 from yaml import safe_load
 
 
@@ -92,7 +90,6 @@ class E0Calculator:
         self.handle_aims_settings(path_to_control)
 
     def __call__(self):
-        MPI.COMM_WORLD.Barrier()
         self.get_atomic_energies()
         if RANK == 0:
             out_path = self.output_dir / "atomic_energies.npz"
@@ -166,6 +163,6 @@ class E0Calculator:
             calc.write_input(asi.atoms)
 
         atoms.calc = ASI_ASE_calculator(
-            self.ASI_path, init_via_ase, MPI.COMM_WORLD, atoms
+            self.ASI_path, init_via_ase, None, atoms
         )
         return atoms

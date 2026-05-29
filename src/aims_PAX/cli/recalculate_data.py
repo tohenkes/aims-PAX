@@ -1,5 +1,4 @@
 from aims_PAX.procedures.recalculate import ReCalculatorPARSL
-from mpi4py import MPI
 import argparse
 
 

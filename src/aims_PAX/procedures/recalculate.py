@@ -4,7 +4,6 @@ from aims_PAX.tools.utilities.utilities import AIMSControlParser
 import ase
 from ase.io import read, write
 import logging
-from mpi4py import MPI
 from asi4py.asecalc import ASI_ASE_calculator
 from yaml import safe_load
 from aims_PAX.tools.utilities.parsl_utils import(
@@ -15,9 +14,8 @@ from aims_PAX.tools.utilities.parsl_utils import(
 import shutil
 import time
 
-WORLD_COMM = MPI.COMM_WORLD
-WORLD_SIZE = WORLD_COMM.Get_size()
-RANK = WORLD_COMM.Get_rank()
+RANK = 0
+WORLD_SIZE = 1
 try:
     import parsl
 except ImportError:
@@ -96,10 +94,8 @@ class ReCalculator:
         self.calc = self.setup_calculator(self.data[0])
 
     def __call__(self):
-        MPI.COMM_WORLD.Barrier()
         self.recalculate()
-        if RANK == 0:
-            write("recalculated_data.xyz", self.recalc_data)
+        write("recalculated_data.xyz", self.recalc_data)
 
     def handle_aims_settings(self, path_to_control: str):
         """
@@ -123,7 +119,6 @@ class ReCalculator:
 
         self.recalc_data = []
         for i, mol in enumerate(self.data):
-            MPI.COMM_WORLD.Barrier()
             point = mol.copy()
             self.calc.calculate(mol, properties=["energy", "forces"])
             if RANK == 0:
@@ -167,7 +162,7 @@ class ReCalculator:
             calc.write_inputfiles(asi.atoms, properties=self.properties)
 
         calc = ASI_ASE_calculator(
-            self.ASI_path, init_via_ase, MPI.COMM_WORLD, atoms
+            self.ASI_path, init_via_ase, None, atoms
         )
         return calc
 
