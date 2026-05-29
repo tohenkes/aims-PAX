@@ -314,7 +314,7 @@ class ALSettings(ProjectBaseModel):
     )
     replay_strategy: str = Field(
         default="full_dataset",
-        description="Method for replaying data during training (e.g., 'full_dataset' or 'random_batch')."
+        description="Method for replaying data during training (e.g., 'full_dataset' or 'random_subset')."
     )
     train_subset_size: int | None = None
     valid_subset_size: int| None = None

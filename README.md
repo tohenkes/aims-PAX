@@ -50,7 +50,7 @@ To run *aims-PAX*, one has to specify the settings for FHI aims, the MACE model 
 
 1. make sure the following files are in the working directory:
     - ```control.in```, 
-    - ```mace.yaml```,
+    - ```model.yaml```,
     - ```aimsPAX.yaml```
     - either specify a geometry as `geometry.in` or provide a path in the `MISC` settings under `path_to_geometry`. For the latter, you can also specify a path to folder containing multiple geometry files (see Multi-system sampling).
 2. run ```aims-PAX ``` in the directory
@@ -59,11 +59,11 @@ The settings are explained below and *aims-PAX* automatically runs the all neces
 
 Take a look at the example and its explanation (`example/explanation.md`) for more details.
 
-**Note:** The models are named like this: `{name_exp}_{seed}.model` where `name_exp` is set in `mace.yaml` (see Settings/MACE settings section below)
+**Note:** The models are named like this: `{name_exp}_{seed}.model` where `name_exp` is set in `model.yaml` (see Settings/Model settings section below)
 
 Both procedures, initial dataset acquisition and active learning, are classes that can be used independently from each other. To only create an initial dataset you can run ```aims-PAX-initial-ds ```. Equivalently, to only run the active learning procedure (given that the previous step has been done or all the necessary files are present), just run ```aims-PAX-al```.
 
-**Note:** you can also change the names of the settings file and run `aims-PAX --model_settings path/to/my_mace.yaml --aimsPAX-settings path/to/my_aimspax.yaml` for example.
+**Note:** you can also change the names of the settings file and run `aims-PAX --model-settings path/to/my_model.yaml --aimsPAX-settings path/to/my_aimspax.yaml` for example.
 
 ### Common Pitfalls
 
@@ -172,7 +172,10 @@ After the initial dataset generation is finished *aims PAX* does not converge th
 | uncert\_not\_crossed\_limit | `int`            | `50000`           | Max consecutive steps without crossing uncertainty threshold after which the a point is treated as if it crossed the threshold. This is done in case the models are overly confident for a long time.         |
 | valid\_ratio                | `float`          | `0.1`             | Fraction of data reserved for validation during active learning.                                                                                                                                              |
 | valid\_skip                 | `int`            | `1`               | Rate at which validation of model during training is performed.                                                                                                                                               |
-| replay\_strategy            | `str`            | `full_dataset`    | Method for replaying data during training. Default (`full_dataset`) means, full dataset is used. With `random_batch` only a single batch with the new point from AL and randomly sampled old points are used. |
+| replay\_strategy            | `str`            | `full_dataset`    | Method for replaying data during training. Default (`full_dataset`) uses the full dataset. With `random_subset` only a randomly sampled subset of the data plus the new point is used. |
+| train\_subset\_size         | `int` or `None`  | `None`            | Size of the training subset when `replay_strategy` is `random_subset`. Required when using `random_subset`. |
+| valid\_subset\_size         | `int` or `None`  | `None`            | Size of the validation subset when `replay_strategy` is `random_subset`. If `None`, defaults to the full validation set. |
+| update\_md\_checkpoints     | `bool`           | `True`            | Whether to update MD checkpoints after a new DFT-labeled structure is accepted. Set to `False` to keep checkpoints at the last uncertainty crossing. |
 
 ##### Convergence 
 
@@ -282,10 +285,10 @@ Similarly, the source of the control files can be either a single path or a dict
 | **mol_idxs       | `list` or `None` | `None`   | List of molecule indices to consider; `None` means all. |
 -->
 
-### MACE settings (mace.yaml)
+### Model settings (model.yaml)
 
-The settings for the MACE model(s) are specified in the YAML file called 'mace.yaml'.
-We use exactly the same names as employed in the [MACE code](https://github.com/ACEsuit/mace). This is mostly to show the structure of the `.yaml` file and its default values.
+The settings for the model(s) are specified in the YAML file called `model.yaml`.
+For MACE we use exactly the same names as employed in the [MACE code](https://github.com/ACEsuit/mace). This is mostly to show the structure of the `.yaml` file and its default values.
 
 #### GENERAL
 
