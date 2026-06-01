@@ -780,3 +780,18 @@ class AimsPAXSettings(ProjectBaseModel):
                     "dispatched via PARSL (set use_teacher_reference=True to skip DFT)"
                 )
         return self
+
+    @model_validator(mode="after")
+    def resolve_all_dirs(self) -> "AimsPAXSettings":
+        output_dir = self.MISC.output_dir
+        sub_models: list[ProjectBaseModel] = [self.MISC, ]
+        if self.CLUSTER is not None:
+            sub_models.append(self.CLUSTER.parsl_options)
+        for sub_model in sub_models:
+            for field_name in sub_model._relative_dirs:
+                path = getattr(sub_model, field_name)
+                if not path.is_absolute():
+                    setattr(sub_model, field_name, output_dir / path)
+                getattr(sub_model, field_name).mkdir(parents=True, exist_ok=True)
+
+        return self
