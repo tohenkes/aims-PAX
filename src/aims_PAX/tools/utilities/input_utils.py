@@ -36,6 +36,8 @@ def read_input_files(
     """
     aimsPAX_settings = AimsPAXSettings.from_file(path_to_aimsPAX_settings)
     model_settings = ModelSettings.from_file(path_to_model_settings)
+    # set the relative directories on model settings
+    model_settings.resolve_dirs(output_dir=aimsPAX_settings.MISC.output_dir)
 
     all_teacher = aimsPAX_settings.MISC.all_teacher
     if all_teacher:
@@ -53,7 +55,7 @@ def read_input_files(
 
 
 def read_geometry(
-    geometry_source: Union[str, Path, dict[int, str]],
+    geometry_source: Union[str, Path, dict[int, str | Path]],
     log: bool = False
 ) -> dict[int, ase.Atoms]:
     """
@@ -106,8 +108,8 @@ def read_geometry(
         atoms_dict = {}
         for key, value in geometry_source.items():
             assert (
-                type(value) is str
-            ), "All entries in the geometry dictionary must be strings."
+                type(value) in (str, Path)
+            ), "All entries in the geometry dictionary must be strings or paths."
             assert (
                 type(key) is int
             ), "All keys in the geometry dictionary must be integers."
@@ -116,7 +118,7 @@ def read_geometry(
                 atoms_dict[key] = atoms
                 if log:
                     logging.info(
-                        f"Geometry {key}: {value.split('.')[0]} is at index {key}."
+                        f"Geometry {value} is at index {key}."
                     )
             except Exception as e:
                 logging.error(f"Failed to read geometry file {value}: {e}")

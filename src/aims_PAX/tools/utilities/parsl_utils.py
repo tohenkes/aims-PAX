@@ -1,4 +1,5 @@
 import os
+import socket
 import threading
 from parsl.config import Config
 from parsl.executors import WorkQueueExecutor, MPIExecutor
@@ -11,7 +12,6 @@ import re
 import logging
 from ase.io import ParseError
 from pathlib import Path
-from typing import Optional
 
 from aims_PAX.settings.project import ClusterSettings
 
@@ -198,6 +198,7 @@ def create_parsl_config(cluster_settings: ClusterSettings, output_dir: Path = Pa
             executors=[
                 WorkQueueExecutor(
                     label=label,
+                    address=socket.gethostbyname(socket.gethostname()),
                     port=0,
                     shared_fs=True,  # assumes shared file system
                     function_dir=str(function_dir),

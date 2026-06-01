@@ -6,7 +6,7 @@ import logging
 import sys
 import yaml
 from pathlib import Path
-from typing import Union, Dict, Any, Annotated
+from typing import Union, Dict, Any, Annotated, ClassVar
 
 from pydantic import BaseModel, RootModel, Field, DirectoryPath,  FilePath, model_validator, field_validator, \
     ValidationError
@@ -15,6 +15,7 @@ from typing_extensions import Literal
 
 class ProjectBaseModel(BaseModel):
     """Base class for settings in the project"""
+    _relative_dirs: ClassVar[list[str]] = []
 
     @classmethod
     def from_file(cls, f: str | Path | io.FileIO) -> "ProjectBaseModel":
@@ -361,6 +362,8 @@ class ALSettings(ProjectBaseModel):
         default=None,
         description="Teacher reference model settings. Must contain 'model_type' when use_teacher_reference=True."
     )
+    save_trajectories: bool = Field(default=True)
+    save_trajectories_interval: int = Field(default=5)
 
     @model_validator(mode="after")
     def validate_species_dir(self) -> "ALSettings":
@@ -423,7 +426,7 @@ class LangevinNVT(TrajectoryMDBase):
         default=0.001,
         description="Friction coefficient for Langevin dynamics (in fs<sup>-1</sup>)."
     )
-    MD_seed: int = Field(
+    seed: int = Field(
         default=42,
         description="Random number generator seed for Langevin dynamics."
     )
@@ -565,13 +568,13 @@ class ParslSettings(ProjectBaseModel):
         default=None,
         description="Directory for Parsl function storage."
     )
+    _relative_dirs: ClassVar[list[str]] = ["parsl_info_dir", "run_dir", "function_dir"]
+
     @model_validator(mode="after")
-    def create_directories(self) -> "ParslSettings":
+    def set_directories(self) -> "ParslSettings":
         """Automatically create the parsl directories if they don't exist."""
         self.run_dir = self.run_dir or self.parsl_info_dir / "run_dir"
         self.function_dir = self.function_dir or self.parsl_info_dir / "function_dir"
-        for path in (self.parsl_info_dir, self.run_dir, self.function_dir):
-            path.mkdir(parents=True, exist_ok=True)
         return self
 
 
@@ -664,7 +667,7 @@ class MiscSettings(ProjectBaseModel):
         description="Whether to create restart files during the run."
     )
     output_dir: Path = Field(
-        default=Path.cwd(),
+        default_factory=Path.cwd,
         description="Root directory where output files are saved."
     )
 
@@ -705,6 +708,7 @@ class MiscSettings(ProjectBaseModel):
         description="Specific molecule indices to include/exclude."
     )
     all_teacher: bool = False
+    _relative_dirs: ClassVar[list[str]] = ["dataset_dir", "log_dir"]
 
     @model_validator(mode="after")
     def validate_indices_match(self) -> "MiscSettings":
@@ -719,21 +723,6 @@ class MiscSettings(ProjectBaseModel):
             if not geo_indices.issubset(ctrl_indices):
                 missing = geo_indices - ctrl_indices
                 raise ValueError(f"Geometry indices {missing} are missing corresponding control files.")
-
-        return self
-
-    @model_validator(mode="after")
-    def validate_directories(self) -> "MiscSettings":
-        """
-        Checks if directories are absolute. Creates them if they do not exist.
-        """
-        # Maybe put the validator on the parent folder?
-        if not self.dataset_dir.is_absolute():
-            self.dataset_dir = self.output_dir / self.dataset_dir
-        self.dataset_dir.mkdir(parents=True, exist_ok=True)
-        if not self.log_dir.is_absolute():
-            self.log_dir = self.output_dir / self.log_dir
-        self.log_dir.mkdir(parents=True, exist_ok=True)
         return self
 
 
@@ -790,4 +779,19 @@ class AimsPAXSettings(ProjectBaseModel):
                     "CLUSTER.launch_str is required when DFT calculations are "
                     "dispatched via PARSL (set use_teacher_reference=True to skip DFT)"
                 )
+        return self
+
+    @model_validator(mode="after")
+    def resolve_all_dirs(self) -> "AimsPAXSettings":
+        output_dir = self.MISC.output_dir
+        sub_models: list[ProjectBaseModel] = [self.MISC, ]
+        if self.CLUSTER is not None:
+            sub_models.append(self.CLUSTER.parsl_options)
+        for sub_model in sub_models:
+            for field_name in sub_model._relative_dirs:
+                path = getattr(sub_model, field_name)
+                if not path.is_absolute():
+                    setattr(sub_model, field_name, output_dir / path)
+                getattr(sub_model, field_name).mkdir(parents=True, exist_ok=True)
+
         return self

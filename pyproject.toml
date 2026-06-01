@@ -19,15 +19,21 @@ classifiers = [
 dependencies = [
     "numpy==1.26.4",
     "mace-torch==0.3.14",
-    "so3krates-torch==0.1",
+    "so3krates-torch==0.2.0",
     "torch==2.8.0",
     "pyyaml>=6.0.1",
     "ase==3.26.0",
     "parsl==2024.12.16",
-    "pydantic>=2.0,<3.0.0"
+    "pydantic>=2.0,<3.0.0",
+    "pyfhiaims",
+    "pymatgen-io-aims",
+    "monty"
 ]
 
 [project.optional-dependencies]
+atomate2 = [
+    "atomate2",
+]
 tests = [
     "pytest",
     "pytest-cov"
@@ -42,6 +48,8 @@ where = ["src"]
 [project.scripts]
 aims-PAX = "aims_PAX.cli.__main__:main"
 aims-PAX-initial-ds = "aims_PAX.cli.create_initial_ds:main"
+aims-PAX-idg-v2 = "aims_PAX.atomate2.cli.idg:main"
+aims-PAX-idg-split = "aims_PAX.atomate2.cli.datasets:main"
 aims-PAX-al = "aims_PAX.cli.al_procedure_only:main"
 aims-PAX-recalc = "aims_PAX.cli.recalculate_data:main"
 aims-PAX-test = "aims_PAX.cli.test_ensemble:main"

@@ -2,9 +2,9 @@
 Model settings for aims-PAX project
 """
 from pathlib import Path
-from typing import Literal, Annotated, Union
+from typing import Literal, Annotated, Union, ClassVar
 
-from pydantic import Field, field_validator, model_validator
+from pydantic import Field, model_validator
 
 from .project import ProjectBaseModel
 
@@ -45,13 +45,7 @@ class GeneralSettings(ProjectBaseModel):
         default=42,
         description="Random seed for ensemble member generation."
     )
-
-    @field_validator("checkpoints_dir", "loss_dir", "model_dir", mode="after")
-    @classmethod
-    def create_directories(cls, v: Path) -> Path:
-        """Automatically create the training directories if they don't exist."""
-        v.mkdir(parents=True, exist_ok=True)
-        return v
+    _relative_dirs: ClassVar[list[str]] = ["checkpoints_dir", "loss_dir", "model_dir"]
 
 
 class BaseArchitectureSettings(ProjectBaseModel):
@@ -177,7 +171,6 @@ class SO3LRArchitectureSettings(So3kratesArchitectureSettings):
     dispersion_energy_cutoff_lr_damping: float = 2.0
     r_max_lr: float | None = None
     neighborlist_format_lr: str = "sparse"
-    atomic_energies: dict[int, float] | None = None
     use_multihead_model: bool = False
     num_multihead_heads: int | None = None
 
@@ -382,3 +375,13 @@ class ModelSettings(ProjectBaseModel):
             self.GENERAL.model_choice = self.ARCHITECTURE.model_choice
         return self
 
+
+    def resolve_dirs(self, output_dir: Path) -> None:
+        """Call this from wherever output_dir is known."""
+        sub_models: list[ProjectBaseModel] = [self.GENERAL, ]
+        for sub_model in sub_models:
+            for field_name in sub_model._relative_dirs:
+                path = getattr(sub_model, field_name)
+                if not path.is_absolute():
+                    setattr(sub_model, field_name, output_dir / path)
+                getattr(sub_model, field_name).mkdir(parents=True, exist_ok=True)
