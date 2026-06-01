@@ -65,6 +65,54 @@ Both procedures, initial dataset acquisition and active learning, are classes th
 
 **Note:** you can also change the names of the settings file and run `aims-PAX --model-settings path/to/my_model.yaml --aimsPAX-settings path/to/my_aimspax.yaml` for example.
 
+### Using a teacher model instead of DFT
+
+Instead of calling FHI-aims for reference energies and forces, *aims-PAX* can use a pre-trained ML model (the "teacher") as the reference. This enables:
+- Running the full workflow on a **local machine without a DFT installation**
+- **Rapid prototyping** of active learning settings before committing to expensive DFT runs
+- **Distilling** a large foundational model (e.g. MACE-MP) into a lean custom MACE ensemble
+
+**Requirements:**
+- `CLUSTER` settings are required — teacher jobs are dispatched via PARSL. Use `type: local` for a local run.
+- For IDG: `initial_sampling` must be `foundational` (not `aimd`).
+- `species_dir` is not needed when `use_teacher_reference: true`.
+- `analysis: true` is automatically disabled in AL when using a teacher model.
+
+**Supported teacher model types:**
+
+| `model_type`  | Description                                   | Extra settings                          |
+|---------------|-----------------------------------------------|-----------------------------------------|
+| `mace-mp`     | MACE-MP foundational model (no path needed)   | `mace_model: small\|medium\|large`      |
+| `mace`        | Custom trained MACE model                     | `model_path: /path/to/model`            |
+| `so3lr`       | SO3LR model                                   | `model_path: /path/to/model`            |
+| `so3krates`   | SO3krates model                               | `model_path: /path/to/model`            |
+
+**Example — full local run using MACE-MP as teacher** (see also `example/local/`):
+
+```yaml
+INITIAL_DATASET_GENERATION:
+  initial_sampling: foundational
+  foundational_model: mace-mp
+  foundational_model_settings:
+    mace_model: small
+  use_teacher_reference: true
+  teacher_reference_settings:
+    model_type: mace-mp
+    mace_model: small
+  # ... other IDG settings ...
+
+ACTIVE_LEARNING:
+  use_teacher_reference: true
+  teacher_reference_settings:
+    model_type: mace-mp
+    mace_model: small
+  # ... other AL settings ...
+
+CLUSTER:
+  type: local
+  max_workers: 4
+```
+
 ### Common Pitfalls
 
 1. **Not specifying all required settings:** Take a look at the settings below. Mandatory ones are marked by *.
@@ -132,6 +180,8 @@ Example settings can be found in the `examples` folder.
 | valid_ratio                      | `float`          | `0.1`                 | Fraction of data reserved for validation.                                                                                                                                            |
 | valid_skip                       | `int`            | `1`                   | Number of training steps between validation runs in initial training.                                                                                                                |
 | distinct_model_set               | `bool`           | `True`                | Wether to sample enough points so that every model in the ensemble gets distinct data sets. If set to `False`, the same dataset is used for all ensemble members.                    |
+| use\_teacher\_reference          | `bool`           | `False`               | Use an ML model instead of DFT for reference calculations. Requires `CLUSTER` settings. `initial_sampling` must be `foundational`. See [Using a teacher model](#using-a-teacher-model-instead-of-dft). |
+| teacher\_reference\_settings     | `dict`           | `{}`                  | Teacher model configuration. Must contain `model_type` when `use_teacher_reference: true`. See [Using a teacher model](#using-a-teacher-model-instead-of-dft). |
 
 
 ##### Convergence 
@@ -175,7 +225,9 @@ After the initial dataset generation is finished *aims PAX* does not converge th
 | replay\_strategy            | `str`            | `full_dataset`    | Method for replaying data during training. Default (`full_dataset`) uses the full dataset. With `random_subset` only a randomly sampled subset of the data plus the new point is used. |
 | train\_subset\_size         | `int` or `None`  | `None`            | Size of the training subset when `replay_strategy` is `random_subset`. Required when using `random_subset`. |
 | valid\_subset\_size         | `int` or `None`  | `None`            | Size of the validation subset when `replay_strategy` is `random_subset`. If `None`, defaults to the full validation set. |
-| update\_md\_checkpoints     | `bool`           | `True`            | Whether to update MD checkpoints after a new DFT-labeled structure is accepted. Set to `False` to keep checkpoints at the last uncertainty crossing. |
+| update\_md\_checkpoints     | `bool`           | `True`            | Whether to advance the MD restart checkpoint to each newly accepted DFT-labeled point. When `False`, the checkpoint is never updated and the trajectory always restarts from the initial geometry on DFT failure. |
+| use\_teacher\_reference     | `bool`           | `False`           | Use an ML model instead of DFT for reference calculations. Requires `CLUSTER` settings. Disables `analysis`. See [Using a teacher model](#using-a-teacher-model-instead-of-dft). |
+| teacher\_reference\_settings| `dict`           | `None`            | Teacher model configuration. Must contain `model_type` when `use_teacher_reference: true`. See [Using a teacher model](#using-a-teacher-model-instead-of-dft). |
 
 ##### Convergence 
 
@@ -199,24 +251,41 @@ THESE ARE NOT ACTIVELY USED IN *aims-PAX* BUT ARE WORKING
 
 #### CLUSTER:
 
-Settings for PARSL.
+Settings for PARSL. Two backend types are available: `local` (thread pool, for local runs and teacher models) and `slurm` (HPC cluster).
 
-| Parameter                                       | Type              | Default   | Description                                                                                                                                                                                                                                                                                                   |
-|-------------------------------------------------|-------------------|-----------|---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------|
-| type                                            | `str`             | `'slurm'` | Cluster backend type. Currently only `slurm` is available.                                                                                                                                                                                                                                                    |
-| \*parsl_options                                 | `dict`            | —         | Parsl configuration options.                                                                                                                                                                                                                                                                                  |
-| &nbsp;&nbsp;&nbsp;&nbsp;&nbsp;\*nodes_per_block | `int`             | —         | Number of nodes per block.                                                                                                                                                                                                                                                                                    |
-| &nbsp;&nbsp;&nbsp;&nbsp;&nbsp;\*init_blocks     | `int`             | —         | Initial number of blocks to launch.                                                                                                                                                                                                                                                                           |
-| &nbsp;&nbsp;&nbsp;&nbsp;&nbsp;\*min_blocks      | `int`             | —         | Minimum number of blocks allowed.                                                                                                                                                                                                                                                                             |
-| &nbsp;&nbsp;&nbsp;&nbsp;&nbsp;\*max_blocks      | `int`             | —         | Maximum number of blocks allowed.                                                                                                                                                                                                                                                                             |
-| &nbsp;&nbsp;&nbsp;&nbsp;&nbsp;\*label           | `str`             | —         | Unique label for this Parsl configuration. IMPORTANT: If you run multiple instances of aims-PAX on the same machine make sure that the labels are unique for each instance!                                                                                                                                   |
-| &nbsp;&nbsp;&nbsp;&nbsp;&nbsp;run_dir           | `str`             | `None`    | Directory to store runtime files.                                                                                                                                                                                                                                                                             |
-| &nbsp;&nbsp;&nbsp;&nbsp;&nbsp;function_dir      | `str`             | `None`    | Directory for Parsl function storage.                                                                                                                                                                                                                                                                         |
-| \*slurm_str                                     | `str` (multiline) | —         | SLURM job script header specifying job resources and options.                                                                                                                                                                                                                                                 |
-| \*worker_str                                    | `str` (multiline) | —         | Shell commands to configure the environment for each worker process e.g. loading modules, activating conda environment. IMPORTANT: On most systems it's necessary to set the following environment variable so that multiple jobs don't interfere with each other: `export WORK_QUEUE_DISABLE_SHARED_PORT=1`. |
-| \*launch_str                                    | `str`             | —         | Command to run FHI aims e.g. `"srun path/to/aims/aims.XXX.scalapack.mpi.x >> aims.out"`                                                                                                                                                                                                                       |
-| \*calc_dir                                      | `str`             | —         | Path to the directory used for calculation outputs.                                                                                                                                                                                                                                                           |
-| clean_dirs                                      | `bool`            | `True`    | Whether to remove calculation directories after DFT computations.                                                                                                                                                                                                                                             |
+##### `type: local`
+
+Use this for running on a local machine, e.g. when using a teacher model instead of DFT.
+
+| Parameter   | Type           | Default              | Description                                                                    |
+|-------------|----------------|----------------------|--------------------------------------------------------------------------------|
+| type        | `str`          | —                    | `'local'` selects the local thread-pool executor.                              |
+| max_workers | `int`          | `4`                  | Number of parallel worker threads (reference jobs run concurrently).           |
+| launch_str  | `str` or `None`| `None`               | Command to run FHI-aims locally. Required only when DFT is used (not needed for teacher models). |
+| calc_dir    | `str`          | `./aims_ase_calcs`   | Directory for calculation outputs.                                             |
+| clean_dirs  | `bool`         | `True`               | Whether to remove calculation directories after completion.                    |
+
+##### `type: slurm`
+
+Use this for HPC clusters with Slurm.
+
+| Parameter                                       | Type              | Default      | Description                                                                                                                                                                                                                                                                                                   |
+|-------------------------------------------------|-------------------|--------------|---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------|
+| type                                            | `str`             | —            | `'slurm'` selects the Slurm HPC backend.                                                                                                                                                                                                                                                                      |
+| executor                                        | `str`             | `workqueue`  | PARSL executor type: `workqueue` (recommended) or `mpi` (for multi-rank DFT jobs via `srun`).                                                                                                                                                                                                                 |
+| \*parsl_options                                 | `dict`            | —            | Parsl configuration options.                                                                                                                                                                                                                                                                                  |
+| &nbsp;&nbsp;&nbsp;&nbsp;&nbsp;\*nodes_per_block | `int`             | —            | Number of nodes per block.                                                                                                                                                                                                                                                                                    |
+| &nbsp;&nbsp;&nbsp;&nbsp;&nbsp;\*init_blocks     | `int`             | —            | Initial number of blocks to launch.                                                                                                                                                                                                                                                                           |
+| &nbsp;&nbsp;&nbsp;&nbsp;&nbsp;\*min_blocks      | `int`             | —            | Minimum number of blocks allowed.                                                                                                                                                                                                                                                                             |
+| &nbsp;&nbsp;&nbsp;&nbsp;&nbsp;\*max_blocks      | `int`             | —            | Maximum number of blocks allowed.                                                                                                                                                                                                                                                                             |
+| &nbsp;&nbsp;&nbsp;&nbsp;&nbsp;\*label           | `str`             | —            | Unique label for this Parsl configuration. IMPORTANT: If you run multiple instances of aims-PAX on the same machine make sure that the labels are unique for each instance!                                                                                                                                   |
+| &nbsp;&nbsp;&nbsp;&nbsp;&nbsp;run_dir           | `str`             | `None`       | Directory to store runtime files.                                                                                                                                                                                                                                                                             |
+| &nbsp;&nbsp;&nbsp;&nbsp;&nbsp;function_dir      | `str`             | `None`       | Directory for Parsl function storage.                                                                                                                                                                                                                                                                         |
+| \*slurm_str                                     | `str` (multiline) | —            | SLURM job script header specifying job resources and options.                                                                                                                                                                                                                                                 |
+| \*worker_str                                    | `str` (multiline) | —            | Shell commands to configure the environment for each worker process e.g. loading modules, activating conda environment. IMPORTANT: On most systems it's necessary to set the following environment variable so that multiple jobs don't interfere with each other: `export WORK_QUEUE_DISABLE_SHARED_PORT=1`. |
+| \*launch_str                                    | `str`             | —            | Command to run FHI aims e.g. `"srun path/to/aims/aims.XXX.scalapack.mpi.x >> aims.out"`                                                                                                                                                                                                                       |
+| \*calc_dir                                      | `str`             | —            | Path to the directory used for calculation outputs.                                                                                                                                                                                                                                                           |
+| clean_dirs                                      | `bool`            | `True`       | Whether to remove calculation directories after DFT computations.                                                                                                                                                                                                                                             |
 
 #### MD:
 This part defines the settings for the molecular dynamics simulations during initial dataset generation and/or active learning. If only one set of settings is given, they are used for all systems/geometries. In case you want to use different settings for different systems or geometries you have specifiy which trajectory/system uses which system using their indices. Practically this means using a nested dictionary in the settings file:
