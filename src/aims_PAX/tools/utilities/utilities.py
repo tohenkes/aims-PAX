@@ -4,7 +4,6 @@ import re
 import sys
 import os
 
-import GPUtil
 import torch
 import numpy as np
 from typing import Optional, Any, Dict, Union
@@ -94,6 +93,21 @@ def get_free_vols(lines):
              fav = float(re.findall("\-?\d+(?:\.\d+)", line)[0])
              freevol.append(fav)
     return freevol
+
+
+def get_hirshfeld_charges(lines):
+    active = False
+    charges = []
+    for line in lines:
+        if not active:
+            if "Performing Hirshfeld analysis of fragment charges and moments" in line:
+                active = True
+        else:
+            if "Hirshfeld charge" in line:
+                charges.append(
+                    float(re.findall(r"\-?\d+(?:\.\d+)", line)[0])
+                )
+    return charges
 
 
 def apply_model_settings(
@@ -186,13 +200,15 @@ def create_keyspec(
     polarizability_key: str = "REF_polarizability",
     head_key: str = "head",
     charges_key: str = "REF_charges",
+    hirshfeld_ratios_key: str = "REF_hirshfeld_ratios",
     total_charge_key: str = "total_charge",
     total_spin_key: str = "total_spin"
 ) -> KeySpecification:
-    
+
     arrays_keys = {
         "forces": forces_key,
-        "charges": charges_key
+        "charges": charges_key,
+        "hirshfeld_ratios": hirshfeld_ratios_key,
     }
     
     info_keys = {
@@ -1108,7 +1124,7 @@ def save_ensemble(
         with param_context:
             torch.save(
                 model,
-                Path(model_settings["GENERAL"]["model_dir"]) / (tag + ".model"),
+                Path(model_settings.GENERAL.model_dir) / (tag + ".model"),
             )
 
 
@@ -1414,6 +1430,10 @@ class AIMSControlParser:
             #'relax_geometry',
         }
 
+        self.output_pattern = re.compile(
+            r"^\s*output\s+(\S.*)", re.IGNORECASE
+        )
+
         self.special_patterns = {
             #'many_body_dispersion': re.compile(r'^\s*(many_body_dispersion)\s', re.IGNORECASE)
             "many_body_dispersion": re.compile(
@@ -1563,6 +1583,13 @@ class AIMSControlParser:
                             else:
                                 # If no parameters are found, store an empty string
                                 aims_settings[key] = ""
+
+                match = self.output_pattern.match(line)
+                if match:
+                    if "output" not in aims_settings:
+                        aims_settings["output"] = []
+                    aims_settings["output"].append(match.group(1).strip())
+
         return aims_settings
 
 
@@ -1588,6 +1615,7 @@ class GPUMonitor(Thread):
         self.start()
 
     def run(self):
+        import GPUtil  # optional monitoring dependency
         while not self.stopped:
             # Get GPU utilization data
             gpus = GPUtil.getGPUs()

@@ -1,5 +1,6 @@
 import os
 import socket
+import threading
 from parsl.config import Config
 from parsl.executors import WorkQueueExecutor, MPIExecutor
 from parsl.executors import ThreadPoolExecutor as ParslThreadPoolExecutor
@@ -13,6 +14,38 @@ from ase.io import ParseError
 from pathlib import Path
 
 from aims_PAX.settings.project import ClusterSettings
+
+
+def _patch_mace_simplify_for_thread_safety():
+    """Patch mace.tools.compile.simplify to be a no-op in non-main threads.
+
+    MACE's simplify() calls torch.fx.symbolic_trace(), which patches
+    nn.Module.__call__ globally at the class level for the duration of
+    tracing. When this runs in a PARSL ThreadPoolExecutor thread concurrently
+    with MLFF MD in the main thread, the main thread's model sees the patched
+    __call__ and raises NameError: module is not installed as a submodule.
+
+    Skipping simplify() in non-main threads is safe: it only prepares modules
+    for torch.compile, which we do not use for teacher reference calculations.
+    Remote PARSL workers are separate processes whose function runs in their
+    own main thread, so simplify() still runs normally there.
+    """
+    try:
+        import mace.tools.compile as _mace_compile
+
+        _orig_simplify = _mace_compile.simplify
+
+        def _thread_safe_simplify(module):
+            if threading.current_thread() is threading.main_thread():
+                return _orig_simplify(module)
+            return module
+
+        _mace_compile.simplify = _thread_safe_simplify
+    except ImportError:
+        pass
+
+
+_patch_mace_simplify_for_thread_safety()
 
 
 def prepare_parsl(
@@ -122,7 +155,7 @@ def create_parsl_config(cluster_settings: ClusterSettings, output_dir: Path = Pa
             executors=[
                 ParslThreadPoolExecutor(
                     label="local",
-                    max_threads=cluster_settings.get("max_workers", 4),
+                    max_threads=cluster_settings.max_workers,
                 )
             ],
             run_dir=str(run_dir),
@@ -145,9 +178,11 @@ def create_parsl_config(cluster_settings: ClusterSettings, output_dir: Path = Pa
     worker_init_str = cluster_settings.worker_str
     slurm_options_str = cluster_settings.slurm_str
 
-    # Extract the cluster partition from the slurm options string
+    # Extract the cluster partition from the slurm options string.
+    # Handles both --partition and -p, with = or space separator, after any
+    # whitespace (including newlines from multi-line SBATCH headers).
     match = re.search(
-        r"(?: --partition| -p) *= *([\w-]*)",
+        r"(?:--partition|-p)\s*[=\s]\s*([\w-]+)",
         slurm_options_str,
         re.IGNORECASE,
     )
@@ -257,7 +292,10 @@ def recalc_dft_parsl(
         dict: Results of the DFT calculation.
     """
     from ase.calculators.aims import Aims, AimsProfile
-    from aims_PAX.tools.utilities.utilities import get_free_vols
+    from aims_PAX.tools.utilities.utilities import (
+        get_free_vols,
+        get_hirshfeld_charges,
+    )
     import os
     from ase import Atoms
     from ase.io import ParseError
@@ -294,14 +332,18 @@ def recalc_dft_parsl(
     try:
         calc.calculate(atoms=atoms, properties=properties, system_changes=None)
         results = calc.results
-        if "hirshfeld_volumes" in results.keys():
-            with open(os.path.join(directory, aims_output_file), "r") as f:
+        aims_output_path = os.path.join(directory, aims_output_file)
+        if os.path.exists(aims_output_path):
+            with open(aims_output_path, "r") as f:
                 aims_output = f.readlines()
-            free_vols = get_free_vols(aims_output)
-            hirshfeld_vols = results["hirshfeld_volumes"]
-            hirshfeld_ratios = hirshfeld_vols / free_vols
-            results["hirshfeld_ratios"] = hirshfeld_ratios
-        return calc.results
+            if "hirshfeld_volumes" in results.keys():
+                free_vols = get_free_vols(aims_output)
+                hirshfeld_vols = results["hirshfeld_volumes"]
+                results["hirshfeld_ratios"] = hirshfeld_vols / free_vols
+            hirshfeld_charges = get_hirshfeld_charges(aims_output)
+            if hirshfeld_charges:
+                results["hirshfeld_charges"] = np.array(hirshfeld_charges)
+        return results
     except ParseError as pe:
         return None
     except Exception as e:
@@ -314,6 +356,102 @@ def recalc_dft_parsl(
             f"DFT calculation failed in directory {directory}: {str(e)}"
         )
         return None
+
+
+_teacher_calc_cache: dict = {}
+_teacher_calc_lock = threading.Lock()
+
+
+def _build_teacher_calculator(
+    model_type, model_path, model_settings, properties=None
+):
+    """Build a teacher ML calculator from the given settings.
+
+    Separated from the PARSL app so it can be called in the main thread
+    for pre-loading (see preload_teacher_calculator).
+    """
+    if properties is None:
+        properties = ["energy", "forces"]
+    device = model_settings.get("device", "cpu")
+    default_dtype = model_settings.get("default_dtype", "float64")
+    compute_stress = "stress" in properties
+
+    if model_type == "mace-mp":
+        from mace.calculators import mace_mp
+
+        return mace_mp(
+            model=model_settings.get("mace_model", "small"),
+            dispersion=model_settings.get("dispersion", False),
+            default_dtype=default_dtype,
+            device=device,
+            damping=model_settings.get("damping", "bj"),
+            dispersion_xc=model_settings.get("dispersion_xc", "pbe"),
+            dispersion_cutoff=model_settings.get(
+                "dispersion_cutoff", 12.0
+            ),
+        )
+    elif model_type == "mace":
+        from mace.calculators import MACECalculator
+
+        return MACECalculator(
+            model_paths=model_path,
+            device=device,
+            default_dtype=default_dtype,
+        )
+    elif model_type in ["so3lr", "so3krates"]:
+        from so3krates_torch.calculator.so3 import TorchkratesCalculator
+
+        return TorchkratesCalculator(
+            model_paths=model_path,
+            compute_stress=compute_stress,
+            device=device,
+            default_dtype=default_dtype,
+            r_max_lr=model_settings.get("r_max_lr", None),
+            dispersion_lr_damping=model_settings.get(
+                "dispersion_lr_damping", None
+            ),
+        )
+    else:
+        raise ValueError(
+            f"Unknown teacher model type: {model_type}. "
+            "Supported types: 'mace-mp', 'mace', 'so3lr', 'so3krates'."
+        )
+
+
+def preload_teacher_calculator(
+    model_type: str,
+    model_path,
+    model_settings: dict,
+    properties=None,
+) -> None:
+    """Pre-create and cache the teacher calculator in the calling thread.
+
+    Must be called from the main thread before the parallel AL loop starts.
+    This ensures that torch.fx.symbolic_trace (triggered inside
+    SymmetricContraction.__init__ and mace.tools.compile.simplify during
+    MACECalculator construction) runs in the main thread rather than in a
+    PARSL ThreadPoolExecutor thread.  Running symbolic_trace in a non-main
+    thread while the main thread executes MLFF model forward passes causes a
+    race condition: symbolic_trace temporarily patches nn.Module.__call__ at
+    the class level, and the main thread's MLFF model hits the patched call,
+    resulting in NameError: module is not installed as a submodule.
+    """
+    if model_settings is None:
+        model_settings = {}
+    cache_key = (
+        model_type,
+        str(model_path),
+        str(sorted(model_settings.items())),
+    )
+    if cache_key not in _teacher_calc_cache:
+        logging.info(
+            f"Pre-loading teacher calculator ({model_type}) in main thread "
+            "to prevent torch.fx thread-safety issues."
+        )
+        calc = _build_teacher_calculator(
+            model_type, model_path, model_settings, properties
+        )
+        _teacher_calc_cache[cache_key] = calc
 
 
 @python_app
@@ -334,6 +472,9 @@ def recalc_teacher_model_parsl(
     pickling issues. The function needs all necessary modules as
     the PARSL worker is running completely independently of the
     main process.
+
+    For local PARSL (ThreadPoolExecutor), uses a pre-built cached calculator
+    to avoid torch.fx.symbolic_trace thread-safety issues during model init.
 
     Args:
         positions (np.ndarray): Geometry of the system.
@@ -364,59 +505,37 @@ def recalc_teacher_model_parsl(
         pbc=pbc,
     )
 
-    device = model_settings.get("device", "cpu")
-    default_dtype = model_settings.get("default_dtype", "float64")
-    compute_stress = "stress" in properties
+    cache_key = (
+        model_type,
+        str(model_path),
+        str(sorted(model_settings.items())),
+    )
+    # Local PARSL (ThreadPoolExecutor) runs in a non-main thread of the same
+    # process.  Use the pre-built cached calculator so that no new
+    # torch.fx.symbolic_trace calls happen in this thread.
+    # Remote PARSL workers are separate processes whose function runs in their
+    # own main thread; the cache is empty there, so they build a fresh
+    # calculator normally (no race condition in a dedicated process).
+    in_local_parsl_thread = (
+        threading.current_thread() is not threading.main_thread()
+    )
+    if in_local_parsl_thread and cache_key in _teacher_calc_cache:
+        try:
+            with _teacher_calc_lock:
+                calc = _teacher_calc_cache[cache_key]
+                calc.calculate(atoms=atoms, properties=properties)
+                return dict(calc.results)
+        except Exception as e:
+            logging.warning(
+                f"Teacher model calculation failed (cached calc): {str(e)}"
+            )
+            return None
 
+    # Fallback: build a fresh calculator (remote workers or cache miss).
     try:
-        if model_type == "mace-mp":
-            from mace.calculators import mace_mp
-
-            mace_model = model_settings.get("mace_model", "small")
-            dispersion = model_settings.get("dispersion", False)
-            damping = model_settings.get("damping", "bj")
-            dispersion_xc = model_settings.get("dispersion_xc", "pbe")
-            dispersion_cutoff = model_settings.get("dispersion_cutoff", 12.0)
-            calc = mace_mp(
-                model=mace_model,
-                dispersion=dispersion,
-                default_dtype=default_dtype,
-                device=device,
-                damping=damping,
-                dispersion_xc=dispersion_xc,
-                dispersion_cutoff=dispersion_cutoff,
-            )
-        elif model_type == "mace":
-            from mace.calculators import MACECalculator
-
-            calc = MACECalculator(
-                model_paths=model_path,
-                device=device,
-                default_dtype=default_dtype,
-            )
-        elif model_type in ["so3lr", "so3krates"]:
-
-            r_max_lr = model_settings.get("r_max_lr", None)
-            dispersion_lr_damping = model_settings.get(
-                "dispersion_lr_damping", None
-            )
-
-            from so3krates_torch.calculator.so3 import TorchkratesCalculator
-
-            calc = TorchkratesCalculator(
-                model_paths=model_path,
-                compute_stress=compute_stress,
-                device=device,
-                default_dtype=default_dtype,
-                r_max_lr=r_max_lr,
-                dispersion_lr_damping=dispersion_lr_damping,
-            )
-        else:
-            raise ValueError(
-                f"Unknown teacher model type: {model_type}. "
-                "Supported types: 'mace-mp', 'mace', 'so3lr', 'so3krates'."
-            )
-
+        calc = _build_teacher_calculator(
+            model_type, model_path, model_settings, properties
+        )
         calc.calculate(atoms=atoms, properties=properties)
         return calc.results
     except Exception as e:

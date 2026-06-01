@@ -1,6 +1,5 @@
 from aims_PAX.procedures.active_learning import (
     ALProcedureSerial,
-    ALProcedureParallel,
     ALProcedurePARSL,
 )
 import argparse
@@ -33,14 +32,7 @@ def main():
         )
     )
 
-    if aimsPAX_settings.ACTIVE_LEARNING.parallel:
-        al = ALProcedureParallel(
-            model_settings=model_settings,
-            aimsPAX_settings=aimsPAX_settings,
-            path_to_control=path_to_control,
-            path_to_geometry=path_to_geometry,
-        )
-    elif aimsPAX_settings.CLUSTER:
+    if aimsPAX_settings.CLUSTER:
         al = ALProcedurePARSL(
             model_settings=model_settings,
             aimsPAX_settings=aimsPAX_settings,

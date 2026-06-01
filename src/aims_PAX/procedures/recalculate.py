@@ -4,7 +4,6 @@ from aims_PAX.tools.utilities.utilities import AIMSControlParser
 import ase
 from ase.io import read, write
 import logging
-from mpi4py import MPI
 from asi4py.asecalc import ASI_ASE_calculator
 from yaml import safe_load
 from aims_PAX.tools.utilities.parsl_utils import(
@@ -15,9 +14,6 @@ from aims_PAX.tools.utilities.parsl_utils import(
 import shutil
 import time
 
-WORLD_COMM = MPI.COMM_WORLD
-WORLD_SIZE = WORLD_COMM.Get_size()
-RANK = WORLD_COMM.Get_rank()
 try:
     import parsl
 except ImportError:
@@ -62,10 +58,9 @@ class ReCalculator:
                         "species_dir"
                     ]
             except FileNotFoundError:
-                if RANK == 0:
-                    logging.error(
-                        "No basis_dir provided or found in active_learning_settings.yaml."
-                    )
+                logging.error(
+                    "No basis_dir provided or found in active_learning_settings.yaml."
+                )
 
         if aims_path is not None:
             self.ASI_path = aims_path
@@ -77,29 +72,24 @@ class ReCalculator:
                         "aims_lib_path"
                     ]
             except FileNotFoundError:
-                if RANK == 0:
-                    logging.error(
-                        "No ASI_path provided or found in active_learning_settings.yaml."
-                    )
+                logging.error(
+                    "No ASI_path provided or found in active_learning_settings.yaml."
+                )
 
         self.handle_aims_settings(path_to_control)
         idx_str = (
             f"{start_idx}:" if end_idx is None else f"{start_idx}:{end_idx}"
         )
-        if RANK == 0:
-            logging.info(f"Loading data from {path_to_data}.")
+        logging.info(f"Loading data from {path_to_data}.")
         self.data = read(path_to_data, index=idx_str)
-        if RANK == 0:
-            logging.info(f"Found cell: {self.data[0].get_cell()}")
-            logging.info("Setting up calculator.")
+        logging.info(f"Found cell: {self.data[0].get_cell()}")
+        logging.info("Setting up calculator.")
         # TODO: This only works for single species. Need to generalize for multiple species
         self.calc = self.setup_calculator(self.data[0])
 
     def __call__(self):
-        MPI.COMM_WORLD.Barrier()
         self.recalculate()
-        if RANK == 0:
-            write("recalculated_data.xyz", self.recalc_data)
+        write("recalculated_data.xyz", self.recalc_data)
 
     def handle_aims_settings(self, path_to_control: str):
         """
@@ -118,23 +108,20 @@ class ReCalculator:
         """
         Calculates the isolated atomic energies for the elements in the geometry using AIMS.
         """
-        if RANK == 0:
-            logging.info(f"Recalculating dataset.")
+        logging.info(f"Recalculating dataset.")
 
         self.recalc_data = []
         for i, mol in enumerate(self.data):
-            MPI.COMM_WORLD.Barrier()
             point = mol.copy()
             self.calc.calculate(mol, properties=["energy", "forces"])
-            if RANK == 0:
-                energies = self.calc.results["energy"]
-                forces = self.calc.results["forces"]
-                point.info["energy"] = energies
-                point.arrays["forces"] = forces
-                self.recalc_data.append(point)
-                if i % self.save_interval == 0:
-                    logging.info(f"Calculated {i+1}/{len(self.data)}")
-                    write("recalculated_data.xyz", self.recalc_data)
+            energies = self.calc.results["energy"]
+            forces = self.calc.results["forces"]
+            point.info["energy"] = energies
+            point.arrays["forces"] = forces
+            self.recalc_data.append(point)
+            if i % self.save_interval == 0:
+                logging.info(f"Calculated {i+1}/{len(self.data)}")
+                write("recalculated_data.xyz", self.recalc_data)
 
     def setup_calculator(
         self,
@@ -167,7 +154,7 @@ class ReCalculator:
             calc.write_inputfiles(asi.atoms, properties=self.properties)
 
         calc = ASI_ASE_calculator(
-            self.ASI_path, init_via_ase, MPI.COMM_WORLD, atoms
+            self.ASI_path, init_via_ase, None, atoms
         )
         return calc
 

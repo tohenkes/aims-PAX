@@ -50,7 +50,7 @@ To run *aims-PAX*, one has to specify the settings for FHI aims, the MACE model 
 
 1. make sure the following files are in the working directory:
     - ```control.in```, 
-    - ```mace.yaml```,
+    - ```model.yaml```,
     - ```aimsPAX.yaml```
     - either specify a geometry as `geometry.in` or provide a path in the `MISC` settings under `path_to_geometry`. For the latter, you can also specify a path to folder containing multiple geometry files (see Multi-system sampling).
 2. run ```aims-PAX ``` in the directory
@@ -59,11 +59,59 @@ The settings are explained below and *aims-PAX* automatically runs the all neces
 
 Take a look at the example and its explanation (`example/explanation.md`) for more details.
 
-**Note:** The models are named like this: `{name_exp}_{seed}.model` where `name_exp` is set in `mace.yaml` (see Settings/MACE settings section below)
+**Note:** The models are named like this: `{name_exp}_{seed}.model` where `name_exp` is set in `model.yaml` (see Settings/Model settings section below)
 
-Both procedures, initial dataset acquisition and active learning, are classes that can be used independently from each other. To only create an initial dataset you can run ```aims-PAX-initial-ds ```. Equivalently, to only run the active learning procedure (given that the previous step has been done or all the necessary files are present), just run ```aims-PAX-al```.
+Both procedures, initial dataset acquisition and active learning, are classes that can be used independently from each other. To only create an initial dataset you can run ```aims-PAX-initial-ds ```. Equivalently, to only run the active learning procedure (given that the previous step has been done or all the necessary files are present), just run ```aims-PAX-al```. To evaluate a trained ensemble on a test dataset, use ```aims-PAX-test```.
 
-**Note:** you can also change the names of the settings file and run `aims-PAX --model_settings path/to/my_mace.yaml --aimsPAX-settings path/to/my_aimspax.yaml` for example.
+**Note:** you can also change the names of the settings file and run `aims-PAX --model-settings path/to/my_model.yaml --aimsPAX-settings path/to/my_aimspax.yaml` for example.
+
+### Using a teacher model instead of DFT
+
+Instead of calling FHI-aims for reference energies and forces, *aims-PAX* can use a pre-trained ML model (the "teacher") as the reference. This enables:
+- Running the full workflow on a **local machine without a DFT installation**
+- **Rapid prototyping** of active learning settings before committing to expensive DFT runs
+- **Distilling** a large foundational model (e.g. MACE-MP) into a lean custom MACE ensemble
+
+**Requirements:**
+- `CLUSTER` settings are required — teacher jobs are dispatched via PARSL. Use `type: local` for a local run.
+- For IDG: `initial_sampling` must be `foundational` (not `aimd`).
+- `species_dir` is not needed when `use_teacher_reference: true`.
+- `analysis: true` is automatically disabled in AL when using a teacher model.
+
+**Supported teacher model types:**
+
+| `model_type`  | Description                                   | Extra settings                          |
+|---------------|-----------------------------------------------|-----------------------------------------|
+| `mace-mp`     | MACE-MP foundational model (no path needed)   | `mace_model: small\|medium\|large`      |
+| `mace`        | Custom trained MACE model                     | `model_path: /path/to/model`            |
+| `so3lr`       | SO3LR model                                   | `model_path: /path/to/model`; optionally `r_max_lr: <float>` and `dispersion_lr_damping: <float>` to enable long-range modules |
+| `so3krates`   | SO3krates model                               | `model_path: /path/to/model`; optionally `r_max_lr: <float>` and `dispersion_lr_damping: <float>` |
+
+**Example — full local run using MACE-MP as teacher** (see also `example/local/`):
+
+```yaml
+INITIAL_DATASET_GENERATION:
+  initial_sampling: foundational
+  foundational_model: mace-mp
+  foundational_model_settings:
+    mace_model: small
+  use_teacher_reference: true
+  teacher_reference_settings:
+    model_type: mace-mp
+    mace_model: small
+  # ... other IDG settings ...
+
+ACTIVE_LEARNING:
+  use_teacher_reference: true
+  teacher_reference_settings:
+    model_type: mace-mp
+    mace_model: small
+  # ... other AL settings ...
+
+CLUSTER:
+  type: local
+  max_workers: 4
+```
 
 ### Common Pitfalls
 
@@ -117,12 +165,15 @@ Example settings can be found in the `examples` folder.
 | desired_acc                      | `float`          | `0.0`                 | Force MAE (eV/Å) that the ensemble should reach on the validation set. Needs to be combined with `desired_acc_scale_idg`.                                                            |
 | desired_acc_scale_idg            | `float`          | `10.0`                | Scales `desired_acc` during initial dataset generation. Resulting product is accuracy that the model has to reach on the validation set before stopping the procedure at this stage. |
 | ensemble_size                    | `int`            | `4`                   | Number of models in the ensemble for uncertainty estimation.                                                                                                                         |
-| foundational_model               | `str`            | `mace-mp`             | Which foundational model to use for structure generation. Possible options: `mace-mp` or `so3lr`.                                                                                    |
-| initial_foundational_size        | `str`            | `"small"`             | Size of the foundational model used when `initial_sampling` is set to `mace-mp0`.                                                                                                    |
-| foundational_model_settings      | `dict`           | `{mace_model: small}` | Settings for the chosen foundational model for structure generation.                                                                                                                 |
-| mace_model                       | `str`            | `small`               | Type of `MACE` foundational model. See [here](https://github.com/ACEsuit/mace/blob/main/mace/calculators/foundations_models.py) for their names.                                     |
-| dispersion_lr_damping            | `str`            | `None`                | Damping parameter for dispersion interaction in `SO3LR`. Needed if `r_max_lr` is not `None`!  Part of `foundational_model_settings`.                                                 |
-| r_max_lr                         | `float`          | `None`                | Cutoff of long-range modules of `SO3LR`. Part of `foundational_model_settings`.                                                                                                      |
+| foundational_model               | `str`            | `mace-mp`             | Which foundational model to use for structure generation. Possible options: `mace-mp`, `so3lr`.                                                                                      |
+| foundational_model_settings      | `dict`           | `{mace_model: small}` | Settings for the chosen foundational model for structure generation. Available keys depend on the model type (see sub-table below).                                                  |
+| &nbsp;&nbsp;mace_model           | `str`            | `"small"`             | (`mace-mp` only) MACE-MP model size. See [here](https://github.com/ACEsuit/mace/blob/main/mace/calculators/foundations_models.py) for available names.                              |
+| &nbsp;&nbsp;r_max_lr             | `float` or `None`| `None`                | (`so3lr` only) Long-range cutoff radius (Å) for SO3LR. If `None`, long-range modules are disabled.                                                                                  |
+| &nbsp;&nbsp;dispersion_lr_damping| `float` or `None`| `None`                | (`so3lr` only) Damping parameter for SO3LR long-range dispersion. Required when `r_max_lr` is set.                                                                                   |
+| &nbsp;&nbsp;dispersion           | `bool`           | `False`               | Enable DFT+D dispersion correction during structure-generation MD.                                                                                                                   |
+| &nbsp;&nbsp;dispersion_xc        | `str`            | `"pbe"`               | XC functional used for the dispersion correction.                                                                                                                                    |
+| &nbsp;&nbsp;dispersion_cutoff    | `float`          | `12.0`                | Cutoff radius (Å) for the dispersion correction.                                                                                                                                     |
+| &nbsp;&nbsp;damping              | `str`            | `"bj"`                | Damping scheme for the dispersion correction (e.g. `"bj"` for Becke-Johnson).                                                                                                       |
 | intermediate_epochs_idg          | `int`            | `5`                   | Number of intermediate epochs between dataset growth steps in initial training.                                                                                                      |
 | max_initial_epochs               | `int` or `float` | `np.inf`              | Maximum number of epochs for the initial training stage.                                                                                                                             |
 | max_initial_set_size             | `int` or `float` | `np.inf`              | Maximum size of the initial training dataset.                                                                                                                                        |
@@ -131,7 +182,10 @@ Example settings can be found in the `examples` folder.
 | skip_step_initial                | `int`            | `25`                  | Intervals at which a structure is taken from the MD simulation either for the dataset in case of AIMD or for DFT in case of using an MLFF.                                           |
 | valid_ratio                      | `float`          | `0.1`                 | Fraction of data reserved for validation.                                                                                                                                            |
 | valid_skip                       | `int`            | `1`                   | Number of training steps between validation runs in initial training.                                                                                                                |
-| distinct_model_set               | `bool`           | `True`                | Wether to sample enough points so that every model in the ensemble gets distinct data sets. If set to `False`, the same dataset is used for all ensemble members.                    |
+| distinct_model_sets              | `bool`           | `True`                | Whether to sample enough points so that every model in the ensemble gets distinct data sets. If set to `False`, the same dataset is used for all ensemble members.                   |
+| initial_sampling                 | `str`            | `"foundational"`      | Sampling strategy for the initial dataset. `"foundational"` uses an ML model for structure generation (recommended); `"aimd"` runs ab initio MD directly with FHI-aims.            |
+| use\_teacher\_reference          | `bool`           | `False`               | Use an ML model instead of DFT for reference calculations. Requires `CLUSTER` settings. `initial_sampling` must be `foundational`. See [Using a teacher model](#using-a-teacher-model-instead-of-dft). |
+| teacher\_reference\_settings     | `dict`           | `{}`                  | Teacher model configuration. Must contain `model_type` when `use_teacher_reference: true`. See [Using a teacher model](#using-a-teacher-model-instead-of-dft). |
 
 
 ##### Convergence 
@@ -172,7 +226,15 @@ After the initial dataset generation is finished *aims PAX* does not converge th
 | uncert\_not\_crossed\_limit | `int`            | `50000`           | Max consecutive steps without crossing uncertainty threshold after which the a point is treated as if it crossed the threshold. This is done in case the models are overly confident for a long time.         |
 | valid\_ratio                | `float`          | `0.1`             | Fraction of data reserved for validation during active learning.                                                                                                                                              |
 | valid\_skip                 | `int`            | `1`               | Rate at which validation of model during training is performed.                                                                                                                                               |
-| replay\_strategy            | `str`            | `full_dataset`    | Method for replaying data during training. Default (`full_dataset`) means, full dataset is used. With `random_batch` only a single batch with the new point from AL and randomly sampled old points are used. |
+| replay\_strategy            | `str`            | `full_dataset`    | Method for replaying data during training. Default (`full_dataset`) uses the full dataset. With `random_subset` only a randomly sampled subset of the data plus the new point is used. |
+| train\_subset\_size         | `int` or `None`  | `None`            | Size of the training subset when `replay_strategy` is `random_subset`. Required when using `random_subset`. |
+| valid\_subset\_size         | `int` or `None`  | `None`            | Size of the validation subset when `replay_strategy` is `random_subset`. If `None`, defaults to the full validation set. |
+| update\_md\_checkpoints     | `bool`           | `True`            | Whether to advance the MD restart checkpoint to each newly accepted DFT-labeled point. When `False`, the checkpoint is never updated and the trajectory always restarts from the initial geometry on DFT failure. |
+| use\_foundational           | `bool`           | `False`           | Use a foundational ML model to generate additional candidate structures during active learning (instead of or in addition to MLFF MD). |
+| foundational\_model\_settings | `dict` or `None` | `None`          | Settings for the foundational model used when `use_foundational: true`. Same structure as `foundational_model_settings` in `INITIAL_DATASET_GENERATION`. |
+| extend\_existing\_final\_ds | `bool`           | `False`           | Append to an existing final dataset rather than overwriting it when re-running active learning. |
+| use\_teacher\_reference     | `bool`           | `False`           | Use an ML model instead of DFT for reference calculations. Requires `CLUSTER` settings. Disables `analysis`. See [Using a teacher model](#using-a-teacher-model-instead-of-dft). |
+| teacher\_reference\_settings| `dict`           | `None`            | Teacher model configuration. Must contain `model_type` when `use_teacher_reference: true`. See [Using a teacher model](#using-a-teacher-model-instead-of-dft). |
 
 ##### Convergence 
 
@@ -196,24 +258,45 @@ THESE ARE NOT ACTIVELY USED IN *aims-PAX* BUT ARE WORKING
 
 #### CLUSTER:
 
-Settings for PARSL.
+Settings for PARSL. Two backend types are available: `local` (thread pool, for local runs and teacher models) and `slurm` (HPC cluster).
 
-| Parameter                                       | Type              | Default   | Description                                                                                                                                                                                                                                                                                                   |
-|-------------------------------------------------|-------------------|-----------|---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------|
-| type                                            | `str`             | `'slurm'` | Cluster backend type. Currently only `slurm` is available.                                                                                                                                                                                                                                                    |
-| \*parsl_options                                 | `dict`            | —         | Parsl configuration options.                                                                                                                                                                                                                                                                                  |
-| &nbsp;&nbsp;&nbsp;&nbsp;&nbsp;\*nodes_per_block | `int`             | —         | Number of nodes per block.                                                                                                                                                                                                                                                                                    |
-| &nbsp;&nbsp;&nbsp;&nbsp;&nbsp;\*init_blocks     | `int`             | —         | Initial number of blocks to launch.                                                                                                                                                                                                                                                                           |
-| &nbsp;&nbsp;&nbsp;&nbsp;&nbsp;\*min_blocks      | `int`             | —         | Minimum number of blocks allowed.                                                                                                                                                                                                                                                                             |
-| &nbsp;&nbsp;&nbsp;&nbsp;&nbsp;\*max_blocks      | `int`             | —         | Maximum number of blocks allowed.                                                                                                                                                                                                                                                                             |
-| &nbsp;&nbsp;&nbsp;&nbsp;&nbsp;\*label           | `str`             | —         | Unique label for this Parsl configuration. IMPORTANT: If you run multiple instances of aims-PAX on the same machine make sure that the labels are unique for each instance!                                                                                                                                   |
-| &nbsp;&nbsp;&nbsp;&nbsp;&nbsp;run_dir           | `str`             | `None`    | Directory to store runtime files.                                                                                                                                                                                                                                                                             |
-| &nbsp;&nbsp;&nbsp;&nbsp;&nbsp;function_dir      | `str`             | `None`    | Directory for Parsl function storage.                                                                                                                                                                                                                                                                         |
-| \*slurm_str                                     | `str` (multiline) | —         | SLURM job script header specifying job resources and options.                                                                                                                                                                                                                                                 |
-| \*worker_str                                    | `str` (multiline) | —         | Shell commands to configure the environment for each worker process e.g. loading modules, activating conda environment. IMPORTANT: On most systems it's necessary to set the following environment variable so that multiple jobs don't interfere with each other: `export WORK_QUEUE_DISABLE_SHARED_PORT=1`. |
-| \*launch_str                                    | `str`             | —         | Command to run FHI aims e.g. `"srun path/to/aims/aims.XXX.scalapack.mpi.x >> aims.out"`                                                                                                                                                                                                                       |
-| \*calc_dir                                      | `str`             | —         | Path to the directory used for calculation outputs.                                                                                                                                                                                                                                                           |
-| clean_dirs                                      | `bool`            | `True`    | Whether to remove calculation directories after DFT computations.                                                                                                                                                                                                                                             |
+##### `type: local`
+
+Use this for running on a local machine, e.g. when using a teacher model instead of DFT.
+
+| Parameter   | Type           | Default              | Description                                                                    |
+|-------------|----------------|----------------------|--------------------------------------------------------------------------------|
+| type        | `str`          | —                    | `'local'` selects the local thread-pool executor.                              |
+| max_workers | `int`          | `4`                  | Number of parallel worker threads (reference jobs run concurrently).           |
+| launch_str  | `str` or `None`| `None`               | Command to run FHI-aims locally. Required only when DFT is used (not needed for teacher models). |
+| calc_dir    | `str`          | `./aims_ase_calcs`   | Directory for calculation outputs.                                             |
+| clean_dirs  | `bool`         | `True`               | Whether to remove calculation directories after completion.                    |
+
+##### `type: slurm`
+
+Use this for HPC clusters with Slurm.
+
+| Parameter                                       | Type              | Default      | Description                                                                                                                                                                                                                                                                                                   |
+|-------------------------------------------------|-------------------|--------------|---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------|
+| type                                            | `str`             | —            | `'slurm'` selects the Slurm HPC backend.                                                                                                                                                                                                                                                                      |
+| executor                                        | `str`             | `workqueue`  | PARSL executor type: `workqueue` (recommended) or `mpi` (for multi-rank DFT jobs via `srun`).                                                                                                                                                                                                                 |
+| \*parsl_options                                 | `dict`            | —            | Parsl configuration options.                                                                                                                                                                                                                                                                                  |
+| &nbsp;&nbsp;&nbsp;&nbsp;&nbsp;\*nodes_per_block | `int`             | —            | Number of nodes per block.                                                                                                                                                                                                                                                                                    |
+| &nbsp;&nbsp;&nbsp;&nbsp;&nbsp;\*init_blocks     | `int`             | —            | Initial number of blocks to launch.                                                                                                                                                                                                                                                                           |
+| &nbsp;&nbsp;&nbsp;&nbsp;&nbsp;\*min_blocks      | `int`             | —            | Minimum number of blocks allowed.                                                                                                                                                                                                                                                                             |
+| &nbsp;&nbsp;&nbsp;&nbsp;&nbsp;\*max_blocks      | `int`             | —            | Maximum number of blocks allowed.                                                                                                                                                                                                                                                                             |
+| &nbsp;&nbsp;&nbsp;&nbsp;&nbsp;\*label           | `str`             | —            | Unique label for this Parsl configuration. IMPORTANT: If you run multiple instances of aims-PAX on the same machine make sure that the labels are unique for each instance!                                                                                                                                   |
+| &nbsp;&nbsp;&nbsp;&nbsp;&nbsp;run_dir           | `str`             | `None`       | Directory to store runtime files.                                                                                                                                                                                                                                                                             |
+| &nbsp;&nbsp;&nbsp;&nbsp;&nbsp;function_dir      | `str`             | `None`       | Directory for Parsl function storage.                                                                                                                                                                                                                                                                         |
+| \*slurm_str                                     | `str` (multiline) | —            | SLURM job script header specifying job resources and options.                                                                                                                                                                                                                                                 |
+| \*worker_str                                    | `str` (multiline) | —            | Shell commands to configure the environment for each worker process e.g. loading modules, activating conda environment. IMPORTANT: On most systems it's necessary to set the following environment variable so that multiple jobs don't interfere with each other: `export WORK_QUEUE_DISABLE_SHARED_PORT=1`. |
+| \*launch_str                                    | `str`             | —            | Command to run FHI aims e.g. `"srun path/to/aims/aims.XXX.scalapack.mpi.x >> aims.out"`                                                                                                                                                                                                                       |
+| \*calc_dir                                      | `str`             | —            | Path to the directory used for calculation outputs.                                                                                                                                                                                                                                                           |
+| clean_dirs                                      | `bool`            | `True`       | Whether to remove calculation directories after DFT computations.                                                                                                                                                                                                                                             |
+| tasks_per_node                                  | `int`             | `1`          | Number of MPI tasks per node for each DFT job.                                                                                                                                                                                                                                                                |
+| cores_per_job                                   | `int` or `None`   | `None`       | CPU cores to request per DFT job. If `None`, not explicitly set.                                                                                                                                                                                                                                              |
+| memory_per_job                                  | `int` or `None`   | `None`       | Memory (MB) to request per DFT job. If `None`, not explicitly set.                                                                                                                                                                                                                                            |
+| disk_per_job                                    | `int`             | `1000`       | Disk space (MB) to request per DFT job.                                                                                                                                                                                                                                                                       |
 
 #### MD:
 This part defines the settings for the molecular dynamics simulations during initial dataset generation and/or active learning. If only one set of settings is given, they are used for all systems/geometries. In case you want to use different settings for different systems or geometries you have specifiy which trajectory/system uses which system using their indices. Practically this means using a nested dictionary in the settings file:
@@ -236,13 +319,13 @@ Currently these settings are used for *ab initio* and MLFF MD.
 | Parameter       | Type    | Default    | Description                                                                                                            |
 |-----------------|---------|------------|------------------------------------------------------------------------------------------------------------------------|
 | \*stat_ensemble | `str`   | —          | Statistical ensemble for molecular dynamics (e.g., `NVT`, `NPT`).                                                      |
-| barostat        | `str`   | `MTK`      | Barostat used when `NPT` is chosen. Stands for Full [Martyna-Tobias-Klein barostat](https://doi.org/10.1063/1.467468). |
+| barostat        | `str`   | `"mtk"`    | Barostat used when `NPT` is chosen. Options: `"mtk"` (full [Martyna-Tobias-Klein](https://doi.org/10.1063/1.467468)), `"isomtk"` (isotropic MTK, same parameters), `"berendsen"` (Berendsen NPT, no extra parameters needed). |
 | friction        | `float` | `0.001`    | Friction coefficient for Langevin dynamics (in fs<sup>-1</sup>).                                                       |
 | MD_seed         | `int`   | `42`       | Random number generator seed for Langevin dynamics.                                                                    |
 | pchain          | `int`   | `3`        | Number of thermostats in the barostat chain for MTK dynamics.                                                          |
 | pdamp           | `float` | `500`      | Pressure damping for MTK dynamics (`1000*timestep`).                                                                   |
 | ploop           | `int`   | `1`        | Number of loops for barostat integration in MTK dynamics.                                                              |
-| pressure        | `float` | `101325.`  | Pressure used for `NPT` in bar                                                                                         |
+| pressure        | `float` | `101325.`  | Pressure used for `NPT` in Pa (101325 Pa = 1 atm).                                                                    |
 | tchain          | `int`   | `3`        | Number of thermostats in the thermostat chain for MTK dynamics.                                                        |
 | tdamp           | `float` | `50`       | Temperature damping for MTK dynamics (`100*timestep`).                                                                 |
 | temperature     | `float` | `300`      | Target temperature                                                                                                     |
@@ -269,23 +352,41 @@ Similarly, the source of the control files can be either a single path or a dict
 ```
 **Note:** Ideally you don't want to train your model on different levels of theory or DFT settings. Using different control files is mostly intended for using *aims-PAX* on periodic and non-periodic systems simulatenoeusly. Then you can specify that a k grid can be used for the periodic structure but not for the non-periodic one!
 
-| Parameter        | Type   | Default           | Description                                     |
-|------------------|--------|-------------------|-------------------------------------------------|
-| create_restart   | `bool` | `True`            | Whether to create restart files during the run. |
-| dataset_dir      | `str`  | `"./data"`        | Directory where dataset files will be stored.   |
-| log_dir          | `str`  | `"./logs"`        | Directory where log files are saved.            |
-| path_to_control  | `str`  | `"./control.in"`  | Path to the FHI aims control input file.        |
-| path_to_geometry | `str`  | `"./geometry.in"` | Path to the geometry input file or folder.      |
+| Parameter        | Type              | Default           | Description                                                                                                       |
+|------------------|-------------------|-------------------|-------------------------------------------------------------------------------------------------------------------|
+| create_restart   | `bool`            | `True`            | Whether to create restart files during the run.                                                                   |
+| dataset_dir      | `str`             | `"./data"`        | Directory where dataset files will be stored.                                                                     |
+| log_dir          | `str`             | `"./logs"`        | Directory where log files are saved.                                                                              |
+| output_dir       | `str`             | current directory | Top-level output directory for all results (models, data, logs).                                                  |
+| path_to_control  | `str`             | `"./control.in"`  | Path to the FHI aims control input file.                                                                          |
+| path_to_geometry | `str`             | `"./geometry.in"` | Path to the geometry input file or folder.                                                                        |
+| mol_idxs         | `list[int]` or `None` | `None`        | Subset of geometry/molecule indices to use. If `None`, all geometries are used.                                   |
+| all_teacher      | `bool`            | `False`           | Apply the teacher reference model to all structures (not only uncertainty-flagged ones) during active learning.   |
+
+**Data key overrides** — The keys used to store and retrieve energy, forces, and other properties in the dataset can be customised. These rarely need changing from their defaults:
+```yaml
+MISC:
+  energy_key: "REF_energy"          # default
+  forces_key: "REF_forces"          # default
+  stress_key: "REF_stress"          # default
+  dipole_key: "REF_dipole"          # default
+  polarizability_key: "REF_polarizability"  # default
+  head_key: "head"                  # default (multihead models)
+  charges_key: "REF_charges"        # default
+  hirshfeld_ratios_key: "REF_hirshfeld_ratios"  # default
+  total_charge_key: "total_charge"  # default
+  total_spin_key: "total_spin"      # default
+```
 
 
 <!---
 | **mol_idxs       | `list` or `None` | `None`   | List of molecule indices to consider; `None` means all. |
 -->
 
-### MACE settings (mace.yaml)
+### Model settings (model.yaml)
 
-The settings for the MACE model(s) are specified in the YAML file called 'mace.yaml'.
-We use exactly the same names as employed in the [MACE code](https://github.com/ACEsuit/mace). This is mostly to show the structure of the `.yaml` file and its default values.
+The settings for the model(s) are specified in the YAML file called `model.yaml`.
+For MACE we use exactly the same names as employed in the [MACE code](https://github.com/ACEsuit/mace). This is mostly to show the structure of the `.yaml` file and its default values.
 
 #### GENERAL
 
@@ -298,12 +399,18 @@ We use exactly the same names as employed in the [MACE code](https://github.com/
 | loss_dir        | `str`  | `"./losses"`      | Directory path for storing training losses for each ensemble member.                  |
 | model_dir       | `str`  | `"./model"`       | Directory path for storing final trained models.                                      |
 | seed            | `int`  | `42`              | Random seed (ensemble seeds are randomly chosen using this seed here.)                |
+| model_choice    | `str` or `None` | `None`   | Which model family to train. Options: `"mace"`, `"so3krates"`, `"so3lr"`. Derived automatically from `ARCHITECTURE.model_choice` when not set explicitly. |
 
 #### ARCHITECTURE
 
+Set `model_choice` in this section (or in GENERAL) to select the model family. The remaining parameters depend on the chosen architecture.
+
+##### MACE
+
 | Parameter                 | Type             | Default                                  | Description                                                                                                                                                                                           |
 |---------------------------|------------------|------------------------------------------|-------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------|
-| atomic_energies           | `dict` or `None` | `None `                                  | Atomic energy references for each element. Dictionary is structured as follows: {atomic_number: energy}. If `None`, atomic energies are determined using the training set using linear least squares. |
+| model_choice              | `str`            | `"mace"`                                 | Selects MACE architecture.                                                                                                                                                                            |
+| atomic_energies           | `dict` or `None` | `None`                                   | Atomic energy references for each element. Dictionary is structured as follows: {atomic_number: energy}. If `None`, atomic energies are determined using the training set using linear least squares. |
 | compute_avg_num_neighbors | `bool`           | `True`                                   | Whether to compute average number of neighbors.                                                                                                                                                       |
 | correlation               | `int`            | `3`                                      | Correlation order for many-body interactions.                                                                                                                                                         |
 | gate                      | `str`            | `"silu"`                                 | Activation function.                                                                                                                                                                                  |
@@ -311,16 +418,74 @@ We use exactly the same names as employed in the [MACE code](https://github.com/
 | interaction_first         | `str`            | `"RealAgnosticResidualInteractionBlock"` | Type of first interaction block.                                                                                                                                                                      |
 | max_ell                   | `int`            | `3`                                      | Maximum degree of direction embeddings.                                                                                                                                                               |
 | max_L                     | `int`            | `1`                                      | Maximum degree for equivariant features.                                                                                                                                                              |
-| MLP_irreps                | `str`            | `"16x0e"`                                | Irreps of the multi-layer perceptron in the last readout. Format is a `str` as defined in [`e3nn`](https://github.com/e3nn/e3nn/)                                                                     |
-| model                     | `str`            | `"MACE"`                                 | Type of MACE model architecture to use.                                                                                                                                                               |
+| MLP_irreps                | `str`            | `"16x0e"`                                | Irreps of the MLP in the last readout. Format defined by [`e3nn`](https://github.com/e3nn/e3nn/).                                                                                                     |
+| model                     | `str`            | `"MACE"`                                 | MACE model variant.                                                                                                                                                                                   |
 | num_channels              | `int`            | `128`                                    | Number of channels (features).                                                                                                                                                                        |
 | num_cutoff_basis          | `int`            | `5`                                      | Number of cutoff basis functions.                                                                                                                                                                     |
 | num_interactions          | `int`            | `2`                                      | Number of interaction layers.                                                                                                                                                                         |
 | num_radial_basis          | `int`            | `8`                                      | Number of radial basis functions.                                                                                                                                                                     |
 | r_max                     | `float`          | `5.0`                                    | Cutoff radius (Å).                                                                                                                                                                                    |
-| radial_MLP                | `list`           | `[64, 64, 64]`                           | Architecture of the radial MLP (hidden layer sizes).                                                                                                                                                  |
+| radial_MLP                | `list`           | `[64, 64, 64]`                           | Hidden layer sizes of the radial MLP.                                                                                                                                                                 |
 | radial_type               | `str`            | `"bessel"`                               | Type of radial basis functions.                                                                                                                                                                       |
-| scaling                   | `str`            | `"rms_forces_scaling"`                   | Scaling method used.                                                                                                                                                                                  |
+| scaling                   | `str`            | `"rms_forces_scaling"`                   | Scaling method.                                                                                                                                                                                       |
+
+##### SO3Krates
+
+| Parameter                              | Type         | Default               | Description                                                              |
+|----------------------------------------|--------------|-----------------------|--------------------------------------------------------------------------|
+| model_choice                           | `str`        | `"so3krates"`         | Selects SO3Krates architecture.                                          |
+| r_max                                  | `float`      | `4.5`                 | Short-range cutoff radius (Å).                                           |
+| num_features                           | `int`        | `128`                 | Number of features per node.                                             |
+| num_radial_basis_fn                    | `int`        | `32`                  | Number of radial basis functions.                                        |
+| degrees                                | `list[int]`  | `[1, 2, 3, 4]`        | Spherical harmonic degrees used in message passing.                      |
+| num_heads                              | `int`        | `4`                   | Number of attention heads.                                               |
+| num_layers                             | `int`        | `3`                   | Number of message-passing layers.                                        |
+| final_mlp_layers                       | `int`        | `2`                   | Number of layers in the final MLP readout.                               |
+| energy_regression_dim                  | `int`        | `128`                 | Hidden dimension of the energy regression MLP.                           |
+| message_normalization                  | `str`        | `"avg_num_neighbors"` | Message normalization scheme.                                            |
+| initialize_ev_to_zeros                 | `bool`       | `True`                | Initialize equivariant features to zero.                                 |
+| radial_basis_fn                        | `str`        | `"bernstein"`         | Type of radial basis functions.                                          |
+| trainable_rbf                          | `bool`       | `False`               | Whether radial basis function parameters are trainable.                  |
+| energy_learn_atomic_type_shifts        | `bool`       | `True`                | Learn per-element energy shifts.                                         |
+| energy_learn_atomic_type_scales        | `bool`       | `True`                | Learn per-element energy scales.                                         |
+| layer_normalization_1                  | `bool`       | `True`                | Apply layer normalisation after first update.                            |
+| layer_normalization_2                  | `bool`       | `True`                | Apply layer normalisation after second update.                           |
+| residual_mlp_1                         | `bool`       | `True`                | Use residual connection in first MLP.                                    |
+| residual_mlp_2                         | `bool`       | `False`               | Use residual connection in second MLP.                                   |
+| use_charge_embed                       | `bool`       | `True`                | Include charge embedding.                                                |
+| use_spin_embed                         | `bool`       | `True`                | Include spin embedding.                                                  |
+| interaction_bias                       | `bool`       | `True`                | Add bias terms to interaction layers.                                    |
+| qk_non_linearity                       | `str`        | `"identity"`          | Non-linearity applied to query/key projections.                          |
+| cutoff_fn                              | `str`        | `"phys"`              | Cutoff function type.                                                    |
+| cutoff_p                               | `int`        | `5`                   | Exponent of the cutoff polynomial.                                       |
+| activation_fn                          | `str`        | `"silu"`              | Activation function.                                                     |
+| energy_activation_fn                   | `str`        | `"identity"`          | Activation function in the energy readout.                               |
+| layers_behave_like_identity_fn_at_init | `bool`       | `False`               | Initialise layers to behave like the identity.                           |
+| output_is_zero_at_init                 | `bool`       | `False`               | Initialise output to zero.                                               |
+| input_convention                       | `str`        | `"positions"`         | Input convention (`"positions"` or `"displacements"`).                   |
+
+> **Note:** CuEQ compilation is not supported for SO3Krates.
+
+##### SO3LR
+
+SO3LR inherits all SO3Krates parameters above (`model_choice: "so3lr"`) and adds long-range interaction terms:
+
+| Parameter                           | Type                        | Default    | Description                                                                                          |
+|-------------------------------------|-----------------------------|------------|------------------------------------------------------------------------------------------------------|
+| model_choice                        | `str`                       | `"so3lr"`  | Selects SO3LR architecture.                                                                          |
+| zbl_repulsion_bool                  | `bool`                      | `True`     | Enable ZBL short-range repulsion.                                                                    |
+| electrostatic_energy_bool           | `bool`                      | `True`     | Enable long-range electrostatic energy.                                                              |
+| electrostatic_energy_scale          | `float`                     | `4.0`      | Scaling factor for electrostatic energy.                                                             |
+| dispersion_energy_bool              | `bool`                      | `True`     | Enable long-range dispersion energy.                                                                 |
+| dispersion_energy_scale             | `float`                     | `1.2`      | Scaling factor for dispersion energy.                                                                |
+| dispersion_energy_cutoff_lr_damping | `float`                     | `2.0`      | Damping parameter for the long-range dispersion cutoff.                                              |
+| r_max_lr                            | `float` or `None`           | `None`     | Long-range cutoff radius (Å). If `None`, long-range modules are disabled.                            |
+| neighborlist_format_lr              | `str`                       | `"sparse"` | Neighborlist format for long-range interactions.                                                     |
+| atomic_energies                     | `dict[int, float]` or `None`| `None`     | Per-element atomic energy references.                                                                |
+| use_multihead_model                 | `bool`                      | `False`    | Use the multi-head SO3LR variant.                                                                    |
+| num_multihead_heads                 | `int` or `None`             | `None`     | Number of heads for multi-head SO3LR. Required when `use_multihead_model: true`.                     |
+
+> **Note:** CuEQ compilation is not supported for SO3LR.
 
 
 #### TRAINING
@@ -343,24 +508,32 @@ We use exactly the same names as employed in the [MACE code](https://github.com/
 | scheduler           | `str`   | `"ReduceLROnPlateau"` | Learning rate scheduler type.                     |
 | scheduler_patience  | `int`   | `5`                   | Number of epochs to wait before reducing LR.      |
 | stress_weight       | `float` | `1.0`                 | Weight for stress loss component.                 |
+| seed                | `int`   | `42`                  | Random seed used for training reproducibility.    |
+| start_swa           | `int` or `None` | `None`        | Epoch at which SWA begins. Required when `swa: true`. |
 | swa                 | `bool`  | `False`               | Whether to use Stochastic Weight Averaging.       |
 | valid_batch_size    | `int`   | `5`                   | Batch size for validation data.                   |
 | virials_weight      | `float` | `1.0`                 | Weight for virials loss component.                |
+| dipole_weight       | `float` | `1.0`                 | Weight for dipole loss component.                 |
+| hirshfeld_weight    | `float` | `1.0`                 | Weight for Hirshfeld charge loss component.       |
 | weight_decay        | `float` | `5.e-07`              | L2 regularization weight decay factor.            |
+
+##### Finetuning and LoRA
+
+*aims-PAX* supports finetuning a pretrained model instead of training from scratch. Set `pretrained_model` (path to model file) or `pretrained_weights` (path to weights file) and `perform_finetuning: true`. The `finetuning_choice` selects between `"naive"` (all parameters) and `"lora"` (LoRA adapter layers). Individual components can be frozen via boolean flags: `freeze_embedding`, `freeze_zbl`, `freeze_hirshfeld`, `freeze_partial_charges`, `freeze_shifts`, `freeze_scales`. LoRA-specific options: `convert_to_lora`, `lora_rank` (default `8`), `lora_alpha` (default `16`), `lora_freeze_A`. To convert a single-head model to a multihead model before finetuning, use `convert_to_multihead: true`.
 
 
 #### MISC
 
 | Parameter   | Type  | Default        | Description                                   |
 |-------------|-------|----------------|-----------------------------------------------|
-| device      | `str` | `"cpu"`        | Device for training (cpu/cuda).               |
-| error_table | `str` | `"PerAtomMAE"` | Type of error metrics to compute and display. |
-| log_level   | `str` | `"INFO"`       | Logging level (DEBUG/INFO/WARNING/ERROR).     |
-
-<!---
-| keep_checkpoints| `bool`        | `False`       | Whether to keep all checkpoint files. |
-| restart_latest  | `bool`        | `False`       | Whether to restart from the latest checkpoint. |
--->
+| device           | `str`  | `"cpu"`        | Device for training (cpu/cuda).                                                                    |
+| error_table      | `str`  | `"PerAtomMAE"` | Type of error metrics to compute and display.                                                      |
+| log_level        | `str`  | `"INFO"`       | Logging level (DEBUG/INFO/WARNING/ERROR).                                                          |
+| keep_checkpoints | `bool` | `False`        | Whether to keep all checkpoint files (not just the best/latest).                                   |
+| restart_latest   | `bool` | `False`        | Whether to restart training from the latest available checkpoint instead of the best.              |
+| compute_dipole   | `bool` | `False`        | Compute dipole moments during training and evaluation.                                             |
+| enable_cueq      | `bool` | `False`        | Enable the Charge Equilibration (CuEQ) module. Only supported for MACE.                           |
+| enable_cueq_train| `bool` | `False`        | Enable training of CuEQ module parameters. Requires `enable_cueq: true`.                          |
 
 
 
@@ -393,7 +566,7 @@ During the active learning procedure (c in the figure above), multiple MD trajec
 
 In the former case the MD is halted for the given trajectory and when the program loops back to it the models are trained for some epochs instead before continuing to the next trajectory. This state is kept until a maximum number of epochs is reached and the trajectory is propageted again.
 
-In the serial version of *aims-PAX*, the whole workflow halts when a DFT calculation is being run. In contrast, using the MPI version on a single node, the other trajectories can be propagated. In that case, once all trajectories have crossed the uncertainty threshold, the workflow is halted again and all DFT calculations are processed sequentially. When using the recommended PARSL version, all these DFT calculations can be processed in parallel depending on the available resources.
+In the serial version of *aims-PAX*, the whole workflow halts when a DFT calculation is being run. When using the PARSL version (requires `CLUSTER` settings), all DFT calculations are dispatched asynchronously and processed in parallel depending on the available resources.
 
 
 Similarly to the creation of the initial dataset, the models are updated throughout the whole process and are not reinitialized. As we are only adding a few points at a time this can lead to models getting stuck on a local minimum. If this happens, the optimizer state is reinitialized, which is supposed to kick the model out of the local minimum.
@@ -405,7 +578,7 @@ Atomic Energies
 
 ```THIS IS NOT IMPLEMENTED PROPERLY, RIGHT NOW!!!```
 
-It is recommended to use the isolated atomic energies of the elements in a given system as the *zero point* energy in MACE. This enables the model have the correct asymptotic behavior when dissocating molecules. The package includes a script that calculates the energies of all the elements found in a the ```geometry.in``` file. For this run ```aims_PAX-atomic-energies```. Make sure to have defined the path to aims, the species directory in the ```active_learning_settings.yaml``` and also that a ```control.in``` file is present. The results are saved in a log file. The energies can then be included in ```mace.yaml```.
+It is recommended to use the isolated atomic energies of the elements in a given system as the *zero point* energy in MACE. This enables the model have the correct asymptotic behavior when dissocating molecules. The package includes a script that calculates the energies of all the elements found in a the ```geometry.in``` file. For this run ```aims-PAX-atomic-energies```. Make sure to have defined the path to aims, the species directory in the ```aimsPAX.yaml``` and also that a ```control.in``` file is present. The results are saved in a log file. The energies can then be included in ```model.yaml```.
 -->
 
 # References
@@ -414,15 +587,32 @@ If you are using *aims-PAX* cite the main publication:
 
 ***aims-PAX*:**
 ```bibtex
-@misc{https://doi.org/10.48550/arxiv.2508.12888,
-  doi = {10.48550/ARXIV.2508.12888},
-  url = {https://arxiv.org/abs/2508.12888},
-  author = {Henkes,  Tobias and Sharma,  Shubham and Tkatchenko,  Alexandre and Rossi,  Mariana and Poltavskyi,  Igor},
-  keywords = {Chemical Physics (physics.chem-ph),  FOS: Physical sciences,  FOS: Physical sciences},
-  title = {aims-PAX: Parallel Active eXploration for the automated construction of Machine Learning Force Fields},
-  publisher = {arXiv},
-  year = {2025},
-  copyright = {arXiv.org perpetual,  non-exclusive license}
+@article{doi:10.1021/acs.jcim.5c02682,
+author = {Henkes, Tobias and Sharma, Shubham and Tkatchenko, Alexandre and Rossi, Mariana and Poltavsky, Igor},
+title = {aims-PAX: Parallel Active Exploration Enables Expedited Construction of Machine Learning Force Fields for Molecules and Materials},
+journal = {Journal of Chemical Information and Modeling},
+volume = {66},
+number = {8},
+pages = {4365-4381},
+year = {2026},
+doi = {10.1021/acs.jcim.5c02682},
+    note ={PMID: 41951214},
+
+URL = { 
+    
+        https://doi.org/10.1021/acs.jcim.5c02682
+    
+    
+
+},
+eprint = { 
+    
+        https://doi.org/10.1021/acs.jcim.5c02682
+    
+    
+
+}
+
 }
 ```
 
@@ -468,13 +658,32 @@ If you are using *aims-PAX* cite the main publication:
 
 If you are using [SO3LR](github.com/general-molecular-simulations/so3lr) please cite:
 ```bibtex
-@article{kabylda2024molecular,
-  title={Molecular Simulations with a Pretrained Neural Network and Universal Pairwise Force Fields},
-  author={Kabylda, A. and Frank, J. T. and Dou, S. S. and Khabibrakhmanov, A. and Sandonas, L. M.
-          and Unke, O. T. and Chmiela, S. and M{\"u}ller, K.R. and Tkatchenko, A.},
-  journal={ChemRxiv},
-  year={2024},
-  doi={10.26434/chemrxiv-2024-bdfr0-v2}
+@article{doi:10.1021/jacs.5c09558,
+author = {Kabylda, Adil and Frank, J. Thorben and Suárez-Dou, Sergio and Khabibrakhmanov, Almaz and Medrano Sandonas, Leonardo and Unke, Oliver T. and Chmiela, Stefan and M{\"u}ller, Klaus-Robert and Tkatchenko, Alexandre},
+title = {Molecular Simulations with a Pretrained Neural Network and Universal Pairwise Force Fields},
+journal = {Journal of the American Chemical Society},
+volume = {147},
+number = {37},
+pages = {33723-33734},
+year = {2025},
+doi = {10.1021/jacs.5c09558},
+    note ={PMID: 40886167},
+
+URL = { 
+    
+        https://doi.org/10.1021/jacs.5c09558
+    
+    
+
+},
+eprint = { 
+    
+        https://doi.org/10.1021/jacs.5c09558
+    
+    
+
+}
+
 }
 
 @article{frank2024euclidean,

@@ -14,6 +14,8 @@ from so3krates_torch.modules.loss import (
     WeightedEnergyForcesDipoleHirshfeldLoss,
     WeightedEnergyForcesDipoleLoss,
     WeightedEnergyForcesHirshfeldLoss,
+    WeightedEnergyForcesChargesLoss,
+    WeightedEnergyForcesChargesHirshfeldLoss,
 )
 import numpy as np
 import os
@@ -130,6 +132,22 @@ def choose_loss_function(training_settings: TrainingSettings) -> torch.nn.Module
             forces_weight=forces_weight,
             dipole_weight=dipole_weight,
             hirshfeld_weight=hirshfeld_weight,
+        )
+    elif training_settings["loss"].lower() == "weighted_energy_forces_charges":
+        loss_fn = WeightedEnergyForcesChargesLoss(
+            energy_weight=training_settings["energy_weight"],
+            forces_weight=training_settings["forces_weight"],
+            charges_weight=training_settings["charges_weight"],
+        )
+    elif (
+        training_settings["loss"].lower()
+        == "weighted_energy_forces_charges_hirshfeld"
+    ):
+        loss_fn = WeightedEnergyForcesChargesHirshfeldLoss(
+            energy_weight=training_settings["energy_weight"],
+            forces_weight=training_settings["forces_weight"],
+            charges_weight=training_settings["charges_weight"],
+            hirshfeld_weight=training_settings["hirshfeld_weight"],
         )
     else:
         raise RuntimeError(f"Unknown loss function: {loss}")

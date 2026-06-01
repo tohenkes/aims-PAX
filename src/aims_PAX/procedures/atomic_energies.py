@@ -6,14 +6,10 @@ from aims_PAX.tools.utilities import (
 )
 import ase
 import logging
-from mpi4py import MPI
 from asi4py.asecalc import ASI_ASE_calculator
 from typing import List
 from pathlib import Path
 
-WORLD_COMM = MPI.COMM_WORLD
-WORLD_SIZE = WORLD_COMM.Get_size()
-RANK = WORLD_COMM.Get_rank()
 from yaml import safe_load
 
 
@@ -58,10 +54,9 @@ class E0Calculator:
                         "species_dir"
                     ]
             except FileNotFoundError:
-                if RANK == 0:
-                    logging.error(
-                        "No basis_dir provided or found in active_learning_settings.yaml."
-                    )
+                logging.error(
+                    "No basis_dir provided or found in active_learning_settings.yaml."
+                )
 
         if aims_path is not None:
             self.ASI_path = aims_path
@@ -73,31 +68,27 @@ class E0Calculator:
                         "aims_lib_path"
                     ]
             except FileNotFoundError:
-                if RANK == 0:
-                    logging.error(
-                        "No ASI_path provided or found in active_learning_settings.yaml."
-                    )
+                logging.error(
+                    "No ASI_path provided or found in active_learning_settings.yaml."
+                )
 
         if Zs is None:
             try:
                 self.Zs = Z_from_geometry_in(path_to_geometry)
             except FileNotFoundError:
-                if RANK == 0:
-                    logging.error(
-                        "No elements provided or found in geometry.in."
-                    )
+                logging.error(
+                    "No elements provided or found in geometry.in."
+                )
         else:
             self.Zs = Zs
 
         self.handle_aims_settings(path_to_control)
 
     def __call__(self):
-        MPI.COMM_WORLD.Barrier()
         self.get_atomic_energies()
-        if RANK == 0:
-            out_path = self.output_dir / "atomic_energies.npz"
-            logging.info(f"Saving atomic energies to {out_path}")
-            np.savez(out_path, self.atomic_energies_dict)
+        out_path = self.output_dir / "atomic_energies.npz"
+        logging.info(f"Saving atomic energies to {out_path}")
+        np.savez(out_path, self.atomic_energies_dict)
 
     def handle_aims_settings(self, path_to_control: str):
         """
@@ -115,22 +106,19 @@ class E0Calculator:
         """
         Calculates the isolated atomic energies for the elements in the geometry using AIMS.
         """
-        if RANK == 0:
-            logging.info("Calculating the isolated atomic energies.")
+        logging.info("Calculating the isolated atomic energies.")
         self.atomic_energies_dict = {}
         unique_atoms = np.unique(self.Zs)
         for element in unique_atoms:
             atom = ase.Atoms([int(element)], positions=[[0, 0, 0]])
-            if RANK == 0:
-                logging.info(
-                    f"Calculating the atomic energy energy of {atom.symbols[0]}."
-                )
+            logging.info(
+                f"Calculating the atomic energy energy of {atom.symbols[0]}."
+            )
             self.setup_calculator(atom)
             self.atomic_energies_dict[element] = atom.get_potential_energy()
             atom.calc.close()  # kills AIMS process so we can start a new one later
 
-        if RANK == 0:
-            logging.info(f"{self.atomic_energies_dict}")
+        logging.info(f"{self.atomic_energies_dict}")
 
     def setup_calculator(
         self,
@@ -166,6 +154,6 @@ class E0Calculator:
             calc.write_input(asi.atoms)
 
         atoms.calc = ASI_ASE_calculator(
-            self.ASI_path, init_via_ase, MPI.COMM_WORLD, atoms
+            self.ASI_path, init_via_ase, None, atoms
         )
         return atoms

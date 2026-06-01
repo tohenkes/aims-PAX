@@ -1,5 +1,4 @@
 from aims_PAX.procedures.atomic_energies import E0Calculator
-from mpi4py import MPI
 import argparse
 
 
@@ -57,12 +56,7 @@ def main():
         output_dir=args.output_dir,
     )
 
-    MPI.COMM_WORLD.Barrier()
-
     E0s_calc()
-
-    MPI.COMM_WORLD.Barrier()
-    MPI.Finalize()
 
 
 if __name__ == "__main__":

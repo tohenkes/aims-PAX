@@ -10,9 +10,9 @@ from .project import ProjectBaseModel
 
 
 class GeneralSettings(ProjectBaseModel):
-    model_choice: Literal["mace", "so3krates", "so3lr"] = Field(
-        ...,
-        description="The model to use."
+    model_choice: Literal["mace", "so3krates", "so3lr"] | None = Field(
+        default=None,
+        description="The model to use. Derived from ARCHITECTURE.model_choice when not set."
     )
     name_exp: str = Field(
         ...,
@@ -50,15 +50,15 @@ class GeneralSettings(ProjectBaseModel):
 
 class BaseArchitectureSettings(ProjectBaseModel):
     """Base class for model architecture settings"""
+
+
+class MACEArchitectureSettings(BaseArchitectureSettings):
+    model_choice: Literal["mace"] = "mace"
     atomic_energies: dict[int, float] | None = Field(
         default=None,
         description="Atomic energy references {atomic_number: energy}. "
                     "If None, determined via linear least squares on training set."
     )
-
-
-class MACEArchitectureSettings(BaseArchitectureSettings):
-    model: Literal["mace"]
     compute_avg_num_neighbors: bool = Field(
         default=True,
         description="Whether to compute average number of neighbors."
@@ -129,7 +129,7 @@ class MACEArchitectureSettings(BaseArchitectureSettings):
 
 
 class So3kratesArchitectureSettings(BaseArchitectureSettings):
-    model: Literal["so3krates"]
+    model_choice: Literal["so3krates"] = "so3krates"
     r_max: float = 4.5
     num_features: int = 128
     num_radial_basis_fn: int = 32
@@ -162,7 +162,7 @@ class So3kratesArchitectureSettings(BaseArchitectureSettings):
 
 
 class SO3LRArchitectureSettings(So3kratesArchitectureSettings):
-    model: Literal["so3lr"]
+    model_choice: Literal["so3lr"] = "so3lr"
     zbl_repulsion_bool: bool = True
     electrostatic_energy_bool: bool = True
     electrostatic_energy_scale: float = 4.0
@@ -178,7 +178,7 @@ class SO3LRArchitectureSettings(So3kratesArchitectureSettings):
 ArchitectureSettings = Annotated[
     Union[MACEArchitectureSettings, So3kratesArchitectureSettings, SO3LRArchitectureSettings],
     Field(
-        discriminator="model",
+        discriminator="model_choice",
         description="Type of model architecture to use."
     )
 ]
@@ -356,9 +356,24 @@ class ModelSettings(ProjectBaseModel):
     def normalize_case(cls, data):
         if isinstance(data, dict):
             item = data.get("ARCHITECTURE")
-            if isinstance(item, dict) and "model" in item:
-                item["model"] = item["model"].lower()
+            if isinstance(item, dict):
+                # Support old "model" field name — rename to model_choice
+                if "model" in item and "model_choice" not in item:
+                    item["model_choice"] = item.pop("model").lower()
+                elif "model_choice" in item:
+                    item["model_choice"] = item["model_choice"].lower()
+                # Backward compat: copy from GENERAL.model_choice if absent
+                elif "model_choice" not in item:
+                    general = data.get("GENERAL", {})
+                    if isinstance(general, dict) and general.get("model_choice"):
+                        item["model_choice"] = general["model_choice"].lower()
         return data
+
+    @model_validator(mode="after")
+    def sync_model_choice(self) -> "ModelSettings":
+        if self.GENERAL.model_choice is None:
+            self.GENERAL.model_choice = self.ARCHITECTURE.model_choice
+        return self
 
 
     def resolve_dirs(self, output_dir: Path) -> None:

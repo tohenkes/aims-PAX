@@ -48,7 +48,6 @@ from aims_PAX.tools.model_tools.train_epoch import (
     validate_epoch_ensemble,
 )
 from aims_PAX.tools.model_tools.training_tools import setup_model_training
-from aims_PAX.tools.utilities.mpi_utils import CommHandler
 import ase
 import logging
 from ase.calculators.aims import Aims, AimsProfile
@@ -56,7 +55,7 @@ from ase.md.velocitydistribution import MaxwellBoltzmannDistribution
 from ase.md.langevin import Langevin
 from ase.md.nptberendsen import NPTBerendsen
 from ase.md.npt import NPT
-from ase.md.nose_hoover_chain import MTKNPT
+from ase.md.nose_hoover_chain import MTKNPT, IsotropicMTKNPT
 from ase import units
 from contextlib import nullcontext
 from mace.calculators import mace_mp
@@ -81,7 +80,6 @@ class PrepareInitialDatasetProcedure:
         aimsPAX_settings: AimsPAXSettings,
         path_to_control: str = "./control.in", #TODO: Rename
         path_to_geometry: str = "./geometry.in",
-        use_mpi: bool = True,
     ) -> None:
         """
         Args:
@@ -91,12 +89,8 @@ class PrepareInitialDatasetProcedure:
                                                 Defaults to "./control.in".
             path_to_geometry (str, optional): Path to the initial geometry.
                                                 Defaults to "./geometry.in".
-            use_mpi (bool, optional): Whether to use MPI. Defaults to True.
         """
 
-        self.comm_handler = CommHandler(use_mpi=use_mpi)
-        self.rank = self.comm_handler.get_rank()
-        self.world_size = self.comm_handler.get_size()
 
         self.log_dir = Path(aimsPAX_settings.MISC.log_dir)
         logger_level = getattr(logging, model_settings.MISC.log_level, logging.INFO)
@@ -108,22 +102,19 @@ class PrepareInitialDatasetProcedure:
             tag="initial_dataset",
             directory=self.log_dir.as_posix(),
         )
-        if self.rank == 0:
-            logging.info("Initializing initial dataset procedure.")
-            logging.info(f"Procedure runs on {self.world_size} workers.")
-            logging.info(
-                "Using following settings for the initial dataset procedure:"
-            )
-            log_yaml_block(
-                "INITIAL_DATASET_GENERATION",
-                aimsPAX_settings.INITIAL_DATASET_GENERATION.model_dump(),
-            )
+        logging.info("Initializing initial dataset procedure.")
+        logging.info(
+            "Using following settings for the initial dataset procedure:"
+        )
+        log_yaml_block(
+            "INITIAL_DATASET_GENERATION",
+            aimsPAX_settings.INITIAL_DATASET_GENERATION.model_dump(),
+        )
 
         self.control_parser = AIMSControlParser()
         self._handle_model_settings(model_settings)
-        if self.rank == 0:
-            logging.info(f"Using following settings for {self.model_choice.upper()}:")
-            log_yaml_block(self.model_choice.upper(), model_settings.model_dump())
+        logging.info(f"Using following settings for {self.model_choice.upper()}:")
+        log_yaml_block(self.model_choice.upper(), model_settings.model_dump())
 
         self._handle_settings(aimsPAX_settings)
         if not self.use_teacher_reference:
@@ -133,10 +124,9 @@ class PrepareInitialDatasetProcedure:
         self._create_folders()
 
         if self.restart:
-            if self.rank == 0:
-                logging.info(
-                    "Restarting initial dataset acquisition from checkpoint."
-                )
+            logging.info(
+                "Restarting initial dataset acquisition from checkpoint."
+            )
             try:
                 self.init_ds_restart_dict = np.load(
                     self.initial_ds_restart_path,
@@ -165,11 +155,10 @@ class PrepareInitialDatasetProcedure:
             num_trajectories=self.num_trajectories,
         )
 
-        if self.rank == 0:
-            logging.info(
-                "Running Initial Dataset Procedure with "
-                f"{len(self.trajectories)} geometries."
-            )
+        logging.info(
+            "Running Initial Dataset Procedure with "
+            f"{len(self.trajectories)} geometries."
+        )
 
         if self.model_choice == "mace":
             self.z = Z_from_geometry(self.trajectories)
@@ -194,71 +183,65 @@ class PrepareInitialDatasetProcedure:
         # and keys the seeds_tags_dict connects the seeds to the tags of each
         # ensemble member the training_setups dictionary contains the training
         # setups (optimizer, scheduler etc.) for each ensemble member
-        if self.rank == 0:
-            self.ensemble = setup_ensemble_dicts(
-                seeds_tags_dict=self.seeds_tags_dict,
-                model_settings=self.model_settings,
-                z_table=self.z_table,
-                ensemble_atomic_energies_dict=self.ensemble_atomic_energies_dict,
-                device=self.device,
+        self.ensemble = setup_ensemble_dicts(
+            seeds_tags_dict=self.seeds_tags_dict,
+            model_settings=self.model_settings,
+            z_table=self.z_table,
+            ensemble_atomic_energies_dict=self.ensemble_atomic_energies_dict,
+            device=self.device,
+        )
+        self.training_setups = get_ensemble_training_setups(
+            ensemble=self.ensemble,
+            model_settings=self.model_settings,
+            restart=self.restart,
+            checkpoints_dir=self.checkpoints_dir,
+            mol_idxs=self.mol_idxs,
+        )
+        if self.restart:
+            self.epoch = (
+                self.training_setups[list(self.ensemble.keys())[0]][
+                    "epoch"
+                ]
+                + 1
             )
-            self.training_setups = get_ensemble_training_setups(
-                ensemble=self.ensemble,
-                model_settings=self.model_settings,
-                restart=self.restart,
-                checkpoints_dir=self.checkpoints_dir,
-                mol_idxs=self.mol_idxs,
-            )
-            if self.restart:
-                self.epoch = (
-                    self.training_setups[list(self.ensemble.keys())[0]][
-                        "epoch"
-                    ]
-                    + 1
-                )
-
-        self.comm_handler.barrier()
-        self.epoch = self.comm_handler.bcast(self.epoch, root=0)
-        self.comm_handler.barrier()
 
         # each ensemble member has their own initial dataset.
         # we create a ASE and model dataset because it makes
         # conversion and saving easier
-        if self.rank == 0:
-            if self.restart:
-                self.ensemble_ase_sets = load_ensemble_sets_from_folder(
-                    ensemble=self.ensemble,
-                    path_to_folder=self.dataset_dir / "initial",
-                )
-                self.ensemble_model_sets = ase_to_model_ensemble_sets(
-                    ensemble_ase_sets=self.ensemble_ase_sets,
-                    z_table=self.z_table,
-                    r_max=self.r_max,
-                    seed=self.seed,
-                    key_specification=self.key_specification,
-                    r_max_lr=self.r_max_lr,
-                    all_heads=self.all_heads,
-                )
+        if self.restart:
+            self.ensemble_ase_sets = load_ensemble_sets_from_folder(
+                ensemble=self.ensemble,
+                path_to_folder=self.dataset_dir / "initial",
+            )
+            self.ensemble_model_sets = ase_to_model_ensemble_sets(
+                ensemble_ase_sets=self.ensemble_ase_sets,
+                z_table=self.z_table,
+                r_max=self.r_max,
+                seed=self.seed,
+                key_specification=self.key_specification,
+                r_max_lr=self.r_max_lr,
+                all_heads=self.all_heads,
+            )
 
-            else:
-                self.ensemble_ase_sets = {
-                    tag: {"train": [], "valid": []}
+        else:
+            self.ensemble_ase_sets = {
+                tag: {"train": [], "valid": []}
+                for tag in self.ensemble.keys()
+            }
+
+            if self.use_multihead_model:
+                self.ensemble_model_sets = {
+                    tag: {"train": [], "valid": {}}
                     for tag in self.ensemble.keys()
                 }
-
-                if self.use_multihead_model:
-                    self.ensemble_model_sets = {
-                        tag: {"train": [], "valid": {}}
-                        for tag in self.ensemble.keys()
-                    }
-                    for head in self.all_heads:
-                        for tag in self.ensemble.keys():
-                            self.ensemble_model_sets[tag]["valid"][head] = []
-                else:
-                    self.ensemble_model_sets = {
-                        tag: {"train": [], "valid": {"Default": []}}
-                        for tag in self.ensemble.keys()
-                    }
+                for head in self.all_heads:
+                    for tag in self.ensemble.keys():
+                        self.ensemble_model_sets[tag]["valid"][head] = []
+            else:
+                self.ensemble_model_sets = {
+                    tag: {"train": [], "valid": {"Default": []}}
+                    for tag in self.ensemble.keys()
+                }
 
         if self.analysis:
             if self.restart:
@@ -348,6 +331,7 @@ class PrepareInitialDatasetProcedure:
             polarizability_key=self.misc.polarizability_key,
             head_key=self.misc.head_key,
             charges_key=self.misc.charges_key,
+            hirshfeld_ratios_key=self.misc.hirshfeld_ratios_key,
             total_charge_key=self.misc.total_charge_key,
             total_spin_key=self.misc.total_spin_key,
         )
@@ -427,7 +411,7 @@ class PrepareInitialDatasetProcedure:
                 "Please install it to use the AIMS calculator."
             )
         calc = asi4py.asecalc.ASI_ASE_calculator(
-            self.ASI_path, init_via_ase, self.comm_handler.comm, atoms
+            self.ASI_path, init_via_ase, None, atoms
         )
         return calc
 
@@ -543,6 +527,21 @@ class PrepareInitialDatasetProcedure:
                 }
 
                 dyn = MTKNPT(**npt_settings)
+            if md_settings["barostat"].lower() == "isomtk":
+                npt_settings = {
+                    "atoms": atoms,
+                    "timestep": md_settings["timestep"] * units.fs,
+                    "temperature_K": md_settings["temperature"],
+                    "pressure_au": md_settings["pressure"] * units.Pascal,
+                    "tdamp": md_settings["tdamp"] * units.fs,
+                    "pdamp": md_settings["pdamp"] * units.fs,
+                    "tchain": md_settings["tchain"],
+                    "pchain": md_settings["pchain"],
+                    "tloop": md_settings["tloop"],
+                    "ploop": md_settings["ploop"],
+                }
+                dyn = IsotropicMTKNPT(**npt_settings)
+
 
         return dyn
 
@@ -557,52 +556,29 @@ class PrepareInitialDatasetProcedure:
         self.ensemble_atomic_energies = None
         self.ensemble_atomic_energies_dict = None
         self.update_atomic_energies = False
-        if self.rank == 0:
-            if self.atomic_energies_dict is None:
-                if self.restart:
-                    logging.info("Loading atomic energies from checkpoint.")
-                    (
-                        self.ensemble_atomic_energies,
-                        self.ensemble_atomic_energies_dict,
-                    ) = get_atomic_energies_from_pt(
-                        path_to_checkpoints=self.checkpoints_dir,
-                        z=self.z,
-                        seeds_tags_dict=self.seeds_tags_dict,
-                        dtype=self.dtype,
-                        model_choice=self.model_choice,
-                    )
-                else:
-
-                    logging.info(
-                        "No atomic energies specified. "
-                        " Fitting to training data."
-                    )
-                    self.ensemble_atomic_energies_dict = {
-                        tag: {z: 0 for z in np.sort(np.unique(self.z))}
-                        for tag in self.seeds_tags_dict.keys()
-                    }
-                    self.ensemble_atomic_energies = {
-                        tag: np.array(
-                            [
-                                self.ensemble_atomic_energies_dict[tag][z]
-                                for z in self.ensemble_atomic_energies_dict[
-                                    tag
-                                ].keys()
-                            ]
-                        )
-                        for tag in self.seeds_tags_dict.keys()
-                    }
-
-                self.update_atomic_energies = True
-
+        if self.atomic_energies_dict is None:
+            if self.restart:
+                logging.info("Loading atomic energies from checkpoint.")
+                (
+                    self.ensemble_atomic_energies,
+                    self.ensemble_atomic_energies_dict,
+                ) = get_atomic_energies_from_pt(
+                    path_to_checkpoints=self.checkpoints_dir,
+                    z=self.z,
+                    seeds_tags_dict=self.seeds_tags_dict,
+                    dtype=self.dtype,
+                    model_choice=self.model_choice,
+                )
             else:
 
-                logging.info("Using specified atomic energies.")
+                logging.info(
+                    "No atomic energies specified. "
+                    " Fitting to training data."
+                )
                 self.ensemble_atomic_energies_dict = {
-                    tag: self.atomic_energies_dict
+                    tag: {z: 0 for z in np.sort(np.unique(self.z))}
                     for tag in self.seeds_tags_dict.keys()
                 }
-
                 self.ensemble_atomic_energies = {
                     tag: np.array(
                         [
@@ -615,9 +591,31 @@ class PrepareInitialDatasetProcedure:
                     for tag in self.seeds_tags_dict.keys()
                 }
 
-            logging.info(
-                f"{self.ensemble_atomic_energies_dict[list(self.seeds_tags_dict.keys())[0]]}"
-            )
+            self.update_atomic_energies = True
+
+        else:
+
+            logging.info("Using specified atomic energies.")
+            self.ensemble_atomic_energies_dict = {
+                tag: self.atomic_energies_dict
+                for tag in self.seeds_tags_dict.keys()
+            }
+
+            self.ensemble_atomic_energies = {
+                tag: np.array(
+                    [
+                        self.ensemble_atomic_energies_dict[tag][z]
+                        for z in self.ensemble_atomic_energies_dict[
+                            tag
+                        ].keys()
+                    ]
+                )
+                for tag in self.seeds_tags_dict.keys()
+            }
+
+        logging.info(
+            f"{self.ensemble_atomic_energies_dict[list(self.seeds_tags_dict.keys())[0]]}"
+        )
 
     def check_initial_ds_done(self) -> bool:
         """
@@ -632,11 +630,10 @@ class PrepareInitialDatasetProcedure:
         if self.create_restart:
             check = self.init_ds_restart_dict.get("initial_ds_done", False)
             if check:
-                if self.rank == 0:
-                    logging.info(
-                        "Initial dataset generation is already done. Closing"
-                    )
-                    self.logger.handlers.clear()
+                logging.info(
+                    "Initial dataset generation is already done. Closing"
+                )
+                self.logger.handlers.clear()
             return check
         else:
             return False
@@ -682,161 +679,160 @@ class PrepareInitialDatasetProcedure:
         is reached.
 
         """
-        if self.rank == 0:
-            logging.info("Converging.")
-            for _, (tag, model) in enumerate(self.ensemble.items()):
+        logging.info("Converging.")
+        for _, (tag, model) in enumerate(self.ensemble.items()):
 
-                (
-                    self.ensemble_model_sets[tag]["train_loader"],
-                    self.ensemble_model_sets[tag]["valid_loader"],
-                ) = create_dataloader(
-                    self.ensemble_model_sets[tag]["train"],
-                    self.ensemble_model_sets[tag]["valid"],
-                    self.set_batch_size,
-                    self.set_valid_batch_size,
+            (
+                self.ensemble_model_sets[tag]["train_loader"],
+                self.ensemble_model_sets[tag]["valid_loader"],
+            ) = create_dataloader(
+                self.ensemble_model_sets[tag]["train"],
+                self.ensemble_model_sets[tag]["valid"],
+                self.set_batch_size,
+                self.set_valid_batch_size,
+            )
+
+            update_model_auxiliaries(
+                model=model,
+                model_choice=self.model_choice,
+                model_sets=self.ensemble_model_sets[tag],
+                atomic_energies_list=self.ensemble_atomic_energies[tag],
+                scaling=self.scaling,
+                update_atomic_energies=self.update_atomic_energies,
+                z_table=self.z_table,
+                atomic_energies_dict=self.ensemble_atomic_energies_dict[
+                    tag
+                ],
+                update_avg_num_neighbors=self.config.update_avg_num_neighbors,
+                dtype=self.dtype,
+                device=self.device,
+            )
+
+        self.training_setups_convergence = {}
+        for tag in self.ensemble.keys():
+            self.training_setups_convergence[tag] = setup_model_training(
+                settings=self.model_settings,
+                model=self.ensemble[tag],
+                model_choice=self.model_choice,
+                tag=tag,
+                restart=self.restart,
+                convergence=True,
+                checkpoints_dir=self.checkpoints_dir,
+                mol_idxs=self.mol_idxs,
+            )
+        best_valid_loss = np.inf
+        epoch = 0
+        if self.restart:
+            epoch = self.training_setups_convergence[
+                list(self.ensemble.keys())[0]
+            ]["epoch"]
+
+        convergence_patience = self.idg_settings.convergence_patience
+        no_improvement = 0
+        ensemble_valid_losses = {
+            tag: np.inf for tag in self.ensemble.keys()
+        }
+        for j in range(self.max_convergence_epochs):
+            for tag, model in self.ensemble.items():
+                logger = tools.MetricsLogger(
+                    directory=self.model_settings.GENERAL.loss_dir,
+                    tag=tag + "_train",
                 )
-
-                update_model_auxiliaries(
+                train_epoch(
                     model=model,
-                    model_choice=self.model_choice,
-                    model_sets=self.ensemble_model_sets[tag],
-                    atomic_energies_list=self.ensemble_atomic_energies[tag],
-                    scaling=self.scaling,
-                    update_atomic_energies=self.update_atomic_energies,
-                    z_table=self.z_table,
-                    atomic_energies_dict=self.ensemble_atomic_energies_dict[
-                        tag
+                    train_loader=self.ensemble_model_sets[tag][
+                        "train_loader"
                     ],
-                    update_avg_num_neighbors=self.config.update_avg_num_neighbors,
-                    dtype=self.dtype,
-                    device=self.device,
+                    loss_fn=self.training_setups_convergence[tag][
+                        "loss_fn"
+                    ],
+                    optimizer=self.training_setups_convergence[tag][
+                        "optimizer"
+                    ],
+                    lr_scheduler=self.training_setups_convergence[tag][
+                        "lr_scheduler"
+                    ],
+                    valid_loss=ensemble_valid_losses[tag],
+                    epoch=epoch,
+                    start_epoch=epoch,
+                    logger=logger,
+                    device=self.training_setups_convergence[tag]["device"],
+                    max_grad_norm=self.training_setups_convergence[tag][
+                        "max_grad_norm"
+                    ],
+                    output_args=self.training_setups_convergence[tag][
+                        "output_args"
+                    ],
+                    ema=self.training_setups_convergence[tag]["ema"],
                 )
 
-            self.training_setups_convergence = {}
-            for tag in self.ensemble.keys():
-                self.training_setups_convergence[tag] = setup_model_training(
-                    settings=self.model_settings,
-                    model=self.ensemble[tag],
-                    model_choice=self.model_choice,
-                    tag=tag,
-                    restart=self.restart,
-                    convergence=True,
-                    checkpoints_dir=self.checkpoints_dir,
-                    mol_idxs=self.mol_idxs,
-                )
-            best_valid_loss = np.inf
-            epoch = 0
-            if self.restart:
-                epoch = self.training_setups_convergence[
-                    list(self.ensemble.keys())[0]
-                ]["epoch"]
-
-            convergence_patience = self.idg_settings.convergence_patience
-            no_improvement = 0
-            ensemble_valid_losses = {
-                tag: np.inf for tag in self.ensemble.keys()
-            }
-            for j in range(self.max_convergence_epochs):
-                for tag, model in self.ensemble.items():
-                    logger = tools.MetricsLogger(
-                        directory=self.model_settings.GENERAL.loss_dir,
-                        tag=tag + "_train",
-                    )
-                    train_epoch(
-                        model=model,
-                        train_loader=self.ensemble_model_sets[tag][
-                            "train_loader"
+            if (
+                epoch % self.valid_skip == 0
+                or epoch == self.max_convergence_epochs - 1
+            ):
+                ensemble_valid_losses, valid_loss, _ = (
+                    validate_epoch_ensemble(
+                        ensemble=self.ensemble,
+                        valid_loader=self.ensemble_model_sets[tag][
+                            "valid_loader"
                         ],
-                        loss_fn=self.training_setups_convergence[tag][
-                            "loss_fn"
-                        ],
-                        optimizer=self.training_setups_convergence[tag][
-                            "optimizer"
-                        ],
-                        lr_scheduler=self.training_setups_convergence[tag][
-                            "lr_scheduler"
-                        ],
-                        valid_loss=ensemble_valid_losses[tag],
-                        epoch=epoch,
-                        start_epoch=epoch,
+                        training_setups=self.training_setups_convergence,
                         logger=logger,
-                        device=self.training_setups_convergence[tag]["device"],
-                        max_grad_norm=self.training_setups_convergence[tag][
-                            "max_grad_norm"
-                        ],
-                        output_args=self.training_setups_convergence[tag][
-                            "output_args"
-                        ],
-                        ema=self.training_setups_convergence[tag]["ema"],
+                        log_errors=self.model_settings.MISC.error_table,
+                        epoch=epoch,
                     )
-
+                )
                 if (
-                    epoch % self.valid_skip == 0
-                    or epoch == self.max_convergence_epochs - 1
+                    best_valid_loss > valid_loss
+                    and (best_valid_loss - valid_loss) > self.margin
                 ):
-                    ensemble_valid_losses, valid_loss, _ = (
-                        validate_epoch_ensemble(
-                            ensemble=self.ensemble,
-                            valid_loader=self.ensemble_model_sets[tag][
-                                "valid_loader"
-                            ],
-                            training_setups=self.training_setups_convergence,
-                            logger=logger,
-                            log_errors=self.model_settings.MISC.error_table,
-                            epoch=epoch,
+                    best_valid_loss = valid_loss
+                    best_epoch = epoch
+                    no_improvement = 0
+                    for tag, model in self.ensemble.items():
+                        param_context = (
+                            self.training_setups_convergence[tag][
+                                "ema"
+                            ].average_parameters()
+                            if self.training_setups_convergence[tag]["ema"]
+                            is not None
+                            else nullcontext()
                         )
-                    )
-                    if (
-                        best_valid_loss > valid_loss
-                        and (best_valid_loss - valid_loss) > self.margin
-                    ):
-                        best_valid_loss = valid_loss
-                        best_epoch = epoch
-                        no_improvement = 0
-                        for tag, model in self.ensemble.items():
-                            param_context = (
-                                self.training_setups_convergence[tag][
-                                    "ema"
-                                ].average_parameters()
-                                if self.training_setups_convergence[tag]["ema"]
-                                is not None
-                                else nullcontext()
+                        with param_context:
+                            torch.save(
+                                model,
+                                self.model_settings.GENERAL.model_dir / (tag + ".model"),
                             )
-                            with param_context:
-                                torch.save(
-                                    model,
-                                    self.model_settings.GENERAL.model_dir / (tag + ".model"),
-                                )
-                            save_checkpoint(
-                                checkpoint_handler=self.training_setups_convergence[
-                                    tag
-                                ][
-                                    "checkpoint_handler"
-                                ],
-                                training_setup=self.training_setups_convergence[
-                                    tag
-                                ],
-                                model=model,
-                                epoch=epoch,
-                                keep_last=False,
-                            )
-                    else:
-                        no_improvement += 1
+                        save_checkpoint(
+                            checkpoint_handler=self.training_setups_convergence[
+                                tag
+                            ][
+                                "checkpoint_handler"
+                            ],
+                            training_setup=self.training_setups_convergence[
+                                tag
+                            ],
+                            model=model,
+                            epoch=epoch,
+                            keep_last=False,
+                        )
+                else:
+                    no_improvement += 1
 
-                epoch += 1
-                if no_improvement > convergence_patience:
-                    logging.info(
-                        f"No improvements for {convergence_patience} epochs. "
-                        "Training converged. Best model based on validation"
-                        " loss saved"
-                    )
-                    break
-                if j == self.max_convergence_epochs - 1:
-                    logging.info(
-                        f"Maximum number of epochs reached. Best model "
-                        f"(Epoch {best_epoch}) based on validation loss saved."
-                    )
-                    break
+            epoch += 1
+            if no_improvement > convergence_patience:
+                logging.info(
+                    f"No improvements for {convergence_patience} epochs. "
+                    "Training converged. Best model based on validation"
+                    " loss saved"
+                )
+                break
+            if j == self.max_convergence_epochs - 1:
+                logging.info(
+                    f"Maximum number of epochs reached. Best model "
+                    f"(Epoch {best_epoch}) based on validation loss saved."
+                )
+                break
 
 
 class ALConfiguration:
@@ -949,6 +945,7 @@ class ALConfiguration:
             polarizability_key=self.misc.polarizability_key,
             head_key=self.misc.head_key,
             charges_key=self.misc.charges_key,
+            hirshfeld_ratios_key=self.misc.hirshfeld_ratios_key,
             total_charge_key=self.misc.total_charge_key,
             total_spin_key=self.misc.total_spin_key,
         )
@@ -997,10 +994,8 @@ class ALConfiguration:
 class ALStateManager:
     """Manages the state of trajectories, ensembles, and analysis data."""
 
-    def __init__(self, config: ALConfiguration, comm_handler):
+    def __init__(self, config: ALConfiguration):
         self.config = config
-        self.comm_handler = comm_handler
-        self.rank = comm_handler.get_rank()
 
         # Initialize state dictionaries
         self.trajectories = {}
@@ -1041,11 +1036,10 @@ class ALStateManager:
     def initialize_fresh_state(self, path_to_geometry: str):
         """Initialize state for a fresh run."""
         atoms = read_geometry(path_to_geometry, log=True)
-        if self.rank == 0:
-            logging.info(
-                "Running Active Learning Procedure with "
-                f"{len(atoms)} geometries."
-            )
+        logging.info(
+            "Running Active Learning Procedure with "
+            f"{len(atoms)} geometries."
+        )
         # Initialize trajectory data
         self.trajectories = self._create_trajectories(
             atoms, self.config.num_trajectories
@@ -1184,10 +1178,8 @@ class ALStateManager:
 class ALEnsemble:
     """Manages ensemble setup and dataset handling for active learning."""
 
-    def __init__(self, config: ALConfiguration, comm_handler):
+    def __init__(self, config: ALConfiguration):
         self.config = config
-        self.comm_handler = comm_handler
-        self.rank = comm_handler.get_rank()
 
         # System properties
         self.z = None
@@ -1236,11 +1228,8 @@ class ALEnsemble:
 
     def setup_ensemble_and_datasets(self):
         """Setup ensemble and datasets."""
-        if self.rank == 0:
-            self._setup_ensemble()
-            self._setup_datasets()
-        else:
-            self.train_dataset_len = None
+        self._setup_ensemble()
+        self._setup_datasets()
 
         self._broadcast_dataset_info()
 
@@ -1310,11 +1299,7 @@ class ALEnsemble:
 
     def _broadcast_dataset_info(self):
         """Broadcast dataset information to all ranks."""
-        self.comm_handler.barrier()
-        self.train_dataset_len = self.comm_handler.bcast(
-            self.train_dataset_len, root=0
-        )
-        self.comm_handler.barrier()
+        pass
 
     def _check_subset_size(self, data_set, set_subset_size):
 
@@ -1346,8 +1331,10 @@ class ALEnsemble:
         )
 
         for tag in self.ensemble_ase_sets.keys():
-            self.ensemble_model_sets[tag]["train_subset"] = {}
-            self.ensemble_model_sets[tag]["valid_subset"] = {}
+            if "train_subset" not in self.ensemble_model_sets[tag]:
+                self.ensemble_model_sets[tag]["train_subset"] = {}
+            if "valid_subset" not in self.ensemble_model_sets[tag]:
+                self.ensemble_model_sets[tag]["valid_subset"] = {}
 
             if self.config.replay_strategy == "random_subset":
                 train_subset_size = self._check_subset_size(
@@ -1422,12 +1409,9 @@ class ALCalculatorMLFF:
         self,
         config: ALConfiguration,
         ensemble_manager: ALEnsemble,
-        comm_handler,
     ):
         self.config = config
         self.ensemble_manager = ensemble_manager
-        self.comm_handler = comm_handler
-        self.rank = comm_handler.get_rank()
 
         # model calculator
         self.models = None
@@ -1444,14 +1428,11 @@ class ALCalculatorMLFF:
     ):
         """Setup all required calculators."""
         self.handle_atomic_energies()
-        if self.rank == 0:
-            self._setup_mlff_calculator()
+        self._setup_mlff_calculator()
 
     def handle_atomic_energies(self):
         """Handle atomic energies initialization."""
         self.update_atomic_energies = False
-        if self.rank != 0:
-            return
 
         if self.config.atomic_energies_dict is None:
             self._load_atomic_energies_from_source()
@@ -1654,21 +1635,17 @@ class ALMD:
         self,
         config: ALConfiguration,
         state_manager: ALStateManager,
-        comm_handler,
     ):
         self.config = config
         self.state_manager = state_manager
-        self.comm_handler = comm_handler
-        self.rank = comm_handler.get_rank()
         self.train_dataset_len = 0
 
         self.md_settings, _ = normalize_md_settings(
             md_settings=self.config.md_settings_raw,
             num_trajectories=self.config.num_trajectories,
         )
-        if self.rank == 0:
-            logging.info(f"Using following settings for MDs:")
-            log_yaml_block("MD_SETTINGS", self.md_settings)
+        logging.info(f"Using following settings for MDs:")
+        log_yaml_block("MD_SETTINGS", self.md_settings)
 
         self.md_drivers = {}
 
@@ -1679,9 +1656,6 @@ class ALMD:
 
     def setup_md_drivers(self, trajectories: dict, mlff_calculator):
         """Setup MD drivers for all trajectories."""
-        if self.rank != 0:
-            return
-
         for trajectory in trajectories.values():
             trajectory.calc = mlff_calculator
 
@@ -1741,8 +1715,9 @@ class ALMD:
 
         if barostat == "berendsen":
             return self._create_berendsen_npt(atoms, md_settings, idx)
-        elif barostat == "mtk":
-            return self._create_mkt_npt(atoms, md_settings, idx)
+        elif barostat in ["mtk", "isomtk"]:
+            iso = barostat == "isomtk"
+            return self._create_mkt_npt(atoms, md_settings, idx, iso)
         else:
             raise ValueError(f"Unsupported barostat: {barostat}")
 
@@ -1776,6 +1751,7 @@ class ALMD:
         atoms: ase.Atoms,
         md_settings: dict,
         idx: int,
+        iso: bool = False,
     ) -> MTKNPT:
         """Create MTK NPT dynamics engine."""
         npt_settings = {
@@ -1790,7 +1766,11 @@ class ALMD:
             "tloop": md_settings["tloop"],
             "ploop": md_settings["ploop"],
         }
-        return MTKNPT(**npt_settings)
+        if iso:
+            return IsotropicMTKNPT(**npt_settings)
+        else:
+            return MTKNPT(**npt_settings)
+
 
     def _initialize_velocities(self, atoms: ase.Atoms, md_settings: dict):
         """
@@ -1853,16 +1833,13 @@ class ALRestart:
         self,
         config: ALConfiguration,
         state_manager: ALStateManager,
-        comm_handler,
         md_manager: ALMD,
         ensemble_manager: ALEnsemble,
     ):
         self.config = config
         self.state_manager = state_manager
         self.md_manager = md_manager
-        self.comm_handler = comm_handler
         self.ensemble_manager = ensemble_manager
-        self.rank = comm_handler.get_rank()
 
         if config.create_restart:
             self._initialize_restart_dict()
@@ -1915,8 +1892,7 @@ class ALRestart:
         """Handle active learning restart."""
         self._initialize_restart_attributes()
 
-        if self.rank == 0:
-            self._load_restart_checkpoint()
+        self._load_restart_checkpoint()
 
         self._broadcast_restart_state()
 
@@ -1994,46 +1970,7 @@ class ALRestart:
                     )
 
     def _broadcast_restart_state(self):
-        """Broadcast restart state from rank 0 to all processes."""
-        self.comm_handler.barrier()
-
-        # Define attributes to broadcast
-        broadcast_attributes = [
-            "trajectory_status",
-            "trajectory_MD_steps",
-            "trajectory_total_epochs",
-            "current_valid_error",
-            "total_points_added",
-            "train_points_added",
-            "valid_points_added",
-            "num_MD_limits_reached",
-            "num_workers_training",
-            "num_workers_waiting",
-            "total_epoch",
-            "check",
-            "uncertainties",
-            "uncert_not_crossed",
-            "last_point_added",
-        ]
-
-        if self.config.analysis:
-            analysis_broadcast = [
-                "t_intervals",
-                "analysis_checks",
-                "collect_losses",
-                "collect_thresholds",
-            ]
-            if self.config.mol_idxs is not None:
-                analysis_broadcast.append("uncertainty_checks")
-            broadcast_attributes.extend(analysis_broadcast)
-
-        # Broadcast all attributes
-        for attr in broadcast_attributes:
-            value = getattr(self.state_manager, attr)
-            broadcasted_value = self.comm_handler.bcast(value, root=0)
-            setattr(self.state_manager, attr, broadcasted_value)
-
-        self.comm_handler.barrier()
+        pass
 
     def _is_nvt_or_npt_ensemble(self) -> bool:
         """Check if ensemble type is NVT or NPT."""
@@ -2130,17 +2067,8 @@ class PrepareALProcedure:
         aimsPAX_settings: AimsPAXSettings,
         path_to_control: str = "./control.in",
         path_to_geometry: str = "./geometry.in",
-        use_mpi: bool = True,
-        comm_handler: CommHandler = None,
     ):
         """Initialize the active learning procedure."""
-        # Check for config first
-        if aimsPAX_settings.ACTIVE_LEARNING is None:
-            raise ValueError("Active learning needs configuration")
-
-        # Setup communication
-        self._setup_communication(comm_handler, use_mpi)
-
         # Initialize configuration
         self.config = ALConfiguration(
             model_settings,
@@ -2153,32 +2081,29 @@ class PrepareALProcedure:
         self._setup_logging()
         self._create_folders()
 
-        if self.rank == 0:
-            logging.info("Initializing active learning procedure.")
-            logging.info(f"Procedure runs on {self.world_size} workers.")
-            logging.info(
-                "Using following settings for the active learning procedure:"
-            )
-            log_yaml_block(
-                "ACTIVE_LEARNING", aimsPAX_settings.ACTIVE_LEARNING.model_dump()
-            )
-            logging.info(
-                f"Using following settings for {self.config.model_choice}:"
-            )
-            log_yaml_block(self.config.model_choice, model_settings.model_dump())
+        logging.info("Initializing active learning procedure.")
+        logging.info(
+            "Using following settings for the active learning procedure:"
+        )
+        log_yaml_block(
+            "ACTIVE_LEARNING", aimsPAX_settings.ACTIVE_LEARNING.model_dump()
+        )
+        logging.info(
+            f"Using following settings for {self.config.model_choice}:"
+        )
+        log_yaml_block(self.config.model_choice, model_settings.model_dump())
         # Initialize all managers
-        self.state_manager = ALStateManager(self.config, self.comm_handler)
-        self.ensemble_manager = ALEnsemble(self.config, self.comm_handler)
+        self.state_manager = ALStateManager(self.config)
+        self.ensemble_manager = ALEnsemble(self.config)
         self.mlff_manager = ALCalculatorMLFF(
-            self.config, self.ensemble_manager, self.comm_handler
+            self.config, self.ensemble_manager
         )
         self.md_manager = ALMD(
-            self.config, self.state_manager, self.comm_handler
+            self.config, self.state_manager
         )
         self.restart_manager = ALRestart(
             self.config,
             self.state_manager,
-            self.comm_handler,
             self.md_manager,
             self.ensemble_manager,
         )
@@ -2202,45 +2127,33 @@ class PrepareALProcedure:
                 self.config.path_to_geometry
             )
         # assign mlff to checkpoints
-        if self.rank == 0:
-            for ckpt in self.state_manager.MD_checkpoints.values():
-                ckpt.calc = self.mlff_manager.mlff_calc
-                # compute forces for checkpoint
-                ckpt.calc.calculate(ckpt)
+        for ckpt in self.state_manager.MD_checkpoints.values():
+            ckpt.calc = self.mlff_manager.mlff_calc
+            # compute forces for checkpoint
+            ckpt.calc.calculate(ckpt)
 
-            # Make sure state manager has access to seeds_tags_dict
-            self.state_manager.seeds_tags_dict = self.config.seeds_tags_dict
+        # Make sure state manager has access to seeds_tags_dict
+        self.state_manager.seeds_tags_dict = self.config.seeds_tags_dict
         self.first_wait_after_restart = {
             idx: True for idx in range(self.config.num_trajectories)
         }
-        if self.rank == 0:
-            self.md_manager.setup_md_drivers(
-                self.state_manager.trajectories, self.mlff_manager.mlff_calc
-            )
-            if aimsPAX_settings.ACTIVE_LEARNING.save_trajectories:
-                Path("trajectories").mkdir(parents=True, exist_ok=True)
-                for idx in self.md_manager.md_drivers:
-                    traj = self.state_manager.trajectories[idx]
-                    self.md_manager.md_drivers[idx].attach(
-                        lambda i=idx, t=traj: log_ensemble(
-                            self.state_manager.seeds_tags_dict,
-                            t,
-                            filename=f"trajectories/{i}.extxyz"),
-                        interval=aimsPAX_settings.ACTIVE_LEARNING.save_trajectories_interval
-                    )
+        self.md_manager.setup_md_drivers(
+            self.state_manager.trajectories, self.mlff_manager.mlff_calc
+        )
+        if aimsPAX_settings.ACTIVE_LEARNING.save_trajectories:
+            Path("trajectories").mkdir(parents=True, exist_ok=True)
+            for idx in self.md_manager.md_drivers:
+                traj = self.state_manager.trajectories[idx]
+                self.md_manager.md_drivers[idx].attach(
+                    lambda i=idx, t=traj: log_ensemble(
+                        self.state_manager.seeds_tags_dict,
+                        t,
+                        filename=f"trajectories/{i}.extxyz"),
+                    interval=aimsPAX_settings.ACTIVE_LEARNING.save_trajectories_interval
+                )
 
         # TODO: Remove hardcode
         self.use_scheduler = False
-
-    def _setup_communication(self, comm_handler: CommHandler, use_mpi: bool):
-        """Setup MPI communication."""
-        if comm_handler is not None:
-            self.comm_handler = comm_handler
-        else:
-            self.comm_handler = CommHandler(use_mpi=use_mpi)
-
-        self.rank = self.comm_handler.get_rank()
-        self.world_size = self.comm_handler.get_size()
 
     def _setup_logging(self):
         """Setup logging configuration."""
@@ -2280,7 +2193,7 @@ class PrepareALProcedure:
         """Check if active learning is done."""
         if self.config.create_restart:
             check = self.restart_manager.al_restart_dict.get("al_done", False)
-            if check and self.rank == 0:
+            if check:
                 logging.info(
                     "Active learning procedure is already done. Closing"
                 )
