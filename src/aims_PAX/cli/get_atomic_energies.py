@@ -1,5 +1,4 @@
 from aims_PAX.procedures.atomic_energies import E0Calculator
-from mpi4py import MPI
 import argparse
 
 
@@ -38,6 +37,12 @@ def main():
             help="Atomic numbers of the atoms in the system",
             default=None,
         )
+        parser.add_argument(
+            "--output-dir",
+            type=str,
+            help="Base output directory for atomic_energies.npz",
+            default=".",
+        )
         return parser.parse_args()
 
     args = parse_arguments()
@@ -48,14 +53,10 @@ def main():
         path_to_geometry=args.geometry,
         aims_path=args.aims_lib_path,
         Zs=args.Zs,
+        output_dir=args.output_dir,
     )
 
-    MPI.COMM_WORLD.Barrier()
-
     E0s_calc()
-
-    MPI.COMM_WORLD.Barrier()
-    MPI.Finalize()
 
 
 if __name__ == "__main__":

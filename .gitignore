@@ -18,5 +18,9 @@
 src/aims_PAX.egg-info
 /build
 /dev_examples
-
+CLAUDE.md
+.claude
+docs
+.df_scripts
+.vscode
 

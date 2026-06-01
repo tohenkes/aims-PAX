@@ -2,14 +2,25 @@ import logging
 import re
 import sys
 import os
+
 import torch
 import numpy as np
 from typing import Optional, Any, Dict, Union
 from pathlib import Path
 from mace import tools, modules
+from mace.cli.convert_e3nn_cueq import run as convert_e3nn_cueq
+from mace.cli.convert_cueq_e3nn import run as convert_cueq_e3nn
 from mace.tools import AtomicNumberTable
-from aims_PAX.tools.setup_MACE import setup_mace
-from aims_PAX.tools.setup_MACE_training import setup_mace_training
+from so3krates_torch.modules.models import So3krates, SO3LR
+from so3krates_torch.tools.multihead_utils import reduce_mh_model_to_sh
+from so3krates_torch.tools.finetune import setup_finetuning
+
+from aims_PAX.settings import ModelSettings
+from aims_PAX.settings.model import MACEArchitectureSettings, BaseArchitectureSettings
+from aims_PAX.settings.project import MDSettings, MiscSettings
+from aims_PAX.tools.model_tools.setup_MACE import setup_mace
+from aims_PAX.tools.model_tools.setup_so3 import setup_so3krates, setup_so3lr, setup_multihead_so3lr
+from aims_PAX.tools.model_tools.training_tools import setup_model_training
 import ase.data
 from ase.io import read
 from ase import units
@@ -40,32 +51,143 @@ Pbc = tuple  # (3,)
 DEFAULT_CONFIG_TYPE = "Default"
 DEFAULT_CONFIG_TYPE_WEIGHTS = {DEFAULT_CONFIG_TYPE: 1.0}
 
+#TODO: Refactor all model setup to a separate file
+
+def mh_to_sh_model(
+    mh_model_state_dict,
+    settings: dict,
+    z_table: tools.AtomicNumberTable,
+    atomic_energies_dict: dict,
+    avg_num_neighbors: float,
+    head_idx: int,
+    model_choice: str = "so3lr",
+    device: str = "cpu",
+    dtype: str = "float32"
+):
+    settings["num_elements"] = len(z_table)
+    settings["avg_num_neighbors"] = avg_num_neighbors
+    settings["atomic_type_shifts"] = atomic_energies_dict
+    
+    sh_model = reduce_mh_model_to_sh(
+        mh_model_state_dict,
+        settings,
+        head_idx,
+        model_choice,
+        device,
+        dtype
+    )
+    return sh_model
+
+
+def get_free_vols(lines):
+    active = False
+    freevol = []
+    for line in lines:
+       if not active:
+          if "Performing Hirshfeld analysis of fragment charges and moments" in line:
+                active = True
+       else:
+          if "Free atom volume" in line:
+             fav = float(re.findall("\-?\d+(?:\.\d+)", line)[0])
+             freevol.append(fav)
+    return freevol
+
+
+def get_hirshfeld_charges(lines):
+    active = False
+    charges = []
+    for line in lines:
+        if not active:
+            if "Performing Hirshfeld analysis of fragment charges and moments" in line:
+                active = True
+        else:
+            if "Hirshfeld charge" in line:
+                charges.append(
+                    float(re.findall(r"\-?\d+(?:\.\d+)", line)[0])
+                )
+    return charges
+
+
+def apply_model_settings(
+    target,
+    model_settings: ModelSettings,
+) -> None:
+
+    target.model_settings = model_settings
+    model_choice = model_settings.GENERAL.model_choice.lower()
+    attrs = {
+        "model_settings": model_settings,
+        "model_choice": model_choice,
+        "seed": model_settings.GENERAL.seed,
+        "checkpoints_dir": model_settings.GENERAL.checkpoints_dir,
+        "model_dir": model_settings.GENERAL.model_dir,
+        "dtype": model_settings.GENERAL.default_dtype,
+        "r_max": model_settings.ARCHITECTURE.r_max,
+        "r_max_lr": model_settings.ARCHITECTURE.r_max_lr if model_choice == "so3lr" else None,
+        "dispersion_energy_cutoff_lr_damping": (model_settings.ARCHITECTURE.dispersion_energy_cutoff_lr_damping
+                                                if model_choice == "so3lr" else None),
+        "atomic_energies_dict": None if model_choice != "mace" else model_settings.ARCHITECTURE.atomic_energies,
+        "scaling": None if model_choice != "mace" else model_settings.ARCHITECTURE.scaling,
+        "set_batch_size": model_settings.TRAINING.batch_size,
+        "set_valid_batch_size": model_settings.TRAINING.valid_batch_size,
+        "update_avg_num_neighbors": model_settings.TRAINING.update_avg_num_neighbors,
+        "device": model_settings.MISC.device,
+        "compute_stress": model_settings.MISC.compute_stress,
+        "compute_dipole": model_settings.MISC.compute_dipole,
+        "properties": ["energy", "forces"],
+        "enable_cueq": model_settings.MISC.enable_cueq,
+        "enable_cueq_train": model_settings.MISC.enable_cueq_train,
+        "use_multihead_model": False if model_choice != "so3lr" else model_settings.ARCHITECTURE.use_multihead_model,
+        "num_multihead_heads": 0 if model_choice != "so3lr" else model_settings.ARCHITECTURE.num_multihead_heads,
+    }
+
+    if model_settings.MISC.compute_stress:
+        attrs["properties"].append("stress")
+    if model_settings.MISC.compute_dipole:
+        attrs["properties"].append("dipole")
+
+    # Setting actual attributes
+    for k, v in attrs.items():
+        target.__setattr__(k, v)
+
+    torch.set_default_dtype(getattr(torch, target.dtype))
+
+    # Multihead attributes
+    target.use_pretrained_model = (
+            isinstance(model_settings.TRAINING.pretrained_model, str) or
+            isinstance(model_settings.TRAINING.pretrained_weights, str)
+        )
+    if target.use_pretrained_model and target.update_avg_num_neighbors:
+        logging.warning(
+            "Using a pretrained model/weights with "
+            "update_avg_num_neighbors=True is not recommended."
+            "This can lead to high errors in the beginning of training!"
+        )
+    if target.use_multihead_model and target.num_multihead_heads is not None:
+        target.all_heads = [
+            f"head_{i}" for i in range(target.num_multihead_heads) 
+        ]
+    else:
+        target.all_heads = None
+
 
 def is_multi_trajectory_md(
-    md_settings: dict
+    md_settings: MDSettings
 ) -> bool:
     """Check if MD settings use multi-trajectory format."""
     if not md_settings:
         return False
-    
-    first_key = next(iter(md_settings.keys()))
-    
-    try:
-        int(first_key)
-        return True
-    except (ValueError, TypeError):
-        return False
-    
+
+    return isinstance(md_settings.root, dict)
+
 
 def normalize_md_settings(
-    md_settings: dict, 
+    md_settings: MDSettings,
     num_trajectories: int
 ) -> tuple[dict, bool]:
     """Normalize MD settings to multi-trajectory format."""
-    if is_multi_trajectory_md(md_settings.copy()):
-        return md_settings, True
-    else:
-        return {i: md_settings.copy() for i in range(num_trajectories)}, False
+    return ({i: md_settings.get_for_index(i).model_dump() for i in range(num_trajectories)},
+            is_multi_trajectory_md(md_settings))
 
 
 def create_keyspec(
@@ -76,13 +198,15 @@ def create_keyspec(
     polarizability_key: str = "REF_polarizability",
     head_key: str = "head",
     charges_key: str = "REF_charges",
+    hirshfeld_ratios_key: str = "REF_hirshfeld_ratios",
     total_charge_key: str = "total_charge",
     total_spin_key: str = "total_spin"
 ) -> KeySpecification:
-    
+
     arrays_keys = {
         "forces": forces_key,
-        "charges": charges_key
+        "charges": charges_key,
+        "hirshfeld_ratios": hirshfeld_ratios_key,
     }
     
     info_keys = {
@@ -131,7 +255,12 @@ def compute_average_E0s(
     return atomic_energies_dict
 
 
-def ensemble_from_folder(path_to_models: str, device: str, dtype) -> list:
+def ensemble_from_folder(
+        path_to_models: str,
+        device: str,
+        dtype,
+        convert_to_cueq: bool = False
+            ) -> list:
     """
     Load an ensemble of models from a folder.
     (Can't handle other file formats than .pt at the moment.)
@@ -139,7 +268,8 @@ def ensemble_from_folder(path_to_models: str, device: str, dtype) -> list:
     Args:
         path_to_models (str): Path to the folder containing the models.
         device (str): Device to load the models on.
-
+        dtype: Data type to load the models with.
+        convert_to_cueq (bool, optional): Whether to convert the models to CuEQ format. Defaults to False.
     Returns:
         list: List of models.
     """
@@ -149,13 +279,23 @@ def ensemble_from_folder(path_to_models: str, device: str, dtype) -> list:
 
     ensemble = {}
     for filename in os.listdir(path_to_models):
-        if os.path.isfile(os.path.join(path_to_models, filename)):
-            complete_path = os.path.join(path_to_models, filename)
-            model = torch.load(
-                complete_path, map_location=device, weights_only=False
-            ).to(dtype)
-            filename_without_suffix = os.path.splitext(filename)[0]
-            ensemble[filename_without_suffix] = model
+        # check if filename is for model
+        if filename.endswith(".model"):
+            if os.path.isfile(os.path.join(path_to_models, filename)):
+                complete_path = os.path.join(path_to_models, filename)
+                model = torch.load(
+                    complete_path, map_location=device, weights_only=False
+                ).to(dtype)
+                
+                if convert_to_cueq:
+                    model = convert_e3nn_cueq(
+                        input_model=model,
+                        device=device,
+                        return_model=True
+                    )
+
+                filename_without_suffix = os.path.splitext(filename)[0]
+                ensemble[filename_without_suffix] = model
     return ensemble
 
 
@@ -205,9 +345,9 @@ def select_best_member(
     return min(ensemble_valid_loss, key=ensemble_valid_loss.get)
 
 
-def ensemble_training_setups(
+def get_ensemble_training_setups(
     ensemble: dict,
-    mace_settings: dict,
+    model_settings: ModelSettings,
     checkpoints_dir: str = None,
     restart: bool = False,
     mol_idxs: Optional[np.ndarray] = None,
@@ -216,8 +356,8 @@ def ensemble_training_setups(
     Creates a dictionary of training setups for each model in the ensemble.
 
     Args:
-        ensemble (dict): Dictionary of MACE models in the ensemble.
-        mace_settings (dict): Model settings dictionary containing
+        ensemble (dict): Dictionary of models in the ensemble.
+        model_settings (ModelSettings): Model settings dictionary containing
                               the experiment name and all model and training
                               settings.
         checkpoints_dir (str, optional): Path to the folder where
@@ -231,11 +371,14 @@ def ensemble_training_setups(
     Returns:
         dict: Dictionary of training setups for each model in the ensemble.
     """
+    
+    model_choice = model_settings.GENERAL.model_choice.lower()
     training_setups = {}
     for tag, model in ensemble.items():
-        training_setups[tag] = setup_mace_training(
-            settings=mace_settings,
+        training_setups[tag] = setup_model_training(
+            settings=model_settings,
             model=model,
+            model_choice=model_choice,
             tag=tag,
             restart=restart,
             checkpoints_dir=checkpoints_dir,
@@ -245,20 +388,20 @@ def ensemble_training_setups(
 
 
 def create_seeds_tags_dict(
-    seeds: np.array,
-    mace_settings: dict,
-    misc_settings: dict,
+    seeds: np.ndarray,
+    model_settings: ModelSettings,
+    dataset_dir,
     save_seeds_tags_dict: str = "seeds_tags_dict.npz",
 ) -> dict:
     """
-    Creates a dict where the keys (tags) are the names of the MACE
+    Creates a dict where the keys (tags) are the names of the model
     models in the ensemble and the values are the respective seeds.
 
     Args:
         seeds (np.array): Array of seeds for the ensemble.
-        mace_settings (dict): Model settings dictionary containing
+        model_settings (ModelSettings): Model settings dictionary containing
                               the experiment name.
-        al_settings (dict, optional): Active learning settings..
+        dataset_dir: Path to the dataset directory where the dict is saved.
         save_seeds_tags_dict (str, optional): Name of the resulting dict.
                                 Defaults to "seeds_tags_dict.npz".
 
@@ -267,29 +410,31 @@ def create_seeds_tags_dict(
     """
     seeds_tags_dict = {}
     for seed in seeds:
-        tag = mace_settings["GENERAL"]["name_exp"] + "-" + str(seed)
+        tag = model_settings.GENERAL.name_exp + "-" + str(seed)
         seeds_tags_dict[tag] = seed
     if save_seeds_tags_dict:
         np.savez(
-            misc_settings["dataset_dir"] + "/" + save_seeds_tags_dict,
+            dataset_dir / save_seeds_tags_dict,
             **seeds_tags_dict,
         )
     return seeds_tags_dict
 
 
 def create_ztable(
-    zs: list,
+    zs: np.ndarray,
 ):
     z_table = tools.get_atomic_number_table_from_zs(z for z in zs)
     return z_table
 
 
 def setup_ensemble_dicts(
-    seeds_tags_dict: dict,
+    seeds_tags_dict: dict[str, int],
     z_table: tools.AtomicNumberTable,
-    mace_settings: dict,
-    ensemble_atomic_energies_dict: dict,
-) -> tuple:
+    model_settings: ModelSettings,
+    ensemble_atomic_energies_dict: dict[str, dict[int, int]],
+    num_elements: int = 118,
+    device: str = "cpu",
+) -> dict[str, Any]:
     """
     Creates dictionaries for the ensemble members i.e. a dictionary of models.
     Also, creates a dictionary for the training setups for each model and
@@ -297,37 +442,212 @@ def setup_ensemble_dicts(
     are returned as a tuple.
 
     Args:
-        seeds (np.array): Array of seeds for the ensemble.
-        save_seeds_tags_dict (bool, optional): Seeds with corresponding tags.
-                                            Defaults to "seeds_tags_dict.npz".
+        seeds_tags_dict (dict[str, int]): Tags with corresponding seeds.
+        z_table (tools.AtomicNumberTable): Atomic numbers of elements in the model
+        model_settings (ModelSettings): Model settings
+        ensemble_atomic_energies_dict (dict[str, dict[int, int]]): Dictionary of atomic energies
+        for each tag
+
 
     Returns:
-        tuple: Tuple of seeds_tags_dict, ensemble, training_setups.
+        A dict connecting tag to ensemble.
     """
 
     ensemble = {}
     for tag, seed in seeds_tags_dict.items():
-        mace_settings["GENERAL"]["seed"] = seed
-        tag = mace_settings["GENERAL"]["name_exp"] + "-" + str(seed)
+        model_settings.GENERAL.seed = seed
+        tag = model_settings.GENERAL.name_exp + "-" + str(seed)
         seeds_tags_dict[tag] = seed
-        ensemble[tag] = setup_mace(
-            settings=mace_settings,
-            z_table=z_table,
-            atomic_energies_dict=ensemble_atomic_energies_dict[tag],
-        )
+        
+        model_choice = model_settings.GENERAL.model_choice.lower()
+        if model_choice == "mace":
+            ensemble[tag] = setup_mace(
+                settings=model_settings,
+                z_table=z_table,
+                atomic_energies_dict=ensemble_atomic_energies_dict[tag],
+            )
+        elif model_choice == "so3krates":
+            ensemble[tag] = setup_so3krates(
+                settings=model_settings,
+                z_table=z_table,
+                atomic_energies_dict=ensemble_atomic_energies_dict[tag],
+            )
+        elif model_choice == "so3lr":
+            # TODO: Move the check to where it belongs
+            if model_settings.ARCHITECTURE.use_multihead_model:
+                assert model_settings.ARCHITECTURE.num_multihead_heads is not None, (
+                    "num_multihead_heads must be specified when using "
+                    "a multihead SO3LR model."
+                )
+                assert len(seeds_tags_dict) == 1, (
+                    "When using a multihead model ('use_multihead_model: True'), "
+                    "'ensemble_size' must be 1."
+                )
+
+                pretrained_model = setup_pretrained(
+                    model_settings=model_settings,
+                    z_table=z_table,
+                    atomic_energies_dict=ensemble_atomic_energies_dict[tag],
+                    num_elements=num_elements
+                )
+                if pretrained_model is not None:
+                    ensemble[tag] = pretrained_model
+                    
+                else:
+                    ensemble[tag] = setup_multihead_so3lr(
+                        settings=model_settings,
+                        z_table=z_table,
+                        atomic_energies_dict=ensemble_atomic_energies_dict[tag],
+                    )
+            else:
+                ensemble[tag] = setup_so3lr(
+                    settings=model_settings,
+                    z_table=z_table,
+                    atomic_energies_dict=ensemble_atomic_energies_dict[tag],
+                )
     return ensemble
 
+
+def setup_pretrained(
+    model_settings: ModelSettings,
+    z_table: tools.AtomicNumberTable,
+    atomic_energies_dict: dict,
+    num_elements: int = 118
+):
+    pretrained_model = model_settings.TRAINING.pretrained_model
+    pretrained_weights = model_settings.TRAINING.pretrained_weights
+    num_output_heads = model_settings.ARCHITECTURE.num_multihead_heads
+    device = model_settings.MISC.device
+    dtype = model_settings.GENERAL.default_dtype
+    
+    if not pretrained_model and not pretrained_weights:
+        return None
+    
+    if pretrained_model or pretrained_weights:
+        assert model_settings.ARCHITECTURE.use_multihead_model, (
+            "Pretrained model or weights can only be used with multihead SO3LR."
+        )
+        logging.info("Using pretrained model or weights for multihead SO3LR.")
+        #TODO: Find a better way to do this. Extract settings from model (weights)?
+        logging.warning(
+            "Make sure that the architecture settings corresponding "
+            "to the pretrained model have been set correctly in the config file."
+            " Otherwise, non-matching hyperparameters will be saved!"
+        )
+        
+    model = None
+    if pretrained_model:
+        model = torch.load(
+            pretrained_model,
+            map_location=device,
+            weights_only=False
+        )
+        model.device = device
+        model.atomic_energy_output_block.device = device
+        model.to(dtype_mapping[dtype])
+        model.select_heads = True
+        
+        assert num_output_heads == model.num_output_heads, (
+            "Number of output heads in the pretrained model does not match "
+            "the number of output heads specified in the settings."
+        )
+    elif pretrained_weights:
+        weights = torch.load(
+            pretrained_weights,
+            map_location=device,
+            weights_only=True
+        )
+        
+        assert num_output_heads == weights[
+            "atomic_energy_output_block.num_output_heads"
+        ], (
+            "Number of output heads in the pretrained weights does not match "
+            "the number of output heads specified in the settings."
+        )
+        
+        model = setup_multihead_so3lr(
+            settings=model_settings,
+            z_table=z_table,
+            atomic_energies_dict=atomic_energies_dict,
+        )
+        
+        model.load_state_dict(weights)
+    
+    if model_settings.TRAINING.perform_finetuning:
+        model = apply_finetuning_settings(
+            model=model,
+            model_settings=model_settings,
+            num_elements=num_elements
+        )
+
+    if model_settings.GENERAL.model_choice == "so3lr":
+        model.r_max_lr = model_settings.ARCHITECTURE.r_max_lr
+        logging.info(
+            f"Set r_max_lr to {model.r_max_lr} for pretrained SO3LR model."
+        )
+    return model
+
+
+def apply_finetuning_settings(
+    model: torch.nn.Module,
+    model_settings: ModelSettings,
+    num_elements: int = 118
+) -> torch.nn.Module:
+    
+    logging.info("Applying fine-tuning settings to pretrained model.")
+
+    finetune_choice = model_settings.TRAINING.finetuning_choice
+    device_name = model_settings.MISC.device
+    freeze_embedding = model_settings.TRAINING.freeze_embedding
+    freeze_zbl = model_settings.TRAINING.freeze_zbl
+    freeze_hirshfeld = model_settings.TRAINING.freeze_hirshfeld
+    freeze_partial_charges = model_settings.TRAINING.freeze_partial_charges
+    freeze_shifts = model_settings.TRAINING.freeze_shifts
+    freeze_scales = model_settings.TRAINING.freeze_scales
+    convert_to_lora = model_settings.TRAINING.convert_to_lora
+    lora_rank = model_settings.TRAINING.lora_rank
+    lora_alpha = model_settings.TRAINING.lora_alpha
+    lora_freeze_A = model_settings.TRAINING.lora_freeze_A
+    
+    dora_scaling_to_one = True # TODO: remove dora
+    
+    convert_to_multihead = model_settings.TRAINING.convert_to_multihead
+    seed = model_settings.GENERAL.seed
+    
+    return setup_finetuning(
+        model=model,
+        finetune_choice=finetune_choice,
+        device_name=device_name,
+        num_elements=num_elements,
+        freeze_embedding=freeze_embedding,
+        freeze_zbl=freeze_zbl,
+        freeze_hirshfeld=freeze_hirshfeld,
+        freeze_partial_charges=freeze_partial_charges,
+        freeze_shifts=freeze_shifts,
+        freeze_scales=freeze_scales,
+        convert_to_lora=convert_to_lora,
+        lora_rank=lora_rank,
+        lora_alpha=lora_alpha,
+        lora_freeze_A=lora_freeze_A,
+        dora_scaling_to_one=dora_scaling_to_one,
+        convert_to_multihead=convert_to_multihead,
+        architecture_settings=model_settings.ARCHITECTURE.model_dump(),
+        seed=seed,
+        log=True
+    )
+    
 
 def get_atomic_energies_from_ensemble(
     ensemble: dict,
     z,
+    model_choice: str,
     dtype: str,
 ):
     """
     Loads the atomic energies from existing ensemble members.
 
     Args:
-        ensemble (dict): Dictionary of MACE models.
+        ensemble (dict): Dictionary of model models.
         z (np.array): Array of atomic numbers for which the atomic energies
                         are needed.
         dtype (str): Data type for the atomic energies.
@@ -336,9 +656,18 @@ def get_atomic_energies_from_ensemble(
     ensemble_atomic_energies_dict = {}
     ensemble_atomic_energies = {}
     for tag, model in ensemble.items():
-        ensemble_atomic_energies[tag] = np.array(
-            model.atomic_energies_fn.atomic_energies.cpu(), dtype=dtype
-        )
+        if model_choice == "mace":
+            ensemble_atomic_energies[tag] = np.array(
+                model.atomic_energies_fn.atomic_energies.cpu(), dtype=dtype
+            )
+        else:
+            energy_shifts_so3 = model.atomic_energy_output_block.energy_shifts
+            if energy_shifts_so3.requires_grad:
+                energy_shifts_so3 = energy_shifts_so3.detach()
+            ensemble_atomic_energies[tag] = np.array(
+                energy_shifts_so3.cpu(),
+                dtype=dtype
+            )
         ensemble_atomic_energies_dict[tag] = {}
         for i, atomic_energy in enumerate(ensemble_atomic_energies[tag]):
             # TH: i don't know if the atomic energies are really sorted
@@ -351,13 +680,14 @@ def get_atomic_energies_from_ensemble(
 
 
 def get_atomic_energies_from_pt(
-    path_to_checkpoints: str,
-    z: np.array,
+    path_to_checkpoints: Path,
+    z: np.ndarray,
     seeds_tags_dict: dict,
     dtype: str,
+    model_choice: str
 ) -> tuple:
     """
-    Loads the atomic energies (energy shifts) from an existing MACE
+    Loads the atomic energies (energy shifts) from an existing model
     training checkpoint. Returns a list and dictionary containing the
     atomic energies for each ensemble member.
 
@@ -380,12 +710,18 @@ def get_atomic_energies_from_pt(
     last_epoch = int(last_check_pt.split(".")[0].split("-")[-1])
     for tag in seeds_tags_dict.keys():
         check_pt = torch.load(
-            (path_to_checkpoints + "/" + tag + f"_epoch-{last_epoch}.pt")
+            path_to_checkpoints / (tag + f"_epoch-{last_epoch}.pt")
         )
-
-        atomic_energies_array = check_pt["model"][
-            "atomic_energies_fn.atomic_energies"
-        ]
+        
+        if model_choice == "mace":
+            atomic_energies_array = check_pt["model"][
+                "atomic_energies_fn.atomic_energies"
+            ]
+        elif model_choice in ["so3krates", "so3lr"]:
+            atomic_energies_array = check_pt["model"][
+                "atomic_energy_output_block.energy_shifts"
+            ]
+            
         ensemble_atomic_energies[tag] = np.array(
             atomic_energies_array.cpu(), dtype=dtype
         )
@@ -400,11 +736,30 @@ def get_atomic_energies_from_pt(
     return (ensemble_atomic_energies, ensemble_atomic_energies_dict)
 
 
+def to_numpy(t: torch.Tensor) -> np.ndarray:
+    return t.cpu().detach().numpy()
+
+
+def compute_avg_num_neighbors(data_loader: torch.utils.data.DataLoader) -> float:
+    num_neighbors = []
+    for batch in data_loader:
+        _, receivers = batch.edge_index
+        _, counts = torch.unique(receivers, return_counts=True)
+        num_neighbors.append(counts)
+
+    avg_num_neighbors = torch.mean(
+        torch.cat(num_neighbors, dim=0).type(torch.get_default_dtype())
+    )
+    return to_numpy(avg_num_neighbors).item()
+
+
 def update_model_auxiliaries(
-    model: modules.MACE,
-    mace_sets: dict,
+    model: Union[modules.MACE, So3krates, SO3LR],
+    model_choice: str,
+    model_sets: dict,
     scaling: str,
     atomic_energies_list: list,
+    update_avg_num_neighbors: bool = True,
     update_atomic_energies: bool = False,
     atomic_energies_dict: dict = None,
     z_table: tools.AtomicNumberTable = None,
@@ -413,11 +768,11 @@ def update_model_auxiliaries(
 ):
     """
     Update the average number of neighbors, scale and shift of
-    the MACE model with the given data
+    the model with the given data
 
     Args:
-        model (modules.MACE): The MACE model to be updated.
-        mace_sets (dict): Dictionary containing the training and validation
+        model (Union[modules.MACE, So3krates, SO3LR]): The model to be updated.
+        model_sets (dict): Dictionary containing the training and validation
                             sets.
         scaling (str): Scaling method to be used.
         atomic_energies_list (list): List of atomic energies.
@@ -430,55 +785,110 @@ def update_model_auxiliaries(
     Returns:
          None
     """
-    train_loader = mace_sets["train_loader"]
+    train_loader = model_sets["train_loader"]
+    assert z_table is not None
+    assert atomic_energies_dict is not None
 
-    if update_atomic_energies:
-        assert z_table is not None
-        assert atomic_energies_dict is not None
-
-        energies_train = torch.stack(
-            [point.energy.reshape(1) for point in mace_sets["train"]]
-        )
-        zs_train = [
-            [
-                z_table.index_to_z(torch.nonzero(one_hot).item())
-                for one_hot in point.node_attrs
-            ]
-            for point in mace_sets["train"]
+    average_neighbors = compute_avg_num_neighbors(train_loader)
+    
+    energies_train = torch.stack(
+        [point.energy.reshape(1) for point in model_sets["train"]]
+    )
+    zs_train = [
+        [
+            z_table.index_to_z(torch.nonzero(one_hot).item())
+            for one_hot in point.node_attrs
         ]
-        new_atomic_energies_dict = compute_average_E0s(
-            energies_train, zs_train, z_table
+        for point in model_sets["train"]
+    ]
+    new_atomic_energies_dict = compute_average_E0s(
+        energies_train, zs_train, z_table
+    )
+    atomic_energies_dict.update(new_atomic_energies_dict)
+    
+    if model_choice == "mace":
+        if update_atomic_energies:
+            update_energy_shifts_mace(
+                model,
+                atomic_energies_dict,
+                device,
+                dtype,
+            )
+        mean, std = modules.scaling_classes[scaling](
+            train_loader, atomic_energies_list
         )
-        atomic_energies_dict.update(new_atomic_energies_dict)
-        atomic_energies_list = [
-            atomic_energies_dict[z] for z in atomic_energies_dict.keys()
-        ]
-        atomic_energies_tensor = torch.tensor(
-            atomic_energies_list, dtype=dtype_mapping[dtype]
-        )
-
-        model.atomic_energies_fn.atomic_energies = atomic_energies_tensor.to(
+        mean, std = torch.from_numpy(mean).to(device), torch.from_numpy(std).to(
             device
         )
+        if update_avg_num_neighbors:
+            update_avg_num_neighbors_mace(
+                model,
+                average_neighbors,
+            )
+        
+    elif model_choice in ["so3krates", "so3lr"]:
+        if update_avg_num_neighbors:
+            update_avg_num_neighbors_so3(
+                model,
+                average_neighbors, 
+            )
+        if update_atomic_energies:
+            update_energy_shifts_so3(
+                model,
+                atomic_energies_dict,
+            )
+    return average_neighbors, atomic_energies_dict
 
-    average_neighbors = modules.compute_avg_num_neighbors(train_loader)
-    for interaction_idx in range(len(model.interactions)):
-        model.interactions[interaction_idx].avg_num_neighbors = (
-            average_neighbors
-        )
-    mean, std = modules.scaling_classes[scaling](
-        train_loader, atomic_energies_list
+
+def update_energy_shifts_mace(
+    model: modules.MACE,
+    atomic_energies_dict: dict,
+    device: str,
+    dtype: str = "float64",
+):
+    atomic_energies_list = [
+        atomic_energies_dict[z] for z in atomic_energies_dict.keys()
+    ]
+    atomic_energies_tensor = torch.tensor(
+        atomic_energies_list, dtype=dtype_mapping[dtype]
     )
-    mean, std = torch.from_numpy(mean).to(device), torch.from_numpy(std).to(
+
+    model.atomic_energies_fn.atomic_energies = atomic_energies_tensor.to(
         device
     )
-    model.scale_shift = modules.blocks.ScaleShiftBlock(scale=std, shift=mean)
+
+
+def update_avg_num_neighbors_mace(
+    model: modules.MACE,
+    avg_num_neighbors: float,
+):
+    for interaction in model.interactions:
+        interaction.avg_num_neighbors = avg_num_neighbors
+
+
+def update_energy_shifts_so3(
+    model: SO3LR,
+    atomic_energies_dict: dict,
+):
+    model.atomic_energy_output_block.set_defined_energy_shifts(
+        atomic_energies_dict
+    )
+
+
+def update_avg_num_neighbors_so3(
+    model: SO3LR,
+    avg_num_neighbors: float,
+):
+    model.avg_num_neighbors = avg_num_neighbors
+    for layer in model.euclidean_transformers:
+        layer.euclidean_attention_block.att_norm_inv = avg_num_neighbors
+        layer.euclidean_attention_block.att_norm_ev = avg_num_neighbors
 
 
 def save_checkpoint(
     checkpoint_handler: tools.CheckpointHandler,
     training_setup: dict,
-    model: modules.MACE,
+    model,
     epoch: int,
     keep_last: bool = False,
 ):
@@ -486,10 +896,10 @@ def save_checkpoint(
     Save a checkpoint of the training setup and model.
 
     Args:
-        checkpoint_handler (tools.CheckpointHandler): MACE handler for saving
+        checkpoint_handler (tools.CheckpointHandler): model handler for saving
                                                         checkpoints.
         training_setup (dict): Training settings.
-        model (modules.MACE): MACE model to be saved.
+        model: model model to be saved.
         epoch (int): Current epoch.
         keep_last (bool, optional): Keep the last checkpoint.
                                         Defaults to False.
@@ -522,7 +932,14 @@ def save_checkpoint(
 
 
 def save_models(
-    ensemble: dict, training_setups: dict, model_dir: str, current_epoch: int
+    ensemble: dict,
+    training_setups: dict, 
+    model_dir: Path,
+    current_epoch: int,
+    model_settings:  BaseArchitectureSettings,
+    model_choice: str,
+    save_state_dict: bool = True,
+    convert_cueq_to_e3nn: bool = False
 ):
     for tag, model in ensemble.items():
         training_setup = training_setups[tag]
@@ -532,12 +949,24 @@ def save_models(
             if training_setup["ema"] is not None
             else nullcontext()
         )
+        
+        if convert_cueq_to_e3nn:
+            model = convert_cueq_e3nn(
+                input_model=model,
+                device=training_setup["device"],
+                return_model=True
+            )
 
         with param_context:
             torch.save(
                 model,
                 Path(model_dir) / (tag + ".model"),
             )
+            if save_state_dict:
+                torch.save(
+                    model.state_dict(),
+                    Path(model_dir) / (tag + ".pth"),
+                )
 
         save_checkpoint(
             checkpoint_handler=training_setup["checkpoint_handler"],
@@ -546,6 +975,22 @@ def save_models(
             epoch=current_epoch,
             keep_last=False,
         )
+        
+        # save hyperparams
+        settings = model_settings.model_dump()
+        for k in ("model", "atomic_energies", "use_multihead_model", "num_multihead_heads"):
+            settings.pop(k, None)
+        if model_choice == "mace":
+            settings["avg_num_neighbors"] = model.interactions[0].avg_num_neighbors
+        else:
+            settings["avg_num_neighbors"] = model.avg_num_neighbors
+        
+        settings = {"ARCHITECTURE": settings}
+        
+        with open(
+            Path(model_dir) / (tag + "_hyperparams.yaml"), "w"
+        ) as file:
+            yaml.dump(settings, file)
 
 
 def Z_from_geometry(
@@ -607,25 +1052,20 @@ def atoms_full_copy(atoms: ase.Atoms) -> ase.Atoms:
     Returns:
         ase.Atoms: Copied ASE Atoms object with all properties.
     """
-
+    
     atoms_copy = ase.Atoms(
-        symbols=atoms.get_chemical_symbols(),
-        positions=atoms.get_positions(),
-        cell=atoms.get_cell(),
-        pbc=atoms.get_pbc(),
-        tags=atoms.get_tags(),
-        momenta=atoms.get_momenta(),
-        masses=atoms.get_masses(),
-        magmoms=atoms.get_initial_magnetic_moments(),
-        charges=atoms.get_initial_charges(),
-        constraint=atoms.constraints,
-        calculator=atoms.calc,
-        info=atoms.info,
+        symbols=deepcopy(atoms.get_chemical_symbols()),
+        positions=np.copy(atoms.get_positions()),
+        cell=np.copy(atoms.get_cell()),
+        pbc=np.copy(atoms.get_pbc()),
+        momenta=np.copy(atoms.get_momenta()),
+        info=deepcopy(atoms.info),
+        masses=np.copy(atoms.get_masses()),
     )
     return atoms_copy
 
 
-def list_latest_file(directory: str) -> str:
+def list_latest_file(directory: Path) -> str:
     """
     List the latest file in a directory based on the last modified time.
 
@@ -658,19 +1098,19 @@ def list_latest_file(directory: str) -> str:
 
 
 def save_ensemble(
-    ensemble: dict, training_setups: dict, mace_settings: dict
+    ensemble: dict, training_setups: dict, model_settings: dict
 ) -> None:
     """
     Save the ensemble models to disk. If EMA is used, the averaged parameters
     are saved, otherwise the model parameters are saved directly.
-    The path to the models is defined in the mace_settings under
+    The path to the models is defined in the model_settings under
     "GENERAL" -> "model_dir". The models are saved with the tag as the filename
     and the extension ".model".
 
     Args:
         ensemble (dict): Dictionary of models.
         training_setups (dict): Dictionary of training setups for each model.
-        mace_settings (dict): Dictionary of MACE settings, specificied by the
+        model_settings (dict): Dictionary of model settings, specificied by the
                                      user in the config file.
     """
     for tag, model in ensemble.items():
@@ -682,7 +1122,7 @@ def save_ensemble(
         with param_context:
             torch.save(
                 model,
-                Path(mace_settings["GENERAL"]["model_dir"]) / (tag + ".model"),
+                Path(model_settings.GENERAL.model_dir) / (tag + ".model"),
             )
 
 
@@ -966,6 +1406,10 @@ class AIMSControlParser:
             #'relax_geometry',
         }
 
+        self.output_pattern = re.compile(
+            r"^\s*output\s+(\S.*)", re.IGNORECASE
+        )
+
         self.special_patterns = {
             #'many_body_dispersion': re.compile(r'^\s*(many_body_dispersion)\s', re.IGNORECASE)
             "many_body_dispersion": re.compile(
@@ -1115,6 +1559,13 @@ class AIMSControlParser:
                             else:
                                 # If no parameters are found, store an empty string
                                 aims_settings[key] = ""
+
+                match = self.output_pattern.match(line)
+                if match:
+                    if "output" not in aims_settings:
+                        aims_settings["output"] = []
+                    aims_settings["output"].append(match.group(1).strip())
+
         return aims_settings
 
 
@@ -1140,6 +1591,7 @@ class GPUMonitor(Thread):
         self.start()
 
     def run(self):
+        import GPUtil  # optional monitoring dependency
         while not self.stopped:
             # Get GPU utilization data
             gpus = GPUtil.getGPUs()
@@ -1174,14 +1626,27 @@ def setup_logger(
     logger = logging.getLogger()
     logger.setLevel(logging.DEBUG)  # Set to DEBUG to capture all levels
 
+    # Clear existing handlers and filters to prevent duplication
+    for handler in logger.handlers[:]:
+        logger.removeHandler(handler)
+    logger.filters.clear()
+
     # Create formatters
     formatter = logging.Formatter(
         "%(asctime)s.%(msecs)03d %(levelname)s: %(message)s",
         datefmt="%Y-%m-%d %H:%M:%S",
     )
 
-    # Add filter for rank
-    logger.addFilter(lambda _: rank == 0)
+    # Messages from third-party libraries that are noisy and not useful
+    _NOISY_MESSAGES = {"Using CPU"}
+
+    # Add filter for rank and to suppress noisy third-party messages
+    logger.addFilter(
+        lambda record: rank == 0
+        and not any(
+            msg in record.getMessage() for msg in _NOISY_MESSAGES
+        )
+    )
 
     # Create console handler
     ch = logging.StreamHandler(stream=sys.stdout)
