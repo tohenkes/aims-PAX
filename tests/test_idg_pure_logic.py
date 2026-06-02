@@ -120,9 +120,7 @@ def test_parsl_energy_forces_set():
 def test_parsl_returns_point():
     stub = SimpleNamespace(compute_stress=False)
     point = make_point()
-    result = InitialDatasetPARSL._process_reference_result(
-        stub, RESULT, point
-    )
+    result = InitialDatasetPARSL._process_reference_result(stub, RESULT, point)
     assert result is point
 
 
@@ -139,6 +137,13 @@ def test_parsl_stress_not_set():
     point = make_point()
     InitialDatasetPARSL._process_reference_result(stub, RESULT, point)
     assert "REF_stress" not in point.info
+
+
+def test_parsl_stress_missing_key_raises():
+    stub = SimpleNamespace(compute_stress=True)
+    point = make_point()
+    with pytest.raises(KeyError):
+        InitialDatasetPARSL._process_reference_result(stub, RESULT, point)
 
 
 def test_parsl_hirshfeld_ratios():
@@ -181,9 +186,7 @@ def test_teacher_none_returns_none():
 def test_teacher_energy_forces_set():
     stub = SimpleNamespace(compute_stress=False)
     point = make_point()
-    InitialDatasetPARSLTeacher._process_reference_result(
-        stub, RESULT, point
-    )
+    InitialDatasetPARSLTeacher._process_reference_result(stub, RESULT, point)
     assert point.info["REF_energy"] == -10.5
     assert "REF_forces" in point.arrays
 
@@ -201,9 +204,7 @@ def test_teacher_stress_set_when_both():
 def test_teacher_stress_not_set_key_absent():
     stub = SimpleNamespace(compute_stress=True)
     point = make_point()
-    InitialDatasetPARSLTeacher._process_reference_result(
-        stub, RESULT, point
-    )
+    InitialDatasetPARSLTeacher._process_reference_result(stub, RESULT, point)
     assert "REF_stress" not in point.info
 
 
