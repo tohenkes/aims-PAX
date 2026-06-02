@@ -48,7 +48,7 @@ NPT_MTK = dict(
     ploop=1,
 )
 
-NPT_ISOMTK = {**NPT_MTK, "barostat": "isomtk"}
+NPT_ISOMTK = NPT_MTK | dict(barostat="isomtk")
 
 
 @pytest.fixture
@@ -112,6 +112,9 @@ def test_restart_true_preserves_velocities(cu_atoms):
 def test_berendsen_without_optional_kwargs(cu_atoms):
     dyn = call_setup_md(cu_atoms, NPT_BERENDSEN)
     assert isinstance(dyn, NPTBerendsen)
+    # taup and taut should be set to ASE defaults (1 ps and 0.5 ps)
+    assert dyn.taup == pytest.approx(1e3 * units.fs)
+    assert dyn.taut == pytest.approx(0.5e3 * units.fs)
 
 
 def test_berendsen_with_taup(cu_atoms):
