@@ -1,5 +1,6 @@
 from types import SimpleNamespace
 
+import numpy as np
 import pytest
 
 from aims_PAX.procedures.initial_dataset import (
@@ -71,6 +72,18 @@ def test_distinct_false_returns_all():
     assert result == sampled
 
 
+def test_get_member_points_empty_when_past_end():
+    stub = SimpleNamespace(
+        distinct_model_sets=True,
+        atoms=[None, None],
+        n_points_per_sampling_step_idg=5,
+        sampled_points=list(range(10)),  # only 10 elements
+    )
+    # member_number=1: start=10, end=20 — Python slicing returns [] silently
+    result = InitialDatasetProcedure._get_member_points(stub, 1)
+    assert result == []
+
+
 # ===========================================================================
 # §1.2 — _num_samples_per_traj
 # ===========================================================================
@@ -115,6 +128,7 @@ def test_parsl_energy_forces_set():
     InitialDatasetPARSL._process_reference_result(stub, RESULT, point)
     assert point.info["REF_energy"] == -10.5
     assert "REF_forces" in point.arrays
+    assert np.array(point.arrays["REF_forces"]).shape == (1, 3)
 
 
 def test_parsl_returns_point():
@@ -139,11 +153,12 @@ def test_parsl_stress_not_set():
     assert "REF_stress" not in point.info
 
 
-def test_parsl_stress_missing_key_raises():
+def test_parsl_stress_not_set_when_key_absent():
+    # Guard matches teacher variant: stress is skipped if absent from result_dict
     stub = SimpleNamespace(compute_stress=True)
     point = make_point()
-    with pytest.raises(KeyError):
-        InitialDatasetPARSL._process_reference_result(stub, RESULT, point)
+    InitialDatasetPARSL._process_reference_result(stub, RESULT, point)
+    assert "REF_stress" not in point.info
 
 
 def test_parsl_hirshfeld_ratios():
