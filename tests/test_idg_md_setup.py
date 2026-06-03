@@ -75,7 +75,7 @@ def test_nvt_langevin_friction(cu_atoms):
 
 def test_nvt_langevin_rng(cu_atoms):
     dyn = call_setup_md(cu_atoms, NVT_LANGEVIN)
-    assert dyn.rng is not None
+    assert isinstance(dyn.rng, np.random.RandomState)
 
 
 # ===========================================================================
@@ -165,7 +165,6 @@ def test_berendsen_with_taut(cu_atoms):
 def test_berendsen_with_taup_zero(cu_atoms):
     settings = {**NPT_BERENDSEN, "taup": 0.0}
     dyn = call_setup_md(cu_atoms, settings)
-    # taup=0 is physically degenerate but is not validated at this layer
     assert dyn.taup == pytest.approx(0.0)
 
 
