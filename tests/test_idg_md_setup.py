@@ -99,6 +99,8 @@ def test_npt_mtk_returns_mtknpt(cu_atoms):
     dyn = call_setup_md(cu_atoms, NPT_MTK)
     assert isinstance(dyn, MTKNPT)
     assert not isinstance(dyn, IsotropicMTKNPT)
+    assert dyn._thermostat._tdamp == pytest.approx(NPT_MTK["tdamp"] * units.fs)
+    assert dyn._barostat._pdamp == pytest.approx(NPT_MTK["pdamp"] * units.fs)
     assert dyn._thermostat._tchain == NPT_MTK["tchain"]
     assert dyn._barostat._pchain == NPT_MTK["pchain"]
     assert dyn._thermostat._tloop == NPT_MTK["tloop"]
@@ -108,6 +110,12 @@ def test_npt_mtk_returns_mtknpt(cu_atoms):
 def test_npt_isomtk_returns_isotropicmtknpt(cu_atoms):
     dyn = call_setup_md(cu_atoms, NPT_ISOMTK)
     assert isinstance(dyn, IsotropicMTKNPT)
+    assert dyn._thermostat._tdamp == pytest.approx(
+        NPT_ISOMTK["tdamp"] * units.fs
+    )
+    assert dyn._barostat._pdamp == pytest.approx(
+        NPT_ISOMTK["pdamp"] * units.fs
+    )
     assert dyn._thermostat._tchain == NPT_ISOMTK["tchain"]
     assert dyn._barostat._pchain == NPT_ISOMTK["pchain"]
     assert dyn._thermostat._tloop == NPT_ISOMTK["tloop"]
