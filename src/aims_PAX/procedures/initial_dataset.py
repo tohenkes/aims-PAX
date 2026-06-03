@@ -218,10 +218,7 @@ class InitialDatasetProcedure(PrepareInitialDatasetProcedure):
                     ema=self.training_setups[tag]["ema"],
                 )
             # the validation errors are averages over the ensemble members
-            if (
-                self.epoch % self.valid_skip == 0
-                or (self.epoch + 1) % self.valid_skip == 0
-            ):
+            if self.epoch % self.valid_skip == 0:
                 (
                     ensemble_valid_losses,
                     valid_loss,
@@ -790,7 +787,7 @@ class InitialDatasetPARSL(InitialDatasetFoundational):
             return None
         current_point.info["REF_energy"] = result_dict["energy"]
         current_point.arrays["REF_forces"] = result_dict["forces"]
-        if self.compute_stress:
+        if self.compute_stress and "stress" in result_dict:
             current_point.info["REF_stress"] = result_dict["stress"]
         if "hirshfeld_ratios" in result_dict:
             current_point.arrays["REF_hirshfeld_ratios"] = result_dict[

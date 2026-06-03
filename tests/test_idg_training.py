@@ -294,9 +294,7 @@ def test_train_validates_at_valid_skip_intervals(
     mock_save_checkpoint,
     mock_save_datasets,
 ):
-    # valid_skip=2, epochs 0-3: all 4 epochs trigger validation
-    # epoch=0: 0%2==0 → True; epoch=1: (1+1)%2==0 → True
-    # epoch=2: 2%2==0 → True; epoch=3: (3+1)%2==0 → True → 4 calls
+    # valid_skip=2, epochs 0-3: validates only at even epochs (0, 2) → 2 calls
     stub = make_train_stub()
     stub.intermediate_epochs_idg = 4
     stub.valid_skip = 2
@@ -304,7 +302,7 @@ def test_train_validates_at_valid_skip_intervals(
     stub.desired_acc = 0.0
     mock_validate_epoch.return_value = _VALIDATE_EPOCH_RETURN
     InitialDatasetProcedure._train(stub)
-    assert mock_validate_epoch.call_count == 4
+    assert mock_validate_epoch.call_count == 2
 
 
 # ===========================================================================
@@ -407,7 +405,7 @@ def test_train_breaks_early_when_desired_acc_met(
         None,
     )
     InitialDatasetProcedure._train(stub)
-    assert mock_train_epoch.call_count < 10
+    assert mock_train_epoch.call_count == 1
 
 
 # ===========================================================================
