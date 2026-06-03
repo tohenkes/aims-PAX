@@ -66,6 +66,18 @@ def test_nvt_langevin_returns_langevin(cu_atoms):
     assert isinstance(dyn, Langevin)
 
 
+def test_nvt_langevin_friction(cu_atoms):
+    dyn = call_setup_md(cu_atoms, NVT_LANGEVIN)
+    # Source passes friction=md_settings["friction"] / units.fs; ASE
+    # stores as dyn.fr
+    assert dyn.fr == pytest.approx(NVT_LANGEVIN["friction"] / units.fs)
+
+
+def test_nvt_langevin_rng(cu_atoms):
+    dyn = call_setup_md(cu_atoms, NVT_LANGEVIN)
+    assert dyn.rng is not None
+
+
 # ===========================================================================
 # §3.2 — NPT ensembles
 # ===========================================================================
@@ -76,15 +88,30 @@ def test_npt_berendsen_returns_nptberendsen(cu_atoms):
     assert isinstance(dyn, NPTBerendsen)
 
 
+def test_npt_berendsen_pressure(cu_atoms):
+    dyn = call_setup_md(cu_atoms, NPT_BERENDSEN)
+    assert dyn.pressure == pytest.approx(
+        NPT_BERENDSEN["pressure"] * units.Pascal
+    )
+
+
 def test_npt_mtk_returns_mtknpt(cu_atoms):
     dyn = call_setup_md(cu_atoms, NPT_MTK)
     assert isinstance(dyn, MTKNPT)
     assert not isinstance(dyn, IsotropicMTKNPT)
+    assert dyn._thermostat._tchain == NPT_MTK["tchain"]
+    assert dyn._barostat._pchain == NPT_MTK["pchain"]
+    assert dyn._thermostat._tloop == NPT_MTK["tloop"]
+    assert dyn._barostat._ploop == NPT_MTK["ploop"]
 
 
 def test_npt_isomtk_returns_isotropicmtknpt(cu_atoms):
     dyn = call_setup_md(cu_atoms, NPT_ISOMTK)
     assert isinstance(dyn, IsotropicMTKNPT)
+    assert dyn._thermostat._tchain == NPT_ISOMTK["tchain"]
+    assert dyn._barostat._pchain == NPT_ISOMTK["pchain"]
+    assert dyn._thermostat._tloop == NPT_ISOMTK["tloop"]
+    assert dyn._barostat._ploop == NPT_ISOMTK["ploop"]
 
 
 # ===========================================================================
@@ -111,7 +138,6 @@ def test_restart_true_preserves_velocities(cu_atoms):
 
 def test_berendsen_without_optional_kwargs(cu_atoms):
     dyn = call_setup_md(cu_atoms, NPT_BERENDSEN)
-    assert isinstance(dyn, NPTBerendsen)
     assert dyn.taup == pytest.approx(1e3 * units.fs)
     assert dyn.taut == pytest.approx(0.5e3 * units.fs)
 
@@ -126,6 +152,13 @@ def test_berendsen_with_taut(cu_atoms):
     settings = {**NPT_BERENDSEN, "taut": 100.0}
     dyn = call_setup_md(cu_atoms, settings)
     assert dyn.taut == pytest.approx(100.0 * units.fs)
+
+
+def test_berendsen_with_taup_zero(cu_atoms):
+    settings = {**NPT_BERENDSEN, "taup": 0.0}
+    dyn = call_setup_md(cu_atoms, settings)
+    # taup=0 is physically degenerate but is not validated at this layer
+    assert dyn.taup == pytest.approx(0.0)
 
 
 # ===========================================================================
