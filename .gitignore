@@ -2,9 +2,12 @@
 *.log
 *.pickle
 *.xyz
+!tests/test_data/datasets/initial/training/*
+!tests/test_data/datasets/initial/validation/*
 *.extxyz
 *.pt
 *.model
+!tests/test_data/models/Si.model
 *.out
 *.db
 *.ipynb
