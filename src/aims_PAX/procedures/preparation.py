@@ -466,8 +466,10 @@ class PrepareInitialDatasetProcedure:
                 atoms, temperature_K=md_settings["temperature"]
             )
 
-        if md_settings["stat_ensemble"].lower() == "nvt":
-            if md_settings["thermostat"].lower() == "langevin":
+        ensemble = md_settings["stat_ensemble"].lower()
+        if ensemble == "nvt":
+            thermostat = md_settings["thermostat"].lower()
+            if thermostat == "langevin":
                 dyn = Langevin(
                     atoms,
                     timestep=md_settings["timestep"] * units.fs,
@@ -475,8 +477,14 @@ class PrepareInitialDatasetProcedure:
                     temperature_K=md_settings["temperature"],
                     rng=np.random.RandomState(md_settings["MD_seed"]),
                 )
-        elif md_settings["stat_ensemble"].lower() == "npt":
-            if md_settings["barostat"].lower() == "berendsen":
+            else:
+                raise ValueError(
+                    f"Unknown thermostat '{md_settings['thermostat']}'. "
+                    "Choose from: 'langevin'."
+                )
+        elif ensemble == "npt":
+            barostat = md_settings["barostat"].lower()
+            if barostat == "berendsen":
                 npt_settings = {
                     "atoms": atoms,
                     "timestep": md_settings["timestep"] * units.fs,
@@ -484,19 +492,19 @@ class PrepareInitialDatasetProcedure:
                     "pressure_au": md_settings["pressure"] * units.Pascal,
                 }
 
-                if md_settings.get("taup", False):
+                if md_settings.get("taup") is not None:
                     npt_settings["taup"] = md_settings["taup"] * units.fs
-                if md_settings.get("taut", False):
+                if md_settings.get("taut") is not None:
                     npt_settings["taut"] = md_settings["taut"] * units.fs
-                if md_settings.get("compressibility_au", False):
+                if md_settings.get("compressibility_au") is not None:
                     npt_settings["compressibility_au"] = md_settings[
                         "compressibility_au"
                     ]
-                if md_settings.get("fixcm", False):
+                if md_settings.get("fixcm") is not None:
                     npt_settings["fixcm"] = md_settings["fixcm"]
 
                 dyn = NPTBerendsen(**npt_settings)
-            if md_settings["barostat"].lower() == "npt":
+            elif barostat == "npt":
                 npt_settings = {
                     "atoms": atoms,
                     "timestep": md_settings["timestep"] * units.fs,
@@ -512,7 +520,7 @@ class PrepareInitialDatasetProcedure:
                     npt_settings["mask"] = md_settings["mask"]
 
                 dyn = NPT(**npt_settings)
-            if md_settings["barostat"].lower() == "mtk":
+            elif barostat == "mtk":
                 npt_settings = {
                     "atoms": atoms,
                     "timestep": md_settings["timestep"] * units.fs,
@@ -527,7 +535,7 @@ class PrepareInitialDatasetProcedure:
                 }
 
                 dyn = MTKNPT(**npt_settings)
-            if md_settings["barostat"].lower() == "isomtk":
+            elif barostat == "isomtk":
                 npt_settings = {
                     "atoms": atoms,
                     "timestep": md_settings["timestep"] * units.fs,
@@ -541,7 +549,16 @@ class PrepareInitialDatasetProcedure:
                     "ploop": md_settings["ploop"],
                 }
                 dyn = IsotropicMTKNPT(**npt_settings)
-
+            else:
+                raise ValueError(
+                    f"Unknown barostat '{md_settings['barostat']}'. "
+                    "Choose from: 'berendsen', 'mtk', 'isomtk'."
+                )
+        else:
+            raise ValueError(
+                f"Unknown stat_ensemble '{md_settings['stat_ensemble']}'. "
+                "Choose from: 'nvt', 'npt'."
+            )
 
         return dyn
 
