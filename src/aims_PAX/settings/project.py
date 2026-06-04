@@ -785,7 +785,7 @@ class AimsPAXSettings(ProjectBaseModel):
     def resolve_all_dirs(self) -> "AimsPAXSettings":
         output_dir = self.MISC.output_dir
         sub_models: list[ProjectBaseModel] = [self.MISC, ]
-        if self.CLUSTER is not None:
+        if self.CLUSTER is not None and hasattr(self.CLUSTER, 'parsl_options'):
             sub_models.append(self.CLUSTER.parsl_options)
         for sub_model in sub_models:
             for field_name in sub_model._relative_dirs:

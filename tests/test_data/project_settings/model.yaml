@@ -6,4 +6,4 @@ ARCHITECTURE:
   model: MACE
 
 MISC:
-  device: cuda
+  device: cpu

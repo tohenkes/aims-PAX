@@ -3,33 +3,29 @@ This module contains tests for the `msonable.Ensemble` module.
 """
 import logging
 
+import pytest
 from ase.io import read
 
 from aims_PAX.atomate2.atomic_energies import AtomicEnergies
 from aims_PAX.atomate2.msonable.ensemble import Stage, Ensemble
 from aims_PAX.atomate2.utils import get_model_dependent_inputs, create_restart_point
-from aims_PAX.tools.utilities.input_utils import read_input_files, read_geometry
+from aims_PAX.settings import ModelSettings
+from aims_PAX.tools.utilities.input_utils import read_geometry
 from aims_PAX.tools.utilities.utilities import get_seeds, create_seeds_tags_dict, create_keyspec, setup_logger, \
     save_models
 
 
-def test_ensemble(data_dir, clean_dir, si):
+@pytest.mark.skip(reason="requires pre-generated IDG dataset files not present in repo")
+def test_ensemble(data_dir, clean_dir, control_periodic, si, project_settings):
     """Test the Ensemble class"""
     setup_logger(
         level=logging.INFO,
         tag="test_ensemble",
         directory=clean_dir.as_posix(),
     )
-    project_settings_file = data_dir / "project_settings" / "aimsPAX.yaml"
     model_settings_file = data_dir / "project_settings" / "model.yaml"
-    # read config files
-    (model_settings, project_settings, path_to_control, path_to_geometry) = (
-        read_input_files(
-            model_settings_file,
-            project_settings_file,
-            procedure="full",
-        )
-    )
+    model_settings = ModelSettings.from_file(model_settings_file)
+    project_settings = project_settings(control_periodic, si, clean_dir)
     # get seeds and related tags
     ensemble_seeds = get_seeds(model_settings.GENERAL.seed,
                                project_settings.INITIAL_DATASET_GENERATION.ensemble_size)

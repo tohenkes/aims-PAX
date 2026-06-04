@@ -33,6 +33,7 @@ dependencies = [
 [project.optional-dependencies]
 atomate2 = [
     "atomate2",
+    "jobflow",
 ]
 tests = [
     "pytest",
