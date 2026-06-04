@@ -1,6 +1,7 @@
 import numpy as np
 import time
 import shutil
+from pathlib import Path
 from .preparation import PrepareInitialDatasetProcedure
 from mace import tools
 from mace.calculators import mace_mp
@@ -16,6 +17,7 @@ from aims_PAX.tools.utilities.utilities import (
     save_models,
     log_yaml_block,
 )
+from ase.io import write as ase_write
 from aims_PAX.tools.utilities.parsl_utils import (
     recalc_dft_parsl,
     recalc_teacher_model_parsl,
@@ -356,6 +358,20 @@ class InitialDatasetProcedure(PrepareInitialDatasetProcedure):
                 md_settings=self.md_settings[idx]
             )
             self.md_drivers[idx] = dyn
+
+        if self.save_trajectories:
+            Path("trajectories").mkdir(parents=True, exist_ok=True)
+            for idx in self.md_drivers:
+                traj = self.trajectories[idx]
+                self.md_drivers[idx].attach(
+                    lambda i=idx, t=traj: ase_write(
+                        f"trajectories/idg_{i}.extxyz",
+                        t,
+                        format="extxyz",
+                        append=True,
+                    ),
+                    interval=self.save_trajectories_interval,
+                )
 
         logging.info(
             f'Using following settings for MDs:'

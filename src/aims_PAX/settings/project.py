@@ -175,6 +175,8 @@ class IDGSettings(ProjectBaseModel):
     )
     initial_sampling: Literal["aimd", "foundational"] = Field(default="foundational")
     aims_lib_path: str | None = Field(default=None, description="Path to the compiled FHI-aims library for direct force and energy evaluation.")
+    save_trajectories: bool = Field(default=False)
+    save_trajectories_interval: int = Field(default=5)
     use_teacher_reference: bool = False
     teacher_reference_settings: Union[Dict[str, Any], FMSettings] = Field(
         default_factory=dict,
