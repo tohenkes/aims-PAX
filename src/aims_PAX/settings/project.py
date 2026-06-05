@@ -238,7 +238,7 @@ class IDGSettings(ProjectBaseModel):
 
 
 class ALSettings(ProjectBaseModel):
-    species_dir: str | None = Field(
+    species_dir: DirectoryPath | None = Field(
         default=None,
         description="Path to FHI-aims species defaults. Required unless use_teacher_reference=True."
     )
@@ -265,7 +265,8 @@ class ALSettings(ProjectBaseModel):
     )
     ensemble_size: int = Field(
         default=4,
-        description="Number of models in the ensemble for uncertainty estimation."
+        description="Number of models in the ensemble for uncertainty estimation.",
+        gt=0
     )
     epochs_per_worker: int = Field(
         default=2,
@@ -309,7 +310,8 @@ class ALSettings(ProjectBaseModel):
     )
     valid_ratio: float = Field(
         default=0.1,
-        description="Fraction of data reserved for validation during active learning."
+        description="Fraction of data reserved for validation during active learning.",
+        gt=0
     )
     valid_skip: int = Field(
         default=1,
@@ -333,11 +335,13 @@ class ALSettings(ProjectBaseModel):
     )
     convergence_patience: int = Field(
         default=50,
-        description="Number of epochs without improvement before halting convergence."
+        description="Number of epochs without improvement before halting convergence.",
+        gt=0
     )
     max_convergence_epochs: int = Field(
         default=500,
-        description="Maximum total epochs allowed before halting convergence."
+        description="Maximum total epochs allowed before halting convergence.",
+        gt=0
     )
 
     # --- Not actively used, but are working ---
