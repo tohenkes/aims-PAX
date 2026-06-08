@@ -1,5 +1,4 @@
 import numpy as np
-import pytest
 from types import SimpleNamespace
 from unittest.mock import MagicMock, patch
 
@@ -212,7 +211,11 @@ def test_perform_training_validate_called_per_epoch():
 def test_perform_training_runs_all_epochs_regardless_of_validation():
     mgr = make_training_manager(intermediate_epochs=5, ensemble_size=1)
     mgr.orchestrator.validate_and_update_state.side_effect = [
-        False, True, False, False, False
+        False,
+        True,
+        False,
+        False,
+        False,
     ]
     mgr._finalize_training = lambda idx: None
     mgr.perform_training(idx=0)
