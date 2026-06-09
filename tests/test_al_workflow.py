@@ -123,7 +123,7 @@ def test_al_loop_exits_on_desired_accuracy():
 def test_waiting_task_serial_does_nothing():
     stub = SimpleNamespace(data_manager=MagicMock())
     ALProcedureSerial._waiting_task(stub, idx=0)
-    assert stub.data_manager.handle_received_point.called is False
+    assert stub.data_manager.mock_calls == []
 
 
 def test_waiting_task_base_routes_to_data_manager():
@@ -148,6 +148,7 @@ def test_training_task_transitions_to_running_at_epoch_limit():
     ALProcedure._training_task(stub, idx=0)
     assert stub.state_manager.trajectory_status[0] == "running"
     assert stub.state_manager.trajectory_total_epochs[0] == 0
+    assert stub.state_manager.num_workers_training == 0
 
 
 def test_training_task_remains_in_training_below_limit():
