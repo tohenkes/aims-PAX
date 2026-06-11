@@ -70,7 +70,7 @@ Both procedures, initial dataset acquisition and active learning, are classes th
 Instead of calling FHI-aims for reference energies and forces, *aims-PAX* can use a pre-trained ML model (the "teacher") as the reference. This enables:
 - Running the full workflow on a **local machine without a DFT installation**
 - **Rapid prototyping** of active learning settings before committing to expensive DFT runs
-- **Distilling** a large foundational model (e.g. MACE-MP) into a lean custom MACE ensemble
+- **Distilling** a large foundational model (e.g. MACE-MP) into a lean custom model
 
 **Requirements:**
 - `CLUSTER` settings are required — teacher jobs are dispatched via PARSL. Use `type: local` for a local run.
