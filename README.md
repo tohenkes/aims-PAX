@@ -708,9 +708,4 @@ For bugs or feature requests, please use [GitHub Issues](https://github.com/tohe
 
 The *aims-PAX* code is published and distributed under the [MIT License](MIT.md).
 
-## TODO
-
-- [ ] add force restart
-- [ ] add units in setting variable names
-
 
