@@ -40,6 +40,13 @@ tests = [
     "pytest-cov"
 ]
 
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+addopts = "-ra"
+markers = [
+    "slow: long-running or integration tests (deselect with -m 'not slow')",
+]
+
 [project.urls]
 homepage = "https://github.com/tohenkes/aims_PAX"
 
