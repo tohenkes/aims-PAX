@@ -327,3 +327,25 @@ def test_defaults(tmp_path):
     assert s.update_md_checkpoints is True
     assert s.max_MD_steps == sys.maxsize
     assert s.max_train_set_size == sys.maxsize
+
+
+# ===========================================================================
+# §10 — replay_strategy / train_subset_size
+# ===========================================================================
+
+
+def test_random_subset_without_subset_size(tmp_path):
+    """replay_strategy='random_subset' without train_subset_size raises."""
+    with pytest.raises(ValidationError, match="train_subset_size"):
+        ALSettings(**make_base(tmp_path, replay_strategy="random_subset"))
+
+
+def test_random_subset_with_subset_size(tmp_path):
+    """replay_strategy='random_subset' with train_subset_size passes."""
+    s = ALSettings(
+        **make_base(
+            tmp_path, replay_strategy="random_subset", train_subset_size=50
+        )
+    )
+    assert s.replay_strategy == "random_subset"
+    assert s.train_subset_size == 50

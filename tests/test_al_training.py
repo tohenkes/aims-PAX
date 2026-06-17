@@ -245,3 +245,17 @@ def test_converge_calls_final_save_at_max_epochs():
     mgr = make_converge_manager(max_epochs=3, ensemble_size=1)
     mgr.converge()
     assert mgr._final_save.call_count == 1
+
+
+def test_converge_best_trains_only_best_member():
+    mgr = make_converge_manager(max_epochs=3, ensemble_size=2)
+    mgr.config.converge_best = True
+
+    def _reduce_to_best():
+        # Simulate _setup_sh_convergence: keep only the best member
+        mgr.ensemble_manager.ensemble.pop("m1", None)
+
+    mgr._setup_convergence = _reduce_to_best
+    mgr.converge()
+    # 2-member ensemble reduced to 1 → 3 train calls, not 6
+    assert mgr.orchestrator.train_single_epoch.call_count == 3

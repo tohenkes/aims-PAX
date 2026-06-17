@@ -413,6 +413,19 @@ class ALSettings(ProjectBaseModel):
             )
         return self
 
+    @model_validator(mode="after")
+    def check_random_subset_size(self) -> "ALSettings":
+        """train_subset_size is required when replay_strategy='random_subset'."""
+        if (
+            self.replay_strategy == "random_subset"
+            and self.train_subset_size is None
+        ):
+            raise ValueError(
+                "train_subset_size must be specified when "
+                "replay_strategy='random_subset'."
+            )
+        return self
+
 
 class TrajectoryMDBase(ProjectBaseModel):
     timestep: float = Field(
