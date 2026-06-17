@@ -1,3 +1,5 @@
+from pathlib import Path
+
 import ase.io
 import pytest
 import torch
@@ -14,9 +16,10 @@ from aims_PAX.tools.utilities.utilities import (
     create_keyspec,
 )
 
+_TEST_DATA = Path(__file__).parent / "test_data"
 TRAIN_XYZ = (
-    "tests/test_data/datasets/initial/training/"
-    "combined_initial_train_set.xyz"
+    _TEST_DATA
+    / "datasets/initial/training/combined_initial_train_set.xyz"
 )
 
 
