@@ -423,7 +423,7 @@ class ALSettings(ProjectBaseModel):
 
 class TrajectoryMDBase(ProjectBaseModel):
     timestep: float = Field(
-        default=0.5,
+        default=1.0,
         description="Time step for molecular dynamics (in femtoseconds)."
     )
     temperature: float = Field(

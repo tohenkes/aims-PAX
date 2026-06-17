@@ -1,3 +1,4 @@
+import logging
 from types import SimpleNamespace
 from unittest.mock import MagicMock
 
@@ -82,34 +83,40 @@ def make_running_task_stub():
 # ===========================================================================
 
 
-def test_al_loop_exits_on_max_train_set_size():
+def test_al_loop_exits_on_max_train_set_size(caplog):
     stub = make_al_loop_stub(
         train_dataset_len=4,
         max_train_set_size=4,
         status="waiting",
     )
-    ALProcedure._al_loop(stub)
+    with caplog.at_level(logging.INFO):
+        ALProcedure._al_loop(stub)
     assert stub.dft_manager.finalize_dft.call_count == 1
+    assert "Maximum size of training set reached" in caplog.text
 
 
-def test_al_loop_exits_on_all_md_limits_reached():
+def test_al_loop_exits_on_all_md_limits_reached(caplog):
     stub = make_al_loop_stub(
         num_MD_limits_reached=1,
         num_trajectories=1,
         status="running",
     )
-    ALProcedure._al_loop(stub)
+    with caplog.at_level(logging.INFO):
+        ALProcedure._al_loop(stub)
     assert stub.dft_manager.finalize_dft.call_count == 1
+    assert "All trajectories reached maximum MD steps" in caplog.text
 
 
-def test_al_loop_exits_on_desired_accuracy():
+def test_al_loop_exits_on_desired_accuracy(caplog):
     stub = make_al_loop_stub(
         current_valid_error=0.001,
         desired_accuracy=0.01,
         status="waiting",
     )
-    ALProcedure._al_loop(stub)
+    with caplog.at_level(logging.INFO):
+        ALProcedure._al_loop(stub)
     assert stub.dft_manager.finalize_dft.call_count == 1
+    assert "Desired accuracy reached" in caplog.text
 
 
 # ===========================================================================

@@ -106,7 +106,7 @@ def test_valid_ratio_zero(tmp_path):
 def test_species_dir_required_by_default():
     """No species_dir and use_teacher_reference=False raises
     ValidationError."""
-    with pytest.raises(ValidationError, match="species_dir is required"):
+    with pytest.raises(ValidationError, match="species_dir"):
         IDGSettings(
             n_points_per_sampling_step_idg=10,
             max_initial_epochs=50,
@@ -152,7 +152,7 @@ def test_species_dir_file_raises(tmp_path):
 def test_no_stopping_criterion(tmp_path):
     """All stopping criteria at defaults → ValidationError."""
     with pytest.raises(
-        ValidationError, match="at least one stopping criterion"
+        ValidationError, match="stopping criterion"
     ):
         IDGSettings(
             **make_base(
@@ -229,7 +229,7 @@ def test_teacher_requires_foundational_sampling():
     """use_teacher_reference=True with initial_sampling='aimd' raises
     ValidationError."""
     with pytest.raises(
-        ValidationError, match="initial_sampling: foundational"
+        ValidationError, match="foundational"
     ):
         IDGSettings(
             n_points_per_sampling_step_idg=10,

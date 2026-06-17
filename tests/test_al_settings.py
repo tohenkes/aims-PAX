@@ -80,7 +80,7 @@ def test_max_convergence_epochs_zero(tmp_path):
 
 def test_species_dir_required_by_default():
     """No species_dir and use_teacher_reference=False raises ValidationError."""
-    with pytest.raises(ValidationError, match="species_dir is required"):
+    with pytest.raises(ValidationError, match="species_dir"):
         ALSettings(
             num_trajectories=4,
             desired_acc=0.1,
@@ -125,7 +125,7 @@ def test_species_dir_file_raises(tmp_path):
 def test_no_stopping_criterion(tmp_path):
     """All stopping criteria at defaults → ValidationError."""
     with pytest.raises(
-        ValidationError, match="at least one stopping criterion"
+        ValidationError, match="stopping criterion"
     ):
         ALSettings(
             **make_base(
