@@ -124,7 +124,10 @@ class TestReadInputFiles:
             procedure=procedure,
         )
 
-        assert len(result) == 4
+        model_s, pax_s, ctrl, geom = result
+        assert isinstance(model_s, ModelSettings)
+        assert isinstance(pax_s, AimsPAXSettings)
+        assert geom is not None
 
 
 # ---------------------------------------------------------------------------
@@ -136,36 +139,23 @@ class TestReadGeometry:
     """Tests for read_geometry()."""
 
     # ------------------------------------------------------------------
-    # Form A – single file (str path)
+    # Form A / Form D – single file (str path and Path object)
     # ------------------------------------------------------------------
 
-    def test_single_file_str_returns_dict_with_key_0(self, data_dir):
-        si_path = str(data_dir / "structures" / "Si.in")
-        result = read_geometry(si_path)
-
-        assert isinstance(result, dict)
-        assert 0 in result
-        assert isinstance(result[0], ase.Atoms)
-
-    def test_single_file_str_contains_si_atoms(self, data_dir):
-        si_path = str(data_dir / "structures" / "Si.in")
-        result = read_geometry(si_path)
-
-        symbols = result[0].get_chemical_symbols()
-        assert "Si" in symbols, (
-            "Expected Si atoms in result[0]"
-        )
-
-    # ------------------------------------------------------------------
-    # Form D – Path object (not just str)
-    # ------------------------------------------------------------------
-
-    def test_single_file_path_object(self, data_dir):
+    @pytest.mark.parametrize(
+        "source_factory",
+        [
+            lambda p: str(p),  # Form A: str path
+            lambda p: p,  # Form D: Path object
+        ],
+        ids=["str", "Path"],
+    )
+    def test_single_file_returns_si(self, source_factory, data_dir):
         si_path = data_dir / "structures" / "Si.in"
-        result = read_geometry(si_path)
+        result = read_geometry(source_factory(si_path))
 
         assert isinstance(result, dict)
-        assert 0 in result
+        assert set(result.keys()) == {0}
         assert isinstance(result[0], ase.Atoms)
         assert "Si" in result[0].get_chemical_symbols()
 
@@ -191,35 +181,15 @@ class TestReadGeometry:
     # Form C – dict of paths
     # ------------------------------------------------------------------
 
-    def test_dict_of_paths_returns_correct_keys(self, data_dir):
-        geometry_dict = {
-            0: str(data_dir / "structures" / "Si.in"),
-            1: str(data_dir / "structures" / "aspirin.in"),
-        }
-        result = read_geometry(geometry_dict)
+    def test_dict_of_paths_geometry(self, data_dir):
+        si_path = str(data_dir / "structures" / "Si.in")
+        asp_path = str(data_dir / "structures" / "aspirin.in")
+        result = read_geometry({0: si_path, 1: asp_path})
 
         assert set(result.keys()) == {0, 1}
-        assert all(isinstance(v, ase.Atoms) for v in result.values())
-
-    def test_dict_of_paths_si_has_si_atoms(self, data_dir):
-        geometry_dict = {
-            0: str(data_dir / "structures" / "Si.in"),
-            1: str(data_dir / "structures" / "aspirin.in"),
-        }
-        result = read_geometry(geometry_dict)
-
         assert "Si" in result[0].get_chemical_symbols()
-
-    def test_dict_of_paths_aspirin_has_c_and_h(self, data_dir):
-        geometry_dict = {
-            0: str(data_dir / "structures" / "Si.in"),
-            1: str(data_dir / "structures" / "aspirin.in"),
-        }
-        result = read_geometry(geometry_dict)
-
-        aspirin_symbols = set(result[1].get_chemical_symbols())
-        assert "C" in aspirin_symbols, "Expected C in aspirin"
-        assert "H" in aspirin_symbols, "Expected H in aspirin"
+        assert "C" in result[1].get_chemical_symbols()
+        assert "H" in result[1].get_chemical_symbols()
 
     # ------------------------------------------------------------------
     # Error cases
