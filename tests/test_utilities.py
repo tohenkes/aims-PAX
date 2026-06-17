@@ -150,17 +150,22 @@ def test_atoms_full_copy():
     atoms.set_momenta([[0.1, 0.2, 0.3], [0.4, 0.5, 0.6]])
     atoms.info["foo"] = 42
 
+    original_cell = atoms.get_cell().copy()
+    expected_masses = atoms.get_masses().copy()
+
     copy = atoms_full_copy(atoms)
 
     # Mutate the original
     atoms.positions[0] = [99.0, 99.0, 99.0]
     atoms.info["foo"] = 999
+    atoms.set_cell([[9.0, 0, 0], [0, 9.0, 0], [0, 0, 9.0]])
 
     assert np.allclose(copy.positions[0], [0.0, 0.0, 0.0])
     assert copy.info["foo"] == 42
-    assert np.allclose(copy.get_cell(), atoms.get_cell())
+    assert np.allclose(copy.get_cell(), original_cell)
     assert np.all(copy.get_pbc() == np.array([True, True, True]))
     assert np.allclose(copy.get_momenta(), [[0.1, 0.2, 0.3], [0.4, 0.5, 0.6]])
+    assert np.allclose(copy.get_masses(), expected_masses)
 
 
 # ---------------------------------------------------------------------------
@@ -255,7 +260,7 @@ def test_dump_yaml_for_log_multiline_preserves_content():
     data = {"msg": "line1\nline2"}
     result = dump_yaml_for_log(data)
     loaded = yaml.safe_load(result)
-    assert loaded["msg"].replace("\n", "").replace(" ", "") == "line1line2"
+    assert loaded["msg"] == "line1\nline2"
 
 
 def test_dump_yaml_for_log_force_literal_key_present():
