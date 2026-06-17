@@ -5,21 +5,19 @@ import pytest
 import torch
 from mace.tools import AtomicNumberTable
 
-import so3krates_torch.tools.torch_geometric as so3_torch_geometric
-
 from aims_PAX.settings import ModelSettings
 from aims_PAX.tools.model_tools.setup_MACE import setup_mace
 from aims_PAX.tools.model_tools.setup_so3 import setup_so3krates, setup_so3lr
-from aims_PAX.tools.utilities.data_handling import create_model_dataset
 from aims_PAX.tools.utilities.utilities import (
     compute_average_E0s,
     create_keyspec,
 )
 
+from tests.helpers import make_loader
+
 _TEST_DATA = Path(__file__).parent / "test_data"
 TRAIN_XYZ = (
-    _TEST_DATA
-    / "datasets/initial/training/combined_initial_train_set.xyz"
+    _TEST_DATA / "datasets/initial/training/combined_initial_train_set.xyz"
 )
 
 
@@ -84,24 +82,6 @@ def load_si_fixtures():
     return atoms_list, z_table, atomic_energies_dict
 
 
-def make_loader(atoms_list, z_table, r_max):
-    keyspec = create_keyspec()
-    dataset = create_model_dataset(
-        data=atoms_list,
-        seed=42,
-        z_table=z_table,
-        r_max=r_max,
-        key_specification=keyspec,
-    )
-    loader = so3_torch_geometric.dataloader.DataLoader(
-        dataset=dataset,
-        batch_size=1,
-        shuffle=False,
-        drop_last=False,
-    )
-    return loader
-
-
 @pytest.mark.slow
 def test_setup_mace_distinct_seeds():
     _, z_table, atomic_energies_dict = load_si_fixtures()
@@ -119,7 +99,9 @@ def test_setup_mace_output_shapes():
     atoms_list, z_table, atomic_energies_dict = load_si_fixtures()
     settings = mace_settings()
     model = setup_mace(settings, z_table, atomic_energies_dict)
-    loader = make_loader(atoms_list, z_table, r_max=5.0)
+    loader = make_loader(
+        atoms_list, create_keyspec(), z_table, r_max=5.0, batch_size=1
+    )
     for batch in loader:
         batch_dict = batch.to_dict()
         output = model(
@@ -155,7 +137,9 @@ def test_setup_so3krates_output_shapes():
     atoms_list, z_table, atomic_energies_dict = load_si_fixtures()
     settings = so3krates_settings()
     model = setup_so3krates(settings, atomic_energies_dict, z_table)
-    loader = make_loader(atoms_list, z_table, r_max=4.5)
+    loader = make_loader(
+        atoms_list, create_keyspec(), z_table, r_max=4.5, batch_size=1
+    )
     for batch in loader:
         batch_dict = batch.to_dict()
         output = model(
@@ -191,7 +175,9 @@ def test_setup_so3lr_output_shapes():
     atoms_list, z_table, atomic_energies_dict = load_si_fixtures()
     settings = so3lr_settings()
     model = setup_so3lr(settings, z_table, atomic_energies_dict)
-    loader = make_loader(atoms_list, z_table, r_max=4.5)
+    loader = make_loader(
+        atoms_list, create_keyspec(), z_table, r_max=4.5, batch_size=1
+    )
     for batch in loader:
         batch_dict = batch.to_dict()
         output = model(

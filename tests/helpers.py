@@ -18,28 +18,19 @@ from aims_PAX.tools.utilities.utilities import (
 
 _TEST_DATA = Path(__file__).parent / "test_data"
 _TRAIN_XYZ = (
-    _TEST_DATA
-    / "datasets/initial/training/combined_initial_train_set.xyz"
+    _TEST_DATA / "datasets/initial/training/combined_initial_train_set.xyz"
 )
 
 
 def build_si_model(
     z_table=None,
-    r_max=5.0,
     num_interactions=1,
-    hidden_irreps="8x0e",
-    MLP_irreps="8x0e",
-    correlation=2,
 ):
     """Build a small MACE model suitable for Si testing.
 
     Args:
         z_table: AtomicNumberTable; defaults to [14] (Si).
-        r_max: Cutoff radius. Defaults to 5.0.
         num_interactions: Number of interaction layers. Defaults to 1.
-        hidden_irreps: Hidden irreps string. Defaults to "8x0e".
-        MLP_irreps: MLP irreps string. Defaults to "8x0e".
-        correlation: Correlation order. Defaults to 2.
 
     Returns:
         torch.nn.Module: Initialised MACE model.
@@ -104,6 +95,7 @@ def make_loader(
         drop_last=False,
     )
     return loader
+
 
 NVT_LANGEVIN = dict(
     stat_ensemble="nvt",
