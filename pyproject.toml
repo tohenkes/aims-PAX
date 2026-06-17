@@ -54,3 +54,9 @@ aims-PAX-idg-split = "aims_PAX.atomate2.cli.datasets:main"
 aims-PAX-al = "aims_PAX.cli.al_procedure_only:main"
 aims-PAX-recalc = "aims_PAX.cli.recalculate_data:main"
 aims-PAX-test = "aims_PAX.cli.test_ensemble:main"
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+markers = [
+    "slow: marks tests as slow (deselect with '-m \"not slow\"')",
+]

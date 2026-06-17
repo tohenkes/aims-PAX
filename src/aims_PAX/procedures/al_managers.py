@@ -34,7 +34,6 @@ from aims_PAX.tools.utilities.utilities import (
     select_best_member,
     atoms_full_copy,
     mh_to_sh_model,
-    AIMSControlParser,
 )
 from aims_PAX.tools.model_tools.training_tools import (
     setup_model_training,
@@ -1019,7 +1018,6 @@ class ALDFTManager:
         self.ensemble_manager = ensemble_manager
         self.state_manager = state_manager
 
-        self.control_parser = AIMSControlParser()
         self._handle_aims_settings(path_to_control)
 
         self.aims_calculator = None
@@ -1418,7 +1416,6 @@ class ALDFTReferenceManagerPARSL(ALReferenceManagerPARSL):
             state_manager=state_manager,
         )
 
-        self.control_parser = AIMSControlParser()
         self._handle_aims_settings(path_to_control)
 
         self.launch_str = prepare_parsl(

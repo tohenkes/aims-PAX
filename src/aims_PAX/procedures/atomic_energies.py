@@ -2,8 +2,8 @@ import numpy as np
 from mace import tools
 from aims_PAX.tools.utilities import (
     Z_from_geometry_in,
-    AIMSControlParser,
 )
+from pyfhiaims import AimsControl
 import ase
 import logging
 from asi4py.asecalc import ASI_ASE_calculator
@@ -42,8 +42,6 @@ class E0Calculator:
             #    tag=tag,
             directory=".",
         )
-        self.control_parser = AIMSControlParser()
-
         if basis_dir is not None:
             self.basis_dir = basis_dir
         else:
@@ -99,7 +97,10 @@ class E0Calculator:
             species_dir (str): Path to the species directory of AIMS.
         """
 
-        self.aims_settings = self.control_parser(path_to_control)
+        aims_control = AimsControl.from_file(path_to_control)
+        self.aims_settings = aims_control.parameters
+        if aims_control.outputs:
+            self.aims_settings["output"] = aims_control.outputs
         self.aims_settings["species_dir"] = self.basis_dir
 
     def get_atomic_energies(self):

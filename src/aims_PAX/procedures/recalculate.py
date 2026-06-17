@@ -1,6 +1,6 @@
 import ase.build
 from mace import tools
-from aims_PAX.tools.utilities.utilities import AIMSControlParser
+from pyfhiaims import AimsControl
 import ase
 from ase.io import read, write
 import logging
@@ -46,7 +46,6 @@ class ReCalculator:
             directory=".",
         )
         self.save_interval = save_interval
-        self.control_parser = AIMSControlParser()
 
         if basis_dir is not None:
             self.basis_dir = basis_dir
@@ -100,7 +99,10 @@ class ReCalculator:
             species_dir (str): Path to the species directory of AIMS.
         """
 
-        self.aims_settings = self.control_parser(path_to_control)
+        aims_control = AimsControl.from_file(path_to_control)
+        self.aims_settings = aims_control.parameters
+        if aims_control.outputs:
+            self.aims_settings["output"] = aims_control.outputs
         self.aims_settings["species_dir"] = self.basis_dir
         self.aims_settings["compute_forces"] = True
 
@@ -209,7 +211,6 @@ class ReCalculatorPARSL:
             directory=".",
         )
         self.save_interval = save_interval
-        self.control_parser = AIMSControlParser()
 
         if basis_dir is not None:
             self.basis_dir = basis_dir
@@ -327,6 +328,9 @@ class ReCalculatorPARSL:
             species_dir (str): Path to the species directory of AIMS.
         """
 
-        self.aims_settings = self.control_parser(path_to_control)
+        aims_control = AimsControl.from_file(path_to_control)
+        self.aims_settings = aims_control.parameters
+        if aims_control.outputs:
+            self.aims_settings["output"] = aims_control.outputs
         self.aims_settings["species_dir"] = self.basis_dir
         self.aims_settings["compute_forces"] = True
