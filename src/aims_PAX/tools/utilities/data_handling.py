@@ -353,6 +353,7 @@ def load_from_atoms(
 def split_data(
     data: list,
     valid_fraction: float,
+    seed: Optional[int] = None,
 ) -> tuple:
     """
     Split data into training and validation set.
@@ -360,12 +361,17 @@ def split_data(
     Args:
         data (list): List of ASE atoms objects.
         valid_fraction (float): Fraction of data to be used for validation.
+        seed (int, optional): Seed for the shuffle. When provided, the split is
+            reproducible. A local RNG is used so the global ``random`` state is
+            left untouched (matching ``random_train_valid_split``). Defaults to
+            None (non-deterministic).
 
     Returns:
         tuple: Tuple of training and validation data (both lists).
     """
     data = data.copy()
-    random.shuffle(data)
+    rng = random.Random(seed)
+    rng.shuffle(data)
     n_samples = len(data)
     n_valid = int(n_samples * valid_fraction)
     n_train = n_samples - n_valid
@@ -569,7 +575,9 @@ def update_datasets(
         tuple: _description_
     """
     
-    new_train_data_ase, new_valid_data_ase = split_data(new_points, valid_split)
+    new_train_data_ase, new_valid_data_ase = split_data(
+        new_points, valid_split, seed=seed
+    )
     
     if all_heads is not None:
         new_train_data_head_ase = split_data_heads_evenly(new_train_data_ase, len(all_heads))
