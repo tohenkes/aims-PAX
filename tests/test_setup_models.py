@@ -5,7 +5,7 @@ import pytest
 import torch
 from mace.tools import AtomicNumberTable
 
-so3krates_torch = pytest.importorskip("so3krates_torch")
+import so3krates_torch.tools.torch_geometric as so3_torch_geometric
 
 from aims_PAX.settings import ModelSettings
 from aims_PAX.tools.model_tools.setup_MACE import setup_mace
@@ -93,7 +93,7 @@ def make_loader(atoms_list, z_table, r_max):
         r_max=r_max,
         key_specification=keyspec,
     )
-    loader = so3krates_torch.tools.torch_geometric.dataloader.DataLoader(
+    loader = so3_torch_geometric.dataloader.DataLoader(
         dataset=dataset,
         batch_size=1,
         shuffle=False,
