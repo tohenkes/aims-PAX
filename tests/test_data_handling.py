@@ -14,21 +14,28 @@ Convention focus:
 
 import random
 
+import ase
 import ase.build
 import numpy as np
 import pytest
 from mace import tools
+from torch.utils.data import DataLoader
 
 from aims_PAX.tools.utilities.data_handling import (
     Configuration,
     KeySpecification,
     ase_to_model_ensemble_sets,
+    create_dataloader,
+    create_model_dataset,
     random_train_valid_split,
+    sort_ase_dataset_to_heads,
     split_data,
+    split_data_heads_evenly,
+    test_config_types as group_by_config_type,
     update_datasets,
+    update_keyspec_from_kwargs,
 )
-from aims_PAX.tools.utilities.utilities import create_keyspec
-
+from aims_PAX.tools.utilities.utilities import create_keyspec, create_ztable
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -251,3 +258,259 @@ def test_configuration_construction():
     assert cfg.forces is None
     assert cfg.weight == 1.0
     assert cfg.config_type == "Default"
+
+
+# ---------------------------------------------------------------------------
+# §5 — update_keyspec_from_kwargs
+# ---------------------------------------------------------------------------
+
+
+def _fresh_keyspec():
+    """Return a KeySpecification with default REF_* keys."""
+    return create_keyspec()
+
+
+def test_update_keyspec_info_key():
+    ks = _fresh_keyspec()
+    original_forces = ks.arrays_keys["forces"]
+    update_keyspec_from_kwargs(ks, {"energy_key": "MY_energy"})
+    assert ks.info_keys["energy"] == "MY_energy"
+    # other keys must be untouched
+    assert ks.arrays_keys["forces"] == original_forces
+
+
+def test_update_keyspec_arrays_key():
+    ks = _fresh_keyspec()
+    original_energy = ks.info_keys["energy"]
+    update_keyspec_from_kwargs(ks, {"forces_key": "MY_forces"})
+    assert ks.arrays_keys["forces"] == "MY_forces"
+    assert ks.info_keys["energy"] == original_energy
+
+
+def test_update_keyspec_unknown_key_ignored():
+    ks = _fresh_keyspec()
+    snapshot_info = dict(ks.info_keys)
+    snapshot_arrays = dict(ks.arrays_keys)
+    update_keyspec_from_kwargs(ks, {"unknown_key": "x"})
+    assert ks.info_keys == snapshot_info
+    assert ks.arrays_keys == snapshot_arrays
+
+
+# ---------------------------------------------------------------------------
+# §6 — test_config_types
+# ---------------------------------------------------------------------------
+
+
+def _make_config(config_type: str, energy: float = -1.0) -> Configuration:
+    return Configuration(
+        atomic_numbers=np.array([14]),
+        positions=np.array([[0.0, 0.0, 0.0]]),
+        energy=energy,
+        forces=np.zeros((1, 3)),
+        config_type=config_type,
+    )
+
+
+def test_test_config_types_correct_grouping():
+    c1 = _make_config("typeA", -1.0)
+    c2 = _make_config("typeB", -2.0)
+    c3 = _make_config("typeA", -3.0)
+    result = group_by_config_type([c1, c2, c3])
+    groups = {ct: confs for ct, confs in result}
+    assert set(groups.keys()) == {"typeA", "typeB"}
+    assert groups["typeA"] == [c1, c3]
+    assert groups["typeB"] == [c2]
+
+
+def test_test_config_types_insertion_order():
+    c1 = _make_config("typeA")
+    c2 = _make_config("typeB")
+    c3 = _make_config("typeA")
+    result = group_by_config_type([c1, c2, c3])
+    # typeA appeared first, so it must be first in the output
+    assert result[0][0] == "typeA"
+    assert result[1][0] == "typeB"
+
+
+def test_test_config_types_single_type():
+    configs = [_make_config("only", float(-i)) for i in range(4)]
+    result = group_by_config_type(configs)
+    assert len(result) == 1
+    assert result[0][0] == "only"
+    assert result[0][1] == configs
+
+
+# ---------------------------------------------------------------------------
+# §7 — split_data_heads_evenly
+# ---------------------------------------------------------------------------
+
+
+def _make_atoms_list(n: int) -> list:
+    """Minimal 1-atom Si Atoms objects (need .copy())."""
+    return [ase.Atoms("Si", positions=[[0, 0, 0]]) for _ in range(n)]
+
+
+@pytest.mark.parametrize(
+    "n_data,num_heads,expected_total,all_non_empty",
+    [
+        (6, 3, 6, True),  # even split: 2 each
+        (4, 3, 4, True),  # head 0 gets 2, heads 1 and 2 get 1
+        (2, 3, 3, True),  # sparse: cycle until all 3 heads have ≥1
+    ],
+)
+def test_split_data_heads_evenly_keys_and_non_empty(
+    n_data, num_heads, expected_total, all_non_empty
+):
+    data = _make_atoms_list(n_data)
+    result = split_data_heads_evenly(data, num_heads)
+    assert set(result.keys()) == set(range(num_heads))
+    if all_non_empty:
+        assert all(len(v) > 0 for v in result.values())
+
+
+def test_split_data_heads_evenly_total_sufficient():
+    """Even split: total items == len(data), round-robin order."""
+    data = _make_atoms_list(6)
+    result = split_data_heads_evenly(data, 3)
+    total = sum(len(v) for v in result.values())
+    assert total == 6
+    for h in range(3):
+        assert len(result[h]) == 2
+
+
+def test_split_data_heads_evenly_sparse_total():
+    """Sparse case: total items == num_heads (each head gets exactly 1)."""
+    data = _make_atoms_list(2)
+    result = split_data_heads_evenly(data, 3)
+    total = sum(len(v) for v in result.values())
+    assert total == 3
+
+
+def test_split_data_heads_evenly_uneven():
+    """4 items, 3 heads: head 0 gets 2, heads 1 and 2 get 1."""
+    data = _make_atoms_list(4)
+    result = split_data_heads_evenly(data, 3)
+    assert len(result[0]) == 2
+    assert len(result[1]) == 1
+    assert len(result[2]) == 1
+
+
+# ---------------------------------------------------------------------------
+# §8 — sort_ase_dataset_to_heads
+# ---------------------------------------------------------------------------
+
+
+def _atoms_with_head(head: str) -> ase.Atoms:
+    a = ase.Atoms("Si", positions=[[0, 0, 0]])
+    a.info["head"] = head
+    return a
+
+
+def _atoms_no_head() -> ase.Atoms:
+    return ase.Atoms("Si", positions=[[0, 0, 0]])
+
+
+def test_sort_ase_dataset_to_heads_two_heads():
+    a1 = _atoms_with_head("headA")
+    a2 = _atoms_with_head("headB")
+    a3 = _atoms_with_head("headA")
+    result = sort_ase_dataset_to_heads([a1, a2, a3])
+    assert set(result.keys()) == {"headA", "headB"}
+    assert result["headA"] == [a1, a3]
+    assert result["headB"] == [a2]
+
+
+def test_sort_ase_dataset_to_heads_no_head_key():
+    a1 = _atoms_no_head()
+    a2 = _atoms_no_head()
+    result = sort_ase_dataset_to_heads([a1, a2])
+    assert list(result.keys()) == ["Default"]
+    assert len(result["Default"]) == 2
+
+
+def test_sort_ase_dataset_to_heads_mixed():
+    a_head = _atoms_with_head("headA")
+    a_default = _atoms_no_head()
+    result = sort_ase_dataset_to_heads([a_head, a_default])
+    assert set(result.keys()) == {"headA", "Default"}
+    assert result["headA"] == [a_head]
+    assert result["Default"] == [a_default]
+
+
+# ---------------------------------------------------------------------------
+# §9 — create_dataloader
+# ---------------------------------------------------------------------------
+
+
+@pytest.fixture(scope="module")
+def si_z_table():
+    return create_ztable(np.array([14]))
+
+
+@pytest.fixture(scope="module")
+def si_model_datasets(data_dir, si_z_table):
+    from ase.io import read
+
+    ks = create_keyspec()
+    train_data = read(
+        str(
+            data_dir
+            / "datasets"
+            / "initial"
+            / "training"
+            / "combined_initial_train_set.xyz"
+        ),
+        index=":",
+    )
+    valid_data = read(
+        str(
+            data_dir
+            / "datasets"
+            / "initial"
+            / "validation"
+            / "combined_initial_valid_set.xyz"
+        ),
+        index=":",
+    )
+    train_set = create_model_dataset(
+        train_data,
+        seed=0,
+        z_table=si_z_table,
+        r_max=5.0,
+        key_specification=ks,
+    )
+    valid_set = create_model_dataset(
+        valid_data,
+        seed=0,
+        z_table=si_z_table,
+        r_max=5.0,
+        key_specification=ks,
+    )
+    return train_set, {"Default": valid_set}
+
+
+def test_create_dataloader_returns_tuple(si_model_datasets):
+    train_set, valid_set = si_model_datasets
+    result = create_dataloader(train_set, valid_set, 2, 2)
+    assert isinstance(result, tuple)
+    assert len(result) == 2
+
+
+def test_create_dataloader_train_loader_is_dataloader(si_model_datasets):
+    train_set, valid_set = si_model_datasets
+    train_loader, _ = create_dataloader(train_set, valid_set, 2, 2)
+    assert isinstance(train_loader, DataLoader)
+
+
+def test_create_dataloader_valid_loaders_is_dict(si_model_datasets):
+    train_set, valid_set = si_model_datasets
+    _, valid_loaders = create_dataloader(train_set, valid_set, 2, 2)
+    assert isinstance(valid_loaders, dict)
+    assert "Default" in valid_loaders
+
+
+def test_create_dataloader_train_yields_batches(si_model_datasets):
+    train_set, valid_set = si_model_datasets
+    train_loader, _ = create_dataloader(train_set, valid_set, 2, 2)
+    batches = list(train_loader)
+    assert len(batches) >= 1
