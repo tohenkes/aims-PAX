@@ -128,6 +128,7 @@ class TestReadInputFiles:
         assert isinstance(model_s, ModelSettings)
         assert isinstance(pax_s, AimsPAXSettings)
         assert geom is not None
+        assert ctrl is not None
 
 
 # ---------------------------------------------------------------------------
