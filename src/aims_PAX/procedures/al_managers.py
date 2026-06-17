@@ -63,12 +63,6 @@ try:
     import parsl
 except ImportError:
     parsl = None
-try:
-    import asi4py
-except Exception as e:
-    asi4py = None
-
-
 class ALDataManager:
     """
     Tasked with handling all data relevant tasks i.e.
@@ -1002,233 +996,6 @@ class ALTrainingManager:
         )
 
 
-class ALDFTManager:
-    """
-    Tasked with handling DFT calculations and their
-    preparation.
-    """
-
-    def __init__(
-        self,
-        path_to_control: str,
-        config: ALConfiguration,
-        ensemble_manager: ALEnsemble,
-        state_manager: ALStateManager,
-    ):
-        self.config = config
-        self.ensemble_manager = ensemble_manager
-        self.state_manager = state_manager
-
-        self.control_parser = AIMSControlParser()
-        self._handle_aims_settings(path_to_control)
-
-        self.aims_calculator = None
-
-    def handle_dft_call(self, point: ase.Atoms, idx: int):
-        """
-        Calls DFT calculation and checks if the SCF
-        has converged. If it has not converged, the point
-        is discarded and the MD checkpoint is loaded. The state
-        of the trajectory worker is set to "running".
-        If it has, the data is collected and the state of the
-        trajectory worker is set to "waiting". The MD checkpoint
-        is updated with the acquired DFT data.
-
-        Args:
-            point (ase.Atoms): Point to be recalculated.
-            idx (int): Index of trajectory worker.
-        """
-        logging.info(f"Trajectory worker {idx} is running DFT.")
-
-        self.point = self.recalc_dft(point)
-        if not self.aims_calculator.asi.is_scf_converged:
-            logging.info(
-                f"SCF not converged at worker {idx}. Discarding point and "
-                "restarting MD from last checkpoint."
-            )
-            temp_calc = self.state_manager.trajectories[idx].calc
-            self.state_manager.trajectories[idx] = atoms_full_copy(
-                self.state_manager.MD_checkpoints[idx]
-            )
-            self.state_manager.trajectories[idx].calc = temp_calc
-            del temp_calc
-                
-            self.state_manager.trajectory_status[idx] = "running"
-
-        else:
-            # we are updating the MD checkpoint here because then
-            # we make sure  that the MD is restarted from a point
-            # that is inside the training set  so the MLFF should
-            # be able to handle this and lead to a better trajectory
-            # that does not lead to convergence issues
-            received_point = self.state_manager.trajectories[idx].copy()
-            received_point.info["REF_energy"] = self.point.info[
-                "REF_energy"
-            ]
-            received_point.arrays["REF_forces"] = self.point.arrays[
-                "REF_forces"
-            ]
-            if self.config.compute_stress:
-                received_point.info["REF_stress"] = self.point.info[
-                    "REF_stress"
-                ]
-
-            if self.config.update_md_checkpoints:
-                self.state_manager.MD_checkpoints[idx] = atoms_full_copy(
-                    received_point
-                )
-            self.state_manager.trajectory_status[idx] = "waiting"
-            self.state_manager.num_workers_training += 1
-
-            self.state_manager.trajectory_status[idx] = "waiting"
-            logging.info(
-                f"Trajectory worker {idx} is going to add a point "
-                "to the dataset."
-            )
-
-    def finalize_dft(self):
-        self.aims_calculator.asi.close()
-
-    def recalc_dft(self, current_point: ase.Atoms) -> ase.Atoms:
-        """
-        Uses the DFT calculator to compute desired
-        properties of the current point. Returns
-        None if the SCF has not converged.
-
-        Args:
-            current_point (ase.Atoms): Point to be recalculated.
-
-        Returns:
-            ase.Atoms: Updated atoms object with DFT data.
-        """
-
-        self.aims_calculator.calculate(
-            current_point, properties=self.config.properties
-        )
-
-        if self.aims_calculator.asi.is_scf_converged:
-            current_point.info["REF_energy"] = self.aims_calculator.results[
-                "energy"
-            ]
-            current_point.arrays["REF_forces"] = self.aims_calculator.results[
-                "forces"
-            ]
-
-            if self.config.compute_stress:
-                current_point.info["REF_stress"] = (
-                    self.aims_calculator.results["stress"]
-                )
-
-            return current_point
-        else:
-            logging.info("SCF not converged.")
-            return None
-
-    def _handle_aims_settings(
-            self,
-            control_source: Union[str, dict[int, str]],
-            log: bool = False
-            ):
-        """
-        Parses the AIMS control file to get the settings for the AIMS
-        calculator.
-
-        Args:
-            path_to_control (str): Path to the AIMS control file.
-            species_dir (str): Path to the species directory of AIMS.
-        """
-        if isinstance(control_source, (str, Path)):
-            aims_control = AimsControl.from_file(control_source)
-            aims_settings = aims_control.parameters
-            # Create ASE dict from pyfhiaims
-            if aims_control.outputs:
-                aims_settings["output"] = aims_control.outputs
-            aims_settings["compute_forces"] = True
-            aims_settings["species_dir"] = self.config.species_dir
-            aims_settings["postprocess_anyway"] = (
-                True  # this is necessary to check for convergence in ASI
-            )
-            self.aims_settings = {
-                idx: aims_settings for idx in range(
-                    self.config.num_trajectories
-                )
-            }
-        elif isinstance(control_source, dict):
-            self.aims_settings = {}
-            for key, value in control_source.items():
-                aims_control = AimsControl.from_file(value)
-                aims_settings = aims_control.parameters
-                # Create ASE dict from pyfhiaims
-                if aims_control.outputs:
-                    aims_settings["output"] = aims_control.outputs
-                aims_settings["compute_forces"] = True
-                aims_settings["species_dir"] = self.config.species_dir
-                aims_settings["postprocess_anyway"] = (
-                    True  # this is necessary to check for convergence in ASI
-                )
-                if log:
-                    logging.info(
-                        f"Control file for geometry {key}: {value}."
-                    )
-                self.aims_settings[key] = aims_settings
-
-
-class ALDFTManagerSerial(ALDFTManager):
-    """
-    A class to handle DFT calculations in a serial manner.
-    This class is used when the DFT calculations are not parallelized.
-    """
-
-    def __init__(
-        self,
-        path_to_control: str,
-        config: ALConfiguration,
-        ensemble_manager: ALEnsemble,
-        state_manager: ALStateManager,
-        data_manager: ALDataManager,
-        path_to_geometry: str = "geometry.in",
-    ):
-        super().__init__(
-            path_to_control=path_to_control,
-            config=config,
-            ensemble_manager=ensemble_manager,
-            state_manager=state_manager,
-        )
-        self.aims_calculator = self._setup_aims_calculator(
-            atoms=read(path_to_geometry)
-        )
-        self.data_manager = data_manager
-
-    def _setup_aims_calculator(self, atoms: ase.Atoms):
-        aims_settings = self.aims_settings.copy()
-
-        def init_via_ase(asi):
-            from ase.calculators.aims import Aims, AimsProfile
-
-            aims_settings["profile"] = AimsProfile(
-                command="asi-doesnt-need-command"
-            )
-            calc = Aims(**aims_settings[0])
-            calc.write_inputfiles(asi.atoms, properties=self.config.properties)
-
-        if asi4py is None:
-            raise ImportError(
-                "asi4py is not properly installed. "
-                "Please install it to use the AIMS calculator."
-            )
-
-        calc = asi4py.asecalc.ASI_ASE_calculator(
-            self.config.ASI_path, init_via_ase, None, atoms
-        )
-        return calc
-    
-    def handle_dft_call(self, point, idx):
-        super().handle_dft_call(point, idx)
-        self.data_manager.handle_received_point(
-            idx,
-            self.point
-        )
-
 class ALReferenceManagerPARSL:
     """
     Base class for PARSL-based reference calculation managers in AL.
@@ -1555,9 +1322,6 @@ class ALTeacherModelManagerPARSL(ALReferenceManagerPARSL):
 
 
 # Backward-compatible alias
-ALDFTManagerPARSL = ALDFTReferenceManagerPARSL
-
-
 class ALRunningManager:
     """
     Manages the "running" state of the active learning
@@ -1570,7 +1334,7 @@ class ALRunningManager:
         state_manager: ALStateManager,
         ensemble_manager: ALEnsemble,
         mlff_manager: ALCalculatorMLFF,
-        dft_manager: ALDFTManager,
+        dft_manager: ALReferenceManagerPARSL,
     ):
         self.config = config
         self.state_manager = state_manager
@@ -1894,7 +1658,7 @@ class ALAnalysisManager:
         self,
         config: ALConfiguration,
         ensemble_manager: ALEnsemble,
-        dft_manager: ALDFTManager,
+        dft_manager: ALReferenceManagerPARSL,
         state_manager: ALStateManager,
         md_manager: ALMD,
     ):
@@ -1904,23 +1668,8 @@ class ALAnalysisManager:
         self.state_manager = state_manager
         self.md_manager = md_manager
 
-        self.aims_calculator = self.dft_manager.aims_calculator
-
     def _analysis_dft_call(self, point: ase.Atoms, idx: int = None) -> bool:
-        """
-        Base DFT call for analysis.
-
-        Args:
-            point (ase.Atoms): Geometry to be analyzed
-            idx (int, optional): Index of the trajectory. Defaults to None.
-
-        Returns:
-            bool: True if the SCF cycle converged, False otherwise.
-        """
-        self.aims_calculator.calculate(
-            point, properties=self.config.properties
-        )
-        return self.aims_calculator.asi.is_scf_converged
+        raise NotImplementedError
 
     def save_analysis(self):
         """
@@ -1950,43 +1699,7 @@ class ALAnalysisManager:
     def _process_analysis(
         self, idx: int, converged: bool, analysis_prediction: np.ndarray
     ):
-        """
-        Processes the results of the analysis after DFT calculation.
-        Collects the uncertainty threshold. Discards point if
-        SCF not converged.
-
-        Args:
-            idx (int): Index of trajectory.
-            converged (bool): Whether the SCF cycles converged.
-            analysis_prediction (np.ndarray): MLFF prediction.
-        """
-        if converged:
-            check_results = self.analysis_check(
-                current_md_step=self.state_manager.trajectory_MD_steps[idx],
-                analysis_prediction=analysis_prediction,
-                true_forces=self.aims_calculator.results["forces"],
-            )
-            for key in check_results.keys():
-                self.state_manager.analysis_checks[idx][key].append(
-                    check_results[key]
-                )
-            self.state_manager.analysis_checks[idx]["threshold"].append(
-                self.state_manager.threshold
-            )
-
-            self.state_manager.collect_thresholds[idx].append(
-                self.state_manager.threshold
-            )
-
-            self.state_manager.check += 1
-
-            self.save_analysis()
-            logging.info(f"SCF converged at worker {idx} for analysis.")
-        else:
-            logging.info(
-                f"SCF not converged at worker {idx} for analysis. "
-                "Discarding point."
-            )
+        raise NotImplementedError
 
     def perform_analysis(
         self,

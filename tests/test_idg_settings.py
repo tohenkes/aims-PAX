@@ -489,7 +489,6 @@ def test_defaults(tmp_path):
     assert s.use_teacher_reference is False
     assert s.max_initial_set_size == sys.maxsize
     assert s.progress_dft_update == 10
-    assert s.aims_lib_path is None
     assert s.teacher_reference_settings == {}
 
 

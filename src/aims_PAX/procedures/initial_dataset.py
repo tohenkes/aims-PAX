@@ -37,10 +37,6 @@ from ..settings import ModelSettings, AimsPAXSettings
 from ..settings.project import MaceFMSettings, So3lrFMSettings
 
 try:
-    import asi4py
-except ImportError as e:
-    asi4py = None
-try:
     import parsl
 except ImportError:
     parsl = None
@@ -475,193 +471,7 @@ class InitialDatasetAIMD(InitialDatasetProcedure):
         self.atoms.calc.close()
 
 
-class InitialDatasetFoundational(InitialDatasetProcedure):
-    """
-    Class to generate the initial dataset for the active learning procedure.
-    Handles the molecular dynamics simulations, the sampling of points, the
-    training of the ensemble members and the saving of the datasets.
-
-    Uses a "foundational" model to sample points. These are then recomputed
-    using DFT. Runs serially.
-    """
-
-    def _setup_foundational(
-        self,
-        model_choice: str,
-        foundational_model_settings: MaceFMSettings | So3lrFMSettings
-    ):
-        """
-        Creates the foundational model for sampling.
-
-        
-
-        Returns:
-            ase.Calculator: ASE calculator object.
-        """
-
-        if model_choice == 'mace-mp':
-            mace_model = foundational_model_settings.mace_model
-            dispersion = foundational_model_settings.dispersion
-            damping = foundational_model_settings.damping
-            dispersion_xc = foundational_model_settings.dispersion_xc
-            dispersion_cutoff = foundational_model_settings.dispersion_cutoff
-            if dispersion:
-                try:
-                    from torch_dftd.torch_dftd3_calculator import TorchDFTD3Calculator
-                except ImportError as exc:
-                    raise RuntimeError(
-                        "Please install torch-dftd to use dispersion corrections (see https://github.com/pfnet-research/torch-dftd)"
-                    ) from exc
-                logging.info("Using D3 dispersion corrections with foundational MACE model.")
-            return mace_mp(
-                model=mace_model,
-                dispersion=dispersion,
-                default_dtype=self.dtype,
-                device=self.device,
-                enable_cueq=self.enable_cueq,
-                damping=damping,
-                dispersion_xc=dispersion_xc,
-                dispersion_cutoff=dispersion_cutoff,
-            )
-        elif model_choice == 'so3lr':
-            r_max_lr = foundational_model_settings.r_max_lr
-            dispersion_lr_damping = foundational_model_settings.dispersion_lr_damping
-            return SO3LRCalculator(
-                r_max_lr=r_max_lr,
-                dispersion_energy_cutoff_lr_damping=dispersion_lr_damping,
-                compute_stress=self.compute_stress,
-                device=self.device,
-                default_dtype=self.dtype,
-                key_specification=self.key_specification
-            )
-        else:
-            raise ValueError(
-                f"Unknown foundational model choice: {model_choice}"
-            )
-
-    def _recalc_dft(self, current_point: ase.Atoms) -> ase.Atoms | None:
-        """
-        Recalculates the energies and forces of the current point using
-        the AIMS calculator. If the SCF is converged, it saves the energy
-        and forces (and stress) in the MACE readable format.
-        If not, it returns None.
-
-        Args:
-            current_point (ase.Atoms): System to recompute.
-
-        Returns:
-            ase.Atoms: Atoms object containing generated DFT data.
-        """
-        self.aims_calc.calculate(current_point, properties=self.properties)
-        if self.aims_calc.asi.is_scf_converged:
-            current_point.info["REF_energy"] = self.aims_calc.results["energy"]
-            current_point.arrays["REF_forces"] = self.aims_calc.results[
-                "forces"
-            ]
-            if self.compute_stress:
-                current_point.info["REF_stress"] = self.aims_calc.results[
-                    "stress"
-                ]
-            return current_point
-        else:
-            logging.info("SCF not converged.")
-            return None
-
-    def _num_samples_per_traj(self) -> int:
-        """
-        Returns the number of samples per trajectory.
-        If distinct_model_sets is True, each ensemble member
-        gets its own set of points. Otherwise, all ensemble members
-        share the same set of points. Thus, the number of samples
-        per trajectory is different in the two cases.
-        
-        Returns:
-            int: Number of samples per trajectory.
-        """
-        if self.distinct_model_sets:
-            return self.ensemble_size * self.n_points_per_sampling_step_idg
-        else:
-            return self.n_points_per_sampling_step_idg
-
-    def _md_w_foundational(
-        self,
-    ):
-        """
-        Samples points using the foundational model.
-        For each geometry n points are sampled with
-        n = self.n_points_per_sampling_step_idg * self.ensemble_size.
-        Thus, the total number of points sampled are n * n_geometries.
-        """
-
-        samples_per_trajectory = self._num_samples_per_traj()
-        samples_per_step = samples_per_trajectory * len(self.trajectories)
-        logging.info(
-            f"Sampling {samples_per_step} points from using foundational model."
-        )
-        self.sampled_points = {idx: [] for idx in self.trajectories.keys()}
-        for idx in self.trajectories.keys():
-            logging.info(f"Sampling from trajectory {idx}. Number of MD steps: "
-                         f"{self.skip_step_initial * samples_per_trajectory}.")
-            dyn = self.md_drivers[idx]
-            atoms = self.trajectories[idx]
-            for _ in range(
-                samples_per_trajectory
-            ):
-                current_point = self._run_MD(atoms, dyn)
-                self.sampled_points[idx].append(current_point)
-        total_points_sampled = sum(len(points) for points in self.sampled_points.values())
-        logging.info(
-            f"Sampled {total_points_sampled} points using foundational model."
-        )
-
-    def _sample_points(self) -> list:
-        """
-        Samples geometries using foundational model and recalculates
-        the energies and forces with DFT.
-
-        Returns:
-            list: List of ASE Atoms objects.
-        """
-        self._md_w_foundational()
-        logging.info("Recalculating energies and forces with reference method.")
-        recalculated_points = []
-        for idx in self.trajectories.keys():
-            for atoms in self.sampled_points[idx]:
-                temp = self._recalc_dft(atoms)
-                if temp is not None:
-                    recalculated_points.append(temp)
-        return recalculated_points
-
-    def _setup_calcs(self):
-        """
-        Sets up the calculators for the initial dataset generation.
-        In this case it sets up the AIMS calculators for recalculating
-        the energies and forces and the foundational model for MD.
-        """
-        if len(self.atoms) > 1:
-            raise NotImplementedError(
-                "Initial dataset generation with foundational model "
-                " without using PARSL for multiple geometries."
-            )
-        self.aims_calc = self._setup_aims_calculator(self.atoms[0])
-        logging.info(
-            f"Initial dataset generation with foundational model: {self.foundational_model}."
-        )
-        foundational_calc = self._setup_foundational(
-            model_choice=self.foundational_model,
-            foundational_model_settings=self.foundational_model_settings,
-        )
-        for idx in self.trajectories.keys():
-            self.trajectories[idx].calc = foundational_calc
-
-    def _close_aims(self):
-        """
-        Kills the AIMS calculator.
-        """
-        self.aims_calc.close()
-
-
-class InitialDatasetPARSL(InitialDatasetFoundational):
+class InitialDatasetPARSL(InitialDatasetProcedure):
     """
     Class to generate the initial dataset for the active learning procedure.
     Handles the molecular dynamics simulations, the sampling of points, the
@@ -899,6 +709,84 @@ class InitialDatasetPARSL(InitialDatasetFoundational):
         )
         for idx in self.trajectories.keys():
             self.trajectories[idx].calc = foundational_calc
+
+    def _setup_foundational(
+        self,
+        model_choice: str,
+        foundational_model_settings: MaceFMSettings | So3lrFMSettings
+    ):
+        if model_choice == 'mace-mp':
+            mace_model = foundational_model_settings.mace_model
+            dispersion = foundational_model_settings.dispersion
+            damping = foundational_model_settings.damping
+            dispersion_xc = foundational_model_settings.dispersion_xc
+            dispersion_cutoff = foundational_model_settings.dispersion_cutoff
+            if dispersion:
+                try:
+                    from torch_dftd.torch_dftd3_calculator import TorchDFTD3Calculator
+                except ImportError as exc:
+                    raise RuntimeError(
+                        "Please install torch-dftd to use dispersion "
+                        "corrections (see https://github.com/pfnet-research/torch-dftd)"
+                    ) from exc
+                logging.info(
+                    "Using D3 dispersion corrections with foundational MACE model."
+                )
+            return mace_mp(
+                model=mace_model,
+                dispersion=dispersion,
+                default_dtype=self.dtype,
+                device=self.device,
+                enable_cueq=self.enable_cueq,
+                damping=damping,
+                dispersion_xc=dispersion_xc,
+                dispersion_cutoff=dispersion_cutoff,
+            )
+        elif model_choice == 'so3lr':
+            r_max_lr = foundational_model_settings.r_max_lr
+            dispersion_lr_damping = foundational_model_settings.dispersion_lr_damping
+            return SO3LRCalculator(
+                r_max_lr=r_max_lr,
+                dispersion_energy_cutoff_lr_damping=dispersion_lr_damping,
+                compute_stress=self.compute_stress,
+                device=self.device,
+                default_dtype=self.dtype,
+                key_specification=self.key_specification
+            )
+        else:
+            raise ValueError(
+                f"Unknown foundational model choice: {model_choice}"
+            )
+
+    def _num_samples_per_traj(self) -> int:
+        if self.distinct_model_sets:
+            return self.ensemble_size * self.n_points_per_sampling_step_idg
+        else:
+            return self.n_points_per_sampling_step_idg
+
+    def _md_w_foundational(self):
+        samples_per_trajectory = self._num_samples_per_traj()
+        samples_per_step = samples_per_trajectory * len(self.trajectories)
+        logging.info(
+            f"Sampling {samples_per_step} points from using foundational model."
+        )
+        self.sampled_points = {idx: [] for idx in self.trajectories.keys()}
+        for idx in self.trajectories.keys():
+            logging.info(
+                f"Sampling from trajectory {idx}. Number of MD steps: "
+                f"{self.skip_step_initial * samples_per_trajectory}."
+            )
+            dyn = self.md_drivers[idx]
+            atoms = self.trajectories[idx]
+            for _ in range(samples_per_trajectory):
+                current_point = self._run_MD(atoms, dyn)
+                self.sampled_points[idx].append(current_point)
+        total_points_sampled = sum(
+            len(points) for points in self.sampled_points.values()
+        )
+        logging.info(
+            f"Sampled {total_points_sampled} points using foundational model."
+        )
 
     def _close_aims(self):
         if self.close_parsl:

@@ -174,7 +174,6 @@ class IDGSettings(ProjectBaseModel):
         description="Maximum total epochs allowed before halting convergence.",
     )
     initial_sampling: Literal["aimd", "foundational"] = Field(default="foundational")
-    aims_lib_path: str | None = Field(default=None, description="Path to the compiled FHI-aims library for direct force and energy evaluation.")
     save_trajectories: bool = Field(default=False)
     save_trajectories_interval: int = Field(default=5)
     use_teacher_reference: bool = False
@@ -344,11 +343,6 @@ class ALSettings(ProjectBaseModel):
         gt=0
     )
 
-    # --- Not actively used, but are working ---
-    aims_lib_path: str | None = Field(
-        default=None,
-        description="Path to the compiled FHI-aims library for direct force and energy evaluation via API."
-    )
     intermol_crossed_limit: int = Field(
         default=10,
         description="Max uncertainty threshold crossings allowed for intermolecular interactions before stopping."

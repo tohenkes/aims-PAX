@@ -2,7 +2,6 @@ import argparse
 
 from aims_PAX.procedures.initial_dataset import (
     InitialDatasetAIMD,
-    InitialDatasetFoundational,
     InitialDatasetPARSL,
     InitialDatasetPARSLTeacher,
 )
@@ -44,23 +43,20 @@ def main():
             path_to_geometry=path_to_geometry,
         )
     elif idg.initial_sampling.lower() == "foundational":
-        if aimsPAX_settings.CLUSTER is not None:
-            if idg.use_teacher_reference:
-                initial_ds = InitialDatasetPARSLTeacher(
-                    model_settings=model_settings,
-                    aimsPAX_settings=aimsPAX_settings,
-                    path_to_control=path_to_control,
-                    path_to_geometry=path_to_geometry,
-                )
-            else:
-                initial_ds = InitialDatasetPARSL(
-                    model_settings=model_settings,
-                    aimsPAX_settings=aimsPAX_settings,
-                    path_to_control=path_to_control,
-                    path_to_geometry=path_to_geometry,
-                )
+        if aimsPAX_settings.CLUSTER is None:
+            raise ValueError(
+                "Foundational initial dataset generation requires CLUSTER "
+                "settings. Please add a CLUSTER section to aimsPAX.yaml."
+            )
+        if idg.use_teacher_reference:
+            initial_ds = InitialDatasetPARSLTeacher(
+                model_settings=model_settings,
+                aimsPAX_settings=aimsPAX_settings,
+                path_to_control=path_to_control,
+                path_to_geometry=path_to_geometry,
+            )
         else:
-            initial_ds = InitialDatasetFoundational(
+            initial_ds = InitialDatasetPARSL(
                 model_settings=model_settings,
                 aimsPAX_settings=aimsPAX_settings,
                 path_to_control=path_to_control,

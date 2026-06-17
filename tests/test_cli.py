@@ -1,10 +1,10 @@
 """
-Phase 4 — CLI smoke tests.
+Phase 4 — CLI smoke tests (updated: ASI4py removed, PARSL-only).
 
 §1  --help exits zero (all 4 entry points, parametrized)
-§2  create_initial_ds — strategy dispatch (4 parametrized cases)
-§3  al_procedure_only — mode dispatch (2 parametrized cases)
-§4  full-workflow (__main__) — IDG + AL dispatch (2 parametrized cases)
+§2  create_initial_ds — strategy dispatch (3 cases) + error on foundational without CLUSTER
+§3  al_procedure_only — PARSL dispatch + error without CLUSTER
+§4  full-workflow (__main__) — IDG + AL dispatch (2 cases) + error without CLUSTER
 §5  recalculate_data — ReCalculatorPARSL wired up with correct kwargs
 
 Convention focus:
@@ -17,15 +17,10 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
-# asi4py is an optional FHI-aims dependency absent from the test env.
-# Stub it before any CLI import so recalculate_data can be collected.
-for _m in ("asi4py", "asi4py.asecalc"):
-    sys.modules.setdefault(_m, MagicMock())
-
-from aims_PAX.cli import __main__ as full_wf_mod  # noqa: E402
-from aims_PAX.cli import al_procedure_only as al_only_mod  # noqa: E402
-from aims_PAX.cli import create_initial_ds as initial_ds_mod  # noqa: E402
-from aims_PAX.cli import recalculate_data as recalc_mod  # noqa: E402
+from aims_PAX.cli import __main__ as full_wf_mod
+from aims_PAX.cli import al_procedure_only as al_only_mod
+from aims_PAX.cli import create_initial_ds as initial_ds_mod
+from aims_PAX.cli import recalculate_data as recalc_mod
 
 
 # ---------------------------------------------------------------------------
@@ -91,7 +86,6 @@ def test_help_exits_zero(main_func, monkeypatch):
 
 _IDG_CASES = [
     ("aimd",         False, False, "InitialDatasetAIMD"),
-    ("foundational", False, False, "InitialDatasetFoundational"),
     ("foundational", True,  False, "InitialDatasetPARSL"),
     ("foundational", True,  True,  "InitialDatasetPARSLTeacher"),
 ]
@@ -118,17 +112,15 @@ def test_initial_ds_selects_strategy(
     with (
         _rif_patch(MOD, settings),
         patch(f"{MOD}.InitialDatasetAIMD") as MockAIMD,
-        patch(f"{MOD}.InitialDatasetFoundational") as MockFoundational,
         patch(f"{MOD}.InitialDatasetPARSL") as MockPARSL,
         patch(f"{MOD}.InitialDatasetPARSLTeacher") as MockTeacher,
     ):
-        for cls in (MockAIMD, MockFoundational, MockPARSL, MockTeacher):
+        for cls in (MockAIMD, MockPARSL, MockTeacher):
             cls.return_value = _done_instance()
         initial_ds_mod.main()
 
     name_to_mock = {
         "InitialDatasetAIMD": MockAIMD,
-        "InitialDatasetFoundational": MockFoundational,
         "InitialDatasetPARSL": MockPARSL,
         "InitialDatasetPARSLTeacher": MockTeacher,
     }
@@ -138,38 +130,49 @@ def test_initial_ds_selects_strategy(
             mock.assert_not_called()
 
 
-# ---------------------------------------------------------------------------
-# §3 — al_procedure_only: mode dispatch
-# ---------------------------------------------------------------------------
-
-
-@pytest.mark.parametrize(
-    "has_cluster,expected_cls",
-    [(False, "ALProcedureSerial"), (True, "ALProcedurePARSL")],
-    ids=["serial", "parsl"],
-)
-def test_al_only_selects_mode(has_cluster, expected_cls, monkeypatch):
+def test_initial_ds_foundational_without_cluster_raises(monkeypatch):
     monkeypatch.setattr(
         sys, "argv",
         ["cmd", "--model-settings", "m.yaml", "--aimsPAX-settings", "a.yaml"],
     )
-    settings = _mock_settings(has_cluster=has_cluster)
+    settings = _mock_settings(initial_sampling="foundational", has_cluster=False)
+    MOD = "aims_PAX.cli.create_initial_ds"
+    with _rif_patch(MOD, settings):
+        with pytest.raises(ValueError, match="CLUSTER"):
+            initial_ds_mod.main()
+
+
+# ---------------------------------------------------------------------------
+# §3 — al_procedure_only: PARSL dispatch + error without CLUSTER
+# ---------------------------------------------------------------------------
+
+
+def test_al_only_selects_parsl(monkeypatch):
+    monkeypatch.setattr(
+        sys, "argv",
+        ["cmd", "--model-settings", "m.yaml", "--aimsPAX-settings", "a.yaml"],
+    )
+    settings = _mock_settings(has_cluster=True)
     MOD = "aims_PAX.cli.al_procedure_only"
     with (
         _rif_patch(MOD, settings),
-        patch(f"{MOD}.ALProcedureSerial") as MockSerial,
         patch(f"{MOD}.ALProcedurePARSL") as MockPARSL,
     ):
-        for cls in (MockSerial, MockPARSL):
-            cls.return_value = _done_instance()
+        MockPARSL.return_value = _done_instance()
         al_only_mod.main()
+    MockPARSL.assert_called_once()
 
-    if expected_cls == "ALProcedureSerial":
-        MockSerial.assert_called_once()
-        MockPARSL.assert_not_called()
-    else:
-        MockPARSL.assert_called_once()
-        MockSerial.assert_not_called()
+
+def test_al_only_without_cluster_raises(monkeypatch):
+    monkeypatch.setattr(
+        sys, "argv",
+        ["cmd", "--model-settings", "m.yaml", "--aimsPAX-settings", "a.yaml"],
+    )
+    settings = _mock_settings(has_cluster=False)
+    MOD = "aims_PAX.cli.al_procedure_only"
+    with _rif_patch(MOD, settings):
+        with pytest.raises(ValueError, match="CLUSTER"):
+            al_only_mod.main()
 
 
 # ---------------------------------------------------------------------------
@@ -177,15 +180,15 @@ def test_al_only_selects_mode(has_cluster, expected_cls, monkeypatch):
 # ---------------------------------------------------------------------------
 
 _FULL_WF_CASES = [
-    ("aimd",         False, "InitialDatasetAIMD",  "ALProcedureSerial"),
-    ("foundational", True,  "InitialDatasetPARSL", "ALProcedurePARSL"),
+    ("aimd",         True, "InitialDatasetAIMD",  "ALProcedurePARSL"),
+    ("foundational", True, "InitialDatasetPARSL",  "ALProcedurePARSL"),
 ]
 
 
 @pytest.mark.parametrize(
     "sampling,has_cluster,expected_idg,expected_al",
     _FULL_WF_CASES,
-    ids=["aimd-serial", "foundational-parsl"],
+    ids=["aimd-parsl", "foundational-parsl"],
 )
 def test_full_workflow_dispatches_idg_and_al(
     sampling, has_cluster, expected_idg, expected_al, monkeypatch
@@ -201,31 +204,34 @@ def test_full_workflow_dispatches_idg_and_al(
     with (
         _rif_patch(MOD, settings),
         patch(f"{MOD}.InitialDatasetAIMD") as MockAIMD,
-        patch(f"{MOD}.InitialDatasetFoundational") as MockFoundational,
         patch(f"{MOD}.InitialDatasetPARSL") as MockIDGPARSL,
         patch(f"{MOD}.InitialDatasetPARSLTeacher") as MockTeacher,
-        patch(f"{MOD}.ALProcedureSerial") as MockSerial,
         patch(f"{MOD}.ALProcedurePARSL") as MockALPARSL,
     ):
-        for cls in (
-            MockAIMD, MockFoundational, MockIDGPARSL, MockTeacher,
-            MockSerial, MockALPARSL,
-        ):
+        for cls in (MockAIMD, MockIDGPARSL, MockTeacher, MockALPARSL):
             cls.return_value = _done_instance()
         full_wf_mod.main()
 
     idg_map = {
         "InitialDatasetAIMD": MockAIMD,
-        "InitialDatasetFoundational": MockFoundational,
         "InitialDatasetPARSL": MockIDGPARSL,
         "InitialDatasetPARSLTeacher": MockTeacher,
     }
-    al_map = {
-        "ALProcedureSerial": MockSerial,
-        "ALProcedurePARSL": MockALPARSL,
-    }
+    al_map = {"ALProcedurePARSL": MockALPARSL}
     idg_map[expected_idg].assert_called_once()
     al_map[expected_al].assert_called_once()
+
+
+def test_full_workflow_without_cluster_raises(monkeypatch):
+    monkeypatch.setattr(
+        sys, "argv",
+        ["cmd", "--model-settings", "m.yaml", "--aimsPAX-settings", "a.yaml"],
+    )
+    settings = _mock_settings(has_cluster=False)
+    MOD = "aims_PAX.cli.__main__"
+    with _rif_patch(MOD, settings):
+        with pytest.raises(ValueError, match="CLUSTER"):
+            full_wf_mod.main()
 
 
 # ---------------------------------------------------------------------------

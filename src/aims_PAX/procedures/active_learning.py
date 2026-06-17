@@ -10,7 +10,6 @@ from .al_managers import (
     ALDataManager,
     ALTrainingManager,
     ALAnalysisManager,
-    ALDFTManagerSerial,
     ALDFTReferenceManagerPARSL,
     ALTeacherModelManagerPARSL,
     ALAnalysisManagerPARSL,
@@ -296,71 +295,6 @@ class ALProcedure(PrepareALProcedure):
             )
             self.restart_manager.al_restart_dict["al_done"] = True
 
-
-class ALProcedureSerial(ALProcedure):
-    """
-    Serial implementation of the active learning procedure.
-    DFT, MLFF sampling and training is done on the same rank
-    and one after the other.
-    """
-
-    def __init__(
-        self,
-        model_settings: dict,
-        aimsPAX_settings: dict,
-        path_to_control: str = "./control.in",
-        path_to_geometry: str = "./geometry.in",
-    ):
-
-        super().__init__(
-            model_settings=model_settings,
-            aimsPAX_settings=aimsPAX_settings,
-            path_to_control=path_to_control,
-            path_to_geometry=path_to_geometry,
-        )
-        self.data_manager = ALDataManager(
-            config=self.config,
-            ensemble_manager=self.ensemble_manager,
-            state_manager=self.state_manager,
-        )
-
-        self.train_manager = ALTrainingManager(
-            config=self.config,
-            ensemble_manager=self.ensemble_manager,
-            mlff_manager=self.mlff_manager,
-            state_manager=self.state_manager,
-            md_manager=self.md_manager,
-            restart_manager=self.restart_manager,
-        )
-        self.converge = self.train_manager.converge
-
-        self.dft_manager = ALDFTManagerSerial(
-            path_to_control=path_to_control,
-            config=self.config,
-            ensemble_manager=self.ensemble_manager,
-            state_manager=self.state_manager,
-            data_manager=self.data_manager,
-            path_to_geometry=path_to_geometry,
-        )
-
-        self.analysis_manager = ALAnalysisManager(
-            config=self.config,
-            ensemble_manager=self.ensemble_manager,
-            dft_manager=self.dft_manager,
-            state_manager=self.state_manager,
-            md_manager=self.md_manager,
-        )
-
-        self.run_manager = ALRunningManager(
-            config=self.config,
-            state_manager=self.state_manager,
-            ensemble_manager=self.ensemble_manager,
-            mlff_manager=self.mlff_manager,
-            dft_manager=self.dft_manager,
-        )
-    
-    def _waiting_task(self, idx):
-        pass
 
 class ALProcedurePARSL(ALProcedure):
     """

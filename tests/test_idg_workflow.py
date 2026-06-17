@@ -4,10 +4,7 @@ from unittest.mock import MagicMock, patch
 import ase.build
 import numpy as np
 
-from aims_PAX.procedures.initial_dataset import (
-    InitialDatasetFoundational,
-    InitialDatasetProcedure,
-)
+from aims_PAX.procedures.initial_dataset import InitialDatasetProcedure
 from aims_PAX.procedures.preparation import PrepareInitialDatasetProcedure
 
 TRAIN_MOD = "aims_PAX.procedures.initial_dataset"
@@ -239,107 +236,3 @@ def test_converge_resets_no_improvement_counter_on_new_best(
     PrepareInitialDatasetProcedure.converge(stub)
     assert mock_train_epoch.call_count == 3
     assert mock_torch.save.call_count == 2
-
-
-# ===========================================================================
-# §6.6 — InitialDatasetFoundational._recalc_dft
-# ===========================================================================
-
-
-def test_recalc_dft_converged_stores_energy_and_forces():
-    atoms = ase.build.bulk("Cu")
-    forces = np.zeros((len(atoms), 3))
-    calc_mock = MagicMock()
-    calc_mock.asi.is_scf_converged = True
-    calc_mock.results = {
-        "energy": -5.0,
-        "forces": forces,
-        "stress": np.zeros(6),
-    }
-    stub = SimpleNamespace(
-        aims_calc=calc_mock,
-        compute_stress=False,
-        properties=["energy", "forces"],
-    )
-    result = InitialDatasetFoundational._recalc_dft(stub, atoms)
-    assert result is atoms
-    assert result.info["REF_energy"] == -5.0
-    np.testing.assert_array_equal(result.arrays["REF_forces"], forces)
-
-
-def test_recalc_dft_unconverged_returns_none():
-    atoms = ase.build.bulk("Cu")
-    calc_mock = MagicMock()
-    calc_mock.asi.is_scf_converged = False
-    stub = SimpleNamespace(
-        aims_calc=calc_mock,
-        compute_stress=False,
-        properties=["energy", "forces"],
-    )
-    result = InitialDatasetFoundational._recalc_dft(stub, atoms)
-    assert result is None
-
-
-def test_recalc_dft_stores_stress_when_compute_stress():
-    atoms = ase.build.bulk("Cu")
-    stress = np.array([1.0, 2.0, 3.0, 4.0, 5.0, 6.0])
-    calc_mock = MagicMock()
-    calc_mock.asi.is_scf_converged = True
-    calc_mock.results = {
-        "energy": -5.0,
-        "forces": np.zeros((len(atoms), 3)),
-        "stress": stress,
-    }
-    stub = SimpleNamespace(
-        aims_calc=calc_mock,
-        compute_stress=True,
-        properties=["energy", "forces", "stress"],
-    )
-    result = InitialDatasetFoundational._recalc_dft(stub, atoms)
-    np.testing.assert_array_equal(result.info["REF_stress"], stress)
-
-
-# ===========================================================================
-# §6.7 — InitialDatasetFoundational._sample_points
-# ===========================================================================
-
-
-def test_foundational_sample_points_filters_unconverged():
-    atoms1 = ase.build.bulk("Cu")
-    atoms2 = ase.build.bulk("Cu")
-    atoms3 = ase.build.bulk("Cu")
-    stub = SimpleNamespace(
-        trajectories={0: MagicMock()},
-        sampled_points={0: [atoms1, atoms2, atoms3]},
-    )
-    stub._md_w_foundational = MagicMock()
-    stub._recalc_dft = MagicMock(side_effect=[atoms1, None, atoms3])
-    result = InitialDatasetFoundational._sample_points(stub)
-    assert len(result) == 2
-    assert atoms1 in result
-    assert atoms3 in result
-
-
-def test_foundational_sample_points_calls_md_once():
-    atoms = ase.build.bulk("Cu")
-    stub = SimpleNamespace(
-        trajectories={0: MagicMock()},
-        sampled_points={0: [atoms]},
-    )
-    stub._md_w_foundational = MagicMock()
-    stub._recalc_dft = MagicMock(return_value=atoms)
-    InitialDatasetFoundational._sample_points(stub)
-    stub._md_w_foundational.assert_called_once()
-
-
-def test_foundational_sample_points_empty_after_all_fail():
-    atoms1 = ase.build.bulk("Cu")
-    atoms2 = ase.build.bulk("Cu")
-    stub = SimpleNamespace(
-        trajectories={0: MagicMock()},
-        sampled_points={0: [atoms1, atoms2]},
-    )
-    stub._md_w_foundational = MagicMock()
-    stub._recalc_dft = MagicMock(return_value=None)
-    result = InitialDatasetFoundational._sample_points(stub)
-    assert result == []

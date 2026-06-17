@@ -1,10 +1,7 @@
 from types import SimpleNamespace
 from unittest.mock import MagicMock
 
-from aims_PAX.procedures.active_learning import (
-    ALProcedure,
-    ALProcedureSerial,
-)
+from aims_PAX.procedures.active_learning import ALProcedure
 
 # ===========================================================================
 # Stub helpers
@@ -118,12 +115,6 @@ def test_al_loop_exits_on_desired_accuracy():
 # ===========================================================================
 # §2 — _waiting_task routing
 # ===========================================================================
-
-
-def test_waiting_task_serial_does_nothing():
-    stub = SimpleNamespace(data_manager=MagicMock())
-    ALProcedureSerial._waiting_task(stub, idx=0)
-    assert stub.data_manager.mock_calls == []
 
 
 def test_waiting_task_base_routes_to_data_manager():

@@ -4,7 +4,6 @@ import numpy as np
 import pytest
 
 from aims_PAX.procedures.initial_dataset import (
-    InitialDatasetFoundational,
     InitialDatasetPARSL,
     InitialDatasetPARSLTeacher,
     InitialDatasetProcedure,
@@ -95,7 +94,7 @@ def test_distinct_true_multiplies():
         ensemble_size=4,
         n_points_per_sampling_step_idg=10,
     )
-    result = InitialDatasetFoundational._num_samples_per_traj(stub)
+    result = InitialDatasetPARSL._num_samples_per_traj(stub)
     assert result == 40
 
 
@@ -105,7 +104,7 @@ def test_distinct_false_ignores_ensemble():
         ensemble_size=4,
         n_points_per_sampling_step_idg=10,
     )
-    result = InitialDatasetFoundational._num_samples_per_traj(stub)
+    result = InitialDatasetPARSL._num_samples_per_traj(stub)
     assert result == 10
 
 

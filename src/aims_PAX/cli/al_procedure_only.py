@@ -1,7 +1,4 @@
-from aims_PAX.procedures.active_learning import (
-    ALProcedureSerial,
-    ALProcedurePARSL,
-)
+from aims_PAX.procedures.active_learning import ALProcedurePARSL
 import argparse
 from aims_PAX.tools.utilities.input_utils import read_input_files
 
@@ -32,20 +29,18 @@ def main():
         )
     )
 
-    if aimsPAX_settings.CLUSTER:
-        al = ALProcedurePARSL(
-            model_settings=model_settings,
-            aimsPAX_settings=aimsPAX_settings,
-            path_to_control=path_to_control,
-            path_to_geometry=path_to_geometry,
+    if not aimsPAX_settings.CLUSTER:
+        raise ValueError(
+            "ACTIVE_LEARNING requires CLUSTER settings. "
+            "Please add a CLUSTER section to aimsPAX.yaml."
         )
-    else:
-        al = ALProcedureSerial(
-            model_settings=model_settings,
-            aimsPAX_settings=aimsPAX_settings,
-            path_to_control=path_to_control,
-            path_to_geometry=path_to_geometry,
-        )
+
+    al = ALProcedurePARSL(
+        model_settings=model_settings,
+        aimsPAX_settings=aimsPAX_settings,
+        path_to_control=path_to_control,
+        path_to_geometry=path_to_geometry,
+    )
 
     if not al.check_al_done():
         al.run()

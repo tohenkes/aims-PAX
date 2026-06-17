@@ -145,7 +145,7 @@ Description of all settings and their default values for FHI aims, *aims-PAX*, a
 The settings here are the same as for usual FHI aims calculations (see the official FHI aims [manual](https://fhi-aims.org/uploads/documents/FHI-aims.250320_1.pdf)) and are 
 parsed internally in *aims-PAX*. MD settings are not specified here.
 
-As we are using ASE/ASI for running FHI aims, it is not needed to add the basis set information at the ned of the ```control.in``` file. That information is taken straight from the indicated species directory (see ```species_dir``` in the settings).
+As we are using ASE for running FHI-aims, it is not needed to add the basis set information at the end of the ```control.in``` file. That information is taken straight from the indicated species directory (see ```species_dir``` in the settings).
 
 ### *aims-PAX* (aimsPAX.yaml)
 
@@ -199,9 +199,6 @@ After the initial dataset generation is finished *aims PAX* does not converge th
 | margin                 | `float`         | `0.002` | Margin to decide if a model has improved over the previous training epoch.                       |
 | max_convergence_epochs | `int`           | `500`   | Maximum total epochs allowed before halting convergence                                          |
 
-<!--
-| aims_lib_path          | `str` or `None` | `None`  | Path to the compiled FHI-aims library for direct force and energy evaluation.                    |
--->
 
 #### ACTIVE_LEARNING:
 
@@ -550,7 +547,7 @@ Creating the initial ensemble and dataset.
 
 In the beginning a set of MACE models is trained on a initial dataset to serve as a starting point for the actual active learning. Each ensemble member gets their own initial training and validation set. See a) in the figure above.
 
-For that, *ab initio* MD is run (one trajectory) using FHI AIMS and ASI/ASE. Alternatively, the *"foundational"* model MACE-MP0 is used to sample structures, which are subsequently recomputed using DFT. This is recommended as one ideally wants to have uncorrelated structures and MACE-MP0 is much cheaper to evaluate and gives reasonable structures. Also, when using PARSL, the calculations can be processed in parallel.
+For that, *ab initio* MD is run (one trajectory) using FHI-aims via ASE. Alternatively, the *"foundational"* model MACE-MP0 is used to sample structures, which are subsequently recomputed using DFT via PARSL. This is recommended as one ideally wants to have uncorrelated structures and MACE-MP0 is much cheaper to evaluate and gives reasonable structures. Using PARSL, the calculations can be processed in parallel.
  
 After a set number of samples  is collected the models are trained. Afterwards, new points are sampled and this loop is repeated until a desired level of accurcay (or a different criterion like max number of epochs etc.) of the ensemble on the validation datasets is reached.
 
