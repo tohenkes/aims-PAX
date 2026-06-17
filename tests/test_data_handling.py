@@ -364,6 +364,7 @@ def test_split_data_heads_evenly_keys_and_non_empty(
     data = _make_atoms_list(n_data)
     result = split_data_heads_evenly(data, num_heads)
     assert set(result.keys()) == set(range(num_heads))
+    assert sum(len(v) for v in result.values()) == expected_total
     if all_non_empty:
         assert all(len(v) > 0 for v in result.values())
 
