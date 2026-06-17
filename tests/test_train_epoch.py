@@ -174,40 +174,29 @@ def test_train_epoch_loss_decreases(arch, tmp_path):
     training_setup = build_training_setup(settings, model, arch, tmp_path)
     logger = MetricsLogger(directory=tmp_path / "logs", tag="test")
 
-    loss0 = train_epoch(
-        model=model,
-        loss_fn=training_setup["loss_fn"],
-        train_loader=train_loader,
-        optimizer=training_setup["optimizer"],
-        lr_scheduler=training_setup["lr_scheduler"],
-        epoch=0,
-        start_epoch=0,
-        valid_loss=0.0,
-        logger=logger,
-        output_args=training_setup["output_args"],
-        device=torch.device("cpu"),
-        ema=training_setup["ema"],
-        max_grad_norm=training_setup["max_grad_norm"],
-    )
-    loss1 = train_epoch(
-        model=model,
-        loss_fn=training_setup["loss_fn"],
-        train_loader=train_loader,
-        optimizer=training_setup["optimizer"],
-        lr_scheduler=training_setup["lr_scheduler"],
-        epoch=1,
-        start_epoch=0,
-        valid_loss=loss0,
-        logger=logger,
-        output_args=training_setup["output_args"],
-        device=torch.device("cpu"),
-        ema=training_setup["ema"],
-        max_grad_norm=training_setup["max_grad_norm"],
-    )
-    # SGD on 8 structures with random init is noisy; assert finiteness.
-    # Strict loss1 < loss0 is unreliable on tiny data.
-    assert math.isfinite(loss0), f"epoch-0 loss is not finite: {loss0}"
-    assert math.isfinite(loss1), f"epoch-1 loss is not finite: {loss1}"
+    def run_epoch(epoch, valid_loss):
+        return train_epoch(
+            model=model,
+            loss_fn=training_setup["loss_fn"],
+            train_loader=train_loader,
+            optimizer=training_setup["optimizer"],
+            lr_scheduler=training_setup["lr_scheduler"],
+            epoch=epoch,
+            start_epoch=0,
+            valid_loss=valid_loss,
+            logger=logger,
+            output_args=training_setup["output_args"],
+            device=torch.device("cpu"),
+            ema=training_setup["ema"],
+            max_grad_norm=training_setup["max_grad_norm"],
+        )
+
+    loss = run_epoch(0, 0.0)
+    loss0 = loss
+    for epoch in range(1, 10):
+        loss = run_epoch(epoch, loss)
+
+    assert loss < loss0
 
 
 @pytest.mark.slow
