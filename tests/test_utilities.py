@@ -54,7 +54,7 @@ def test_compute_average_E0s():
 def test_create_seeds_tags_dict():
     settings_dict = {
         "GENERAL": {"model_choice": "mace", "name_exp": "exp"},
-        "ARCHITECTURE": {"model": "MACE"},
+        "ARCHITECTURE": {"model_choice": "mace"},
         "MISC": {"device": "cpu"},
     }
     settings = ModelSettings(**settings_dict)
