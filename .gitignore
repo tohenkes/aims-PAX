@@ -5,6 +5,7 @@
 *.extxyz
 *.pt
 *.model
+!example/local/so3_zbl_r6_des370K.model
 *.out
 *.db
 *.ipynb
@@ -23,4 +24,5 @@ CLAUDE.md
 docs
 .df_scripts
 .vscode
+.plans
 
