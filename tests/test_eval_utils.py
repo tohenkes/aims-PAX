@@ -43,7 +43,9 @@ def test_maceeval_energy_mae_rmse():
 def test_maceeval_forces_mae():
     metric = MACEEval()
     forces = torch.tensor([[1.0, 0.0, 0.0], [0.0, 1.0, 0.0]])
-    output = torch.tensor([[0.0, 0.0, 0.0], [0.0, 1.0, 0.0]])  # delta in one comp
+    output = torch.tensor(
+        [[0.0, 0.0, 0.0], [0.0, 1.0, 0.0]]
+    )  # delta in one comp
     batch = make_batch(forces=forces)
     metric.update(batch, {"forces": output})
     aux = metric.compute()

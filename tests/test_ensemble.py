@@ -1,6 +1,7 @@
 """
 This module contains tests for the `msonable.Ensemble` module.
 """
+
 import logging
 
 import pytest
@@ -8,14 +9,24 @@ from ase.io import read
 
 from aims_PAX.atomate2.atomic_energies import AtomicEnergies
 from aims_PAX.atomate2.msonable.ensemble import Stage, Ensemble
-from aims_PAX.atomate2.utils import get_model_dependent_inputs, create_restart_point
+from aims_PAX.atomate2.utils import (
+    get_model_dependent_inputs,
+    create_restart_point,
+)
 from aims_PAX.settings import ModelSettings
 from aims_PAX.tools.utilities.input_utils import read_geometry
-from aims_PAX.tools.utilities.utilities import get_seeds, create_seeds_tags_dict, create_keyspec, setup_logger, \
-    save_models
+from aims_PAX.tools.utilities.utilities import (
+    get_seeds,
+    create_seeds_tags_dict,
+    create_keyspec,
+    setup_logger,
+    save_models,
+)
 
 
-@pytest.mark.skip(reason="requires pre-generated IDG dataset files not present in repo")
+@pytest.mark.skip(
+    reason="requires pre-generated IDG dataset files not present in repo"
+)
 def test_ensemble(data_dir, clean_dir, control_periodic, si, project_settings):
     """Test the Ensemble class"""
     setup_logger(
@@ -27,8 +38,10 @@ def test_ensemble(data_dir, clean_dir, control_periodic, si, project_settings):
     model_settings = ModelSettings.from_file(model_settings_file)
     project_settings = project_settings(control_periodic, si, clean_dir)
     # get seeds and related tags
-    ensemble_seeds = get_seeds(model_settings.GENERAL.seed,
-                               project_settings.INITIAL_DATASET_GENERATION.ensemble_size)
+    ensemble_seeds = get_seeds(
+        model_settings.GENERAL.seed,
+        project_settings.INITIAL_DATASET_GENERATION.ensemble_size,
+    )
     assert 102 in ensemble_seeds
     seeds_tags_dict = create_seeds_tags_dict(
         seeds=ensemble_seeds,
@@ -42,8 +55,9 @@ def test_ensemble(data_dir, clean_dir, control_periodic, si, project_settings):
     # a bad idea generally to get model_inputs like this: they should be constructed
     # from training and validation sets. Alhthough we know that the test data is si only
     trajectories = read_geometry(si, log=True)
-    model_inputs = get_model_dependent_inputs(model_settings.GENERAL.model_choice,
-                                              trajectories=trajectories)
+    model_inputs = get_model_dependent_inputs(
+        model_settings.GENERAL.model_choice, trajectories=trajectories
+    )
 
     assert "z_table" in model_inputs
     # get atomic energies -- the last bit
@@ -66,12 +80,26 @@ def test_ensemble(data_dir, clean_dir, control_periodic, si, project_settings):
     train_data_dir = data_dir / "datasets" / "initial" / "training"
     valid_data_dir = data_dir / "datasets" / "initial" / "validation"
     # get ase sets from files (list constructors are used to avoid linter warnings)
-    training_sets = {tag: list(read(train_data_dir / f"initial_train_set_{tag}.xyz",
-                               format="extxyz",
-                               index=":")) for tag in tags}
-    valid_sets = {tag: list(read(valid_data_dir / f"initial_valid_set_{tag}.xyz",
-                               format="extxyz",
-                               index=":")) for tag in tags}
+    training_sets = {
+        tag: list(
+            read(
+                train_data_dir / f"initial_train_set_{tag}.xyz",
+                format="extxyz",
+                index=":",
+            )
+        )
+        for tag in tags
+    }
+    valid_sets = {
+        tag: list(
+            read(
+                valid_data_dir / f"initial_valid_set_{tag}.xyz",
+                format="extxyz",
+                index=":",
+            )
+        )
+        for tag in tags
+    }
     ensemble.update_datasets(training_sets, valid_sets)
     analysis = project_settings.INITIAL_DATASET_GENERATION.analysis
 
@@ -79,8 +107,10 @@ def test_ensemble(data_dir, clean_dir, control_periodic, si, project_settings):
         n_epochs=project_settings.INITIAL_DATASET_GENERATION.intermediate_epochs_idg,
         valid_skip=project_settings.INITIAL_DATASET_GENERATION.valid_skip,
         analysis=analysis,
-        desired_accuracy=(project_settings.INITIAL_DATASET_GENERATION.desired_acc *
-                          project_settings.INITIAL_DATASET_GENERATION.desired_acc_scale_idg)
+        desired_accuracy=(
+            project_settings.INITIAL_DATASET_GENERATION.desired_acc
+            * project_settings.INITIAL_DATASET_GENERATION.desired_acc_scale_idg
+        ),
     )
     ensemble.train(**train_settings)
     if project_settings.MISC.create_restart:
@@ -92,6 +122,5 @@ def test_ensemble(data_dir, clean_dir, control_periodic, si, project_settings):
         model_dir=model_settings.GENERAL.model_dir,
         current_epoch=ensemble.epoch,
         model_settings=model_settings.ARCHITECTURE,
-        model_choice=model_settings.GENERAL.model_choice
+        model_choice=model_settings.GENERAL.model_choice,
     )
-

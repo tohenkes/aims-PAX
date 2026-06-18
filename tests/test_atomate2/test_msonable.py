@@ -19,18 +19,15 @@ def test_msonable_mace(clean_dir, si, data_dir):
 
     def get_data_from_model(model: MACE, s: Atoms):
         """Returns energy and forces calculated from the mace model using ASE"""
-        s.calc =  MACECalculator(
-            models=[model],
-            device="cpu")
+        s.calc = MACECalculator(models=[model], device="cpu")
         # Get energy and forces from the original model
-        return {
-            "energy": s.get_potential_energy(),
-            "forces": s.get_forces()
-        }
+        return {"energy": s.get_potential_energy(), "forces": s.get_forces()}
 
     # Load model
     model_path = data_dir / "models" / "Si.model"
-    original_model = torch.load(model_path, map_location="cpu", weights_only=False)
+    original_model = torch.load(
+        model_path, map_location="cpu", weights_only=False
+    )
     original_model.to("cpu")
 
     # Load structure, then get energy and forces from the original model
@@ -47,5 +44,9 @@ def test_msonable_mace(clean_dir, si, data_dir):
     data_deserialized = get_data_from_model(original_model, atoms)
 
     # Check if energy and forces are the same
-    np.testing.assert_allclose(data_orig["energy"], data_deserialized["energy"], atol=1e-6)
-    np.testing.assert_allclose(data_orig["forces"], data_deserialized["forces"], atol=1e-6)
+    np.testing.assert_allclose(
+        data_orig["energy"], data_deserialized["energy"], atol=1e-6
+    )
+    np.testing.assert_allclose(
+        data_orig["forces"], data_deserialized["forces"], atol=1e-6
+    )

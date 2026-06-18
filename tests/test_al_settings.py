@@ -124,9 +124,7 @@ def test_species_dir_file_raises(tmp_path):
 
 def test_no_stopping_criterion(tmp_path):
     """All stopping criteria at defaults → ValidationError."""
-    with pytest.raises(
-        ValidationError, match="stopping criterion"
-    ):
+    with pytest.raises(ValidationError, match="stopping criterion"):
         ALSettings(
             **make_base(
                 tmp_path,

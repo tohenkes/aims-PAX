@@ -22,7 +22,6 @@ from aims_PAX.cli import al_procedure_only as al_only_mod
 from aims_PAX.cli import create_initial_ds as initial_ds_mod
 from aims_PAX.cli import recalculate_data as recalc_mod
 
-
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
@@ -49,9 +48,7 @@ def _mock_settings(
 
 def _rif_patch(module_path, settings):
     """Patch read_input_files in *module_path* to return the given settings."""
-    stub = MagicMock(
-        return_value=(MagicMock(), settings, "ctrl.in", "geo.in")
-    )
+    stub = MagicMock(return_value=(MagicMock(), settings, "ctrl.in", "geo.in"))
     return patch(f"{module_path}.read_input_files", new=stub)
 
 
@@ -85,9 +82,9 @@ def test_help_exits_zero(main_func, monkeypatch):
 # ---------------------------------------------------------------------------
 
 _IDG_CASES = [
-    ("aimd",         False, False, "InitialDatasetAIMD"),
-    ("foundational", True,  False, "InitialDatasetPARSL"),
-    ("foundational", True,  True,  "InitialDatasetPARSLTeacher"),
+    ("aimd", False, False, "InitialDatasetAIMD"),
+    ("foundational", True, False, "InitialDatasetPARSL"),
+    ("foundational", True, True, "InitialDatasetPARSLTeacher"),
 ]
 
 
@@ -100,7 +97,8 @@ def test_initial_ds_selects_strategy(
     sampling, has_cluster, use_teacher, expected_cls, monkeypatch
 ):
     monkeypatch.setattr(
-        sys, "argv",
+        sys,
+        "argv",
         ["cmd", "--model-settings", "m.yaml", "--aimsPAX-settings", "a.yaml"],
     )
     settings = _mock_settings(
@@ -132,10 +130,13 @@ def test_initial_ds_selects_strategy(
 
 def test_initial_ds_foundational_without_cluster_raises(monkeypatch):
     monkeypatch.setattr(
-        sys, "argv",
+        sys,
+        "argv",
         ["cmd", "--model-settings", "m.yaml", "--aimsPAX-settings", "a.yaml"],
     )
-    settings = _mock_settings(initial_sampling="foundational", has_cluster=False)
+    settings = _mock_settings(
+        initial_sampling="foundational", has_cluster=False
+    )
     MOD = "aims_PAX.cli.create_initial_ds"
     with _rif_patch(MOD, settings):
         with pytest.raises(ValueError, match="CLUSTER"):
@@ -149,7 +150,8 @@ def test_initial_ds_foundational_without_cluster_raises(monkeypatch):
 
 def test_al_only_selects_parsl(monkeypatch):
     monkeypatch.setattr(
-        sys, "argv",
+        sys,
+        "argv",
         ["cmd", "--model-settings", "m.yaml", "--aimsPAX-settings", "a.yaml"],
     )
     settings = _mock_settings(has_cluster=True)
@@ -165,7 +167,8 @@ def test_al_only_selects_parsl(monkeypatch):
 
 def test_al_only_without_cluster_raises(monkeypatch):
     monkeypatch.setattr(
-        sys, "argv",
+        sys,
+        "argv",
         ["cmd", "--model-settings", "m.yaml", "--aimsPAX-settings", "a.yaml"],
     )
     settings = _mock_settings(has_cluster=False)
@@ -180,8 +183,8 @@ def test_al_only_without_cluster_raises(monkeypatch):
 # ---------------------------------------------------------------------------
 
 _FULL_WF_CASES = [
-    ("aimd",         True, "InitialDatasetAIMD",  "ALProcedurePARSL"),
-    ("foundational", True, "InitialDatasetPARSL",  "ALProcedurePARSL"),
+    ("aimd", True, "InitialDatasetAIMD", "ALProcedurePARSL"),
+    ("foundational", True, "InitialDatasetPARSL", "ALProcedurePARSL"),
 ]
 
 
@@ -194,7 +197,8 @@ def test_full_workflow_dispatches_idg_and_al(
     sampling, has_cluster, expected_idg, expected_al, monkeypatch
 ):
     monkeypatch.setattr(
-        sys, "argv",
+        sys,
+        "argv",
         ["cmd", "--model-settings", "m.yaml", "--aimsPAX-settings", "a.yaml"],
     )
     settings = _mock_settings(
@@ -224,7 +228,8 @@ def test_full_workflow_dispatches_idg_and_al(
 
 def test_full_workflow_without_cluster_raises(monkeypatch):
     monkeypatch.setattr(
-        sys, "argv",
+        sys,
+        "argv",
         ["cmd", "--model-settings", "m.yaml", "--aimsPAX-settings", "a.yaml"],
     )
     settings = _mock_settings(has_cluster=False)
@@ -241,13 +246,18 @@ def test_full_workflow_without_cluster_raises(monkeypatch):
 
 def test_recalc_constructs_calculator_with_correct_kwargs(monkeypatch):
     monkeypatch.setattr(
-        sys, "argv",
+        sys,
+        "argv",
         [
             "cmd",
-            "--data", "dataset.xyz",
-            "--control", "ctrl.in",
-            "--start_idx", "5",
-            "--end_idx", "20",
+            "--data",
+            "dataset.xyz",
+            "--control",
+            "ctrl.in",
+            "--start_idx",
+            "5",
+            "--end_idx",
+            "20",
         ],
     )
     with patch("aims_PAX.cli.recalculate_data.ReCalculatorPARSL") as MockCalc:

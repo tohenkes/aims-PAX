@@ -11,26 +11,24 @@ from tests.helpers import MD_CASES, NVT_LANGEVIN, NPT_BERENDSEN, NPT_MTK
 
 
 def call_setup_md(atoms, md_settings, *, restart=False):
-    stub = SimpleNamespace(
-        config=SimpleNamespace(restart=restart)
-    )
-    stub._initialize_velocities = (
-        lambda a, s: ALMD._initialize_velocities(stub, a, s)
+    stub = SimpleNamespace(config=SimpleNamespace(restart=restart))
+    stub._initialize_velocities = lambda a, s: ALMD._initialize_velocities(
+        stub, a, s
     )
     stub._create_dynamics_engine = (
         lambda a, s, e, i: ALMD._create_dynamics_engine(stub, a, s, e, i)
     )
-    stub._create_nvt_dynamics = (
-        lambda a, s, i: ALMD._create_nvt_dynamics(stub, a, s, i)
+    stub._create_nvt_dynamics = lambda a, s, i: ALMD._create_nvt_dynamics(
+        stub, a, s, i
     )
-    stub._create_npt_dynamics = (
-        lambda a, s, i: ALMD._create_npt_dynamics(stub, a, s, i)
+    stub._create_npt_dynamics = lambda a, s, i: ALMD._create_npt_dynamics(
+        stub, a, s, i
     )
-    stub._create_berendsen_npt = (
-        lambda a, s, i: ALMD._create_berendsen_npt(stub, a, s, i)
+    stub._create_berendsen_npt = lambda a, s, i: ALMD._create_berendsen_npt(
+        stub, a, s, i
     )
-    stub._create_mkt_npt = (
-        lambda a, s, i, iso=False: ALMD._create_mkt_npt(stub, a, s, i, iso)
+    stub._create_mkt_npt = lambda a, s, i, iso=False: ALMD._create_mkt_npt(
+        stub, a, s, i, iso
     )
     return ALMD._setup_md_dynamics(stub, atoms, md_settings, idx=0)
 

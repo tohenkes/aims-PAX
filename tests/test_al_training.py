@@ -190,7 +190,9 @@ def test_check_batch_size_falls_back_to_one():
 
 @pytest.mark.parametrize("epochs,members,expected", [(3, 1, 3), (2, 2, 4)])
 def test_perform_training_train_count(epochs, members, expected):
-    mgr = make_training_manager(intermediate_epochs=epochs, ensemble_size=members)
+    mgr = make_training_manager(
+        intermediate_epochs=epochs, ensemble_size=members
+    )
     mgr._finalize_training = lambda idx: None
     mgr.perform_training(idx=0)
     assert mgr.orchestrator.train_single_epoch.call_count == expected

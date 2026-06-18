@@ -15,7 +15,6 @@ from aims_PAX.procedures.al_managers import (
     TrainingOrchestrator,
 )
 
-
 # ---------------------------------------------------------------------------
 # Stub helpers
 # ---------------------------------------------------------------------------
@@ -70,9 +69,7 @@ def make_data_manager(train_contents=None, max_size=10):
         z_table=None,
         train_dataset_len=len(train),
         ensemble_ase_sets={"m0": {"train": train, "valid": []}},
-        ensemble_model_sets={
-            "m0": {"train": [], "valid": {"Default": []}}
-        },
+        ensemble_model_sets={"m0": {"train": [], "valid": {"Default": []}}},
     )
     mgr.state_manager = SimpleNamespace(
         trajectory_status={0: "running"},

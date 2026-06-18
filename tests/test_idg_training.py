@@ -207,7 +207,10 @@ def test_train_calls_train_epoch_count(
     stub.valid_skip = 1000
     tags = [f"m{i}" for i in range(members)]
     mock_validate_epoch.return_value = (
-        {t: 0.5 for t in tags}, 0.5, {"mae_f": 0.5}, None
+        {t: 0.5 for t in tags},
+        0.5,
+        {"mae_f": 0.5},
+        None,
     )
     InitialDatasetProcedure._train(stub)
     assert mock_train_epoch.call_count == expected

@@ -11,7 +11,9 @@ from aims_PAX.settings import AimsPAXSettings, ModelSettings
 
 def test_settings(data_dir, monkeypatch):
     """Tests loading and validating settings file"""
-    monkeypatch.chdir(data_dir.parent.parent)  # project root, so relative species_dir resolves
+    monkeypatch.chdir(
+        data_dir.parent.parent
+    )  # project root, so relative species_dir resolves
     settings_file = data_dir / "project_settings" / "aimsPAX.yaml"
     settings = AimsPAXSettings.from_file(settings_file)
     assert settings.ACTIVE_LEARNING.desired_acc == 0.1
@@ -77,9 +79,7 @@ CLUSTER:
   type: local
   max_workers: 1
 """)
-    with pytest.raises(
-        ValidationError, match="foundational"
-    ):
+    with pytest.raises(ValidationError, match="foundational"):
         AimsPAXSettings.model_validate(data)
 
 

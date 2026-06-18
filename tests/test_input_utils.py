@@ -18,7 +18,6 @@ from aims_PAX.tools.utilities.input_utils import (
     read_input_files,
 )
 
-
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
@@ -39,9 +38,10 @@ def _patched_aimspax_yaml(
         data = yaml.safe_load(f)
 
     species_dir = str(data_dir / "species_defaults" / "light")
-    if "INITIAL_DATASET_GENERATION" in data and data[
-        "INITIAL_DATASET_GENERATION"
-    ] is not None:
+    if (
+        "INITIAL_DATASET_GENERATION" in data
+        and data["INITIAL_DATASET_GENERATION"] is not None
+    ):
         data["INITIAL_DATASET_GENERATION"]["species_dir"] = species_dir
     if "ACTIVE_LEARNING" in data and data["ACTIVE_LEARNING"] is not None:
         data["ACTIVE_LEARNING"]["species_dir"] = species_dir
@@ -51,9 +51,7 @@ def _patched_aimspax_yaml(
     data["MISC"]["path_to_control"] = str(
         data_dir / "control_files" / "periodic.in"
     )
-    data["MISC"]["path_to_geometry"] = str(
-        data_dir / "structures" / "Si.in"
-    )
+    data["MISC"]["path_to_geometry"] = str(data_dir / "structures" / "Si.in")
     data["MISC"]["output_dir"] = str(tmp_path)
 
     patched = tmp_path / "aimsPAX_patched.yaml"
@@ -70,16 +68,12 @@ def _patched_aimspax_yaml(
 class TestReadInputFiles:
     """Tests for read_input_files()."""
 
-    def test_read_input_files_returns_4_tuple(
-        self, tmp_path, data_dir
-    ):
+    def test_read_input_files_returns_4_tuple(self, tmp_path, data_dir):
         """
         read_input_files returns a 4-tuple:
         (ModelSettings, AimsPAXSettings, path_to_control, path_to_geometry)
         """
-        source_yaml = (
-            data_dir / "project_settings" / "aimsPAX.yaml"
-        )
+        source_yaml = data_dir / "project_settings" / "aimsPAX.yaml"
         model_yaml = data_dir / "project_settings" / "model.yaml"
         patched = _patched_aimspax_yaml(tmp_path, data_dir, source_yaml)
 
@@ -99,18 +93,14 @@ class TestReadInputFiles:
         assert path_to_control is not None
         assert path_to_geometry is not None
 
-    @pytest.mark.parametrize(
-        "procedure", ["full", "al", "initial-ds"]
-    )
+    @pytest.mark.parametrize("procedure", ["full", "al", "initial-ds"])
     def test_read_input_files_procedure_variants(
         self, tmp_path, data_dir, procedure
     ):
         """
         read_input_files runs without error for all supported procedure values.
         """
-        source_yaml = (
-            data_dir / "project_settings" / "aimsPAX.yaml"
-        )
+        source_yaml = data_dir / "project_settings" / "aimsPAX.yaml"
         model_yaml = data_dir / "project_settings" / "model.yaml"
         # Each parametrize invocation gets its own sub-directory to avoid
         # directory creation conflicts across parallel test runs.

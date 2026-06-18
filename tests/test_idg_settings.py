@@ -151,9 +151,7 @@ def test_species_dir_file_raises(tmp_path):
 
 def test_no_stopping_criterion(tmp_path):
     """All stopping criteria at defaults → ValidationError."""
-    with pytest.raises(
-        ValidationError, match="stopping criterion"
-    ):
+    with pytest.raises(ValidationError, match="stopping criterion"):
         IDGSettings(
             **make_base(
                 tmp_path,
@@ -228,9 +226,7 @@ def test_all_three_satisfy(tmp_path):
 def test_teacher_requires_foundational_sampling():
     """use_teacher_reference=True with initial_sampling='aimd' raises
     ValidationError."""
-    with pytest.raises(
-        ValidationError, match="foundational"
-    ):
+    with pytest.raises(ValidationError, match="foundational"):
         IDGSettings(
             n_points_per_sampling_step_idg=10,
             max_initial_epochs=50,

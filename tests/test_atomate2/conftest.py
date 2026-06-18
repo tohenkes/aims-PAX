@@ -1,6 +1,7 @@
 """
 Fixtures specific to Atomate2 workflows
 """
+
 import pytest
 
 from atomate2.aims.jobs.core import StaticMaker as AimsStaticMaker
