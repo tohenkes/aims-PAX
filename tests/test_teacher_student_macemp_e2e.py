@@ -23,7 +23,7 @@ _AIMSPAX_TEMPLATE_MACEMP = """\
 INITIAL_DATASET_GENERATION:
   desired_acc: 0.0
   desired_acc_scale_idg: 1.0
-  valid_ratio: 0.1
+  valid_ratio: 0.5
   n_points_per_sampling_step_idg: 2
   valid_skip: 1
   intermediate_epochs_idg: 1
@@ -44,7 +44,7 @@ INITIAL_DATASET_GENERATION:
 
 ACTIVE_LEARNING:
   desired_acc: 0.0
-  valid_ratio: 0.1
+  valid_ratio: 0.5
   epochs_per_worker: 1
   intermediate_epochs_al: 1
   valid_skip: 1
@@ -53,7 +53,8 @@ ACTIVE_LEARNING:
   skip_step_mlff: 2
   num_trajectories: 1
   max_train_set_size: 4
-  max_MD_steps: 6
+  max_MD_steps: 20
+  uncert_not_crossed_limit: 1
   converge_al: false
   use_teacher_reference: true
   teacher_reference_settings:
