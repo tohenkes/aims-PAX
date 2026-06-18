@@ -123,6 +123,7 @@ def pipeline_ws_macemp(tmp_path_factory):
 @pytest.mark.slow
 @pytest.mark.network
 def test_idg_teacher_student_macemp(pipeline_ws_macemp):
+    """IDG run: teacher-labeled XYZ files and model checkpoint written."""
     ds = pipeline_ws_macemp.initial_ds
 
     train_dir = Path(ds.dataset_dir) / "initial" / "training"

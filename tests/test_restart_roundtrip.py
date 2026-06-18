@@ -13,6 +13,7 @@ from types import SimpleNamespace
 
 from aims_PAX.procedures.preparation import ALRestart
 from aims_PAX.tools.utilities.utilities import ensemble_from_folder
+from tests.helpers import build_si_model
 
 # ---------------------------------------------------------------------------
 # Stub helpers
@@ -190,6 +191,8 @@ def test_al_state_roundtrip_analysis_fields(tmp_path):
 
     assert loader.state_manager.collect_losses == [0.1, 0.08, 0.06]
     assert loader.state_manager.collect_thresholds == [0.15, 0.13, 0.12]
+    assert loader.state_manager.t_intervals == [0, 10, 20]
+    assert loader.state_manager.analysis_checks == [True, False]
 
 
 # ---------------------------------------------------------------------------
@@ -200,8 +203,6 @@ def test_al_state_roundtrip_analysis_fields(tmp_path):
 @pytest.mark.slow
 def test_model_roundtrip(tmp_path):
     """MACE model parameters and atomic energies survive torch.save/load."""
-    from tests.helpers import build_si_model
-
     model_dir = tmp_path / "models"
     model_dir.mkdir()
     model = build_si_model()

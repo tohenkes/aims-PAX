@@ -104,7 +104,9 @@ def test_random_subset_sizes():
     assert train_loader is not None, "train_subset[0] must be set"
     assert "Default" in valid_loaders, "valid_subset[0] must have 'Default'"
 
-    train_ds_len = len(train_loader.dataset)
+    train_ds_len = len(
+        train_loader.dataset
+    )  # .dataset gives full size before drop_last
     valid_ds_len = len(valid_loaders["Default"].dataset)
 
     # Subset sizes should be clamped: min(requested, full_size)
@@ -154,7 +156,7 @@ def test_random_subset_deterministic():
     assert valid_a == valid_b, "valid subset must be deterministic"
 
 
-def test_full_dataset_returns_whole_set():
+def test_subset_size_clamped_to_full_set():
     """When train_subset_size >= full train length the DataLoader dataset
     has the same length as the full training set.
 
