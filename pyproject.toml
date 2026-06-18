@@ -45,6 +45,7 @@ testpaths = ["tests"]
 addopts = "-ra"
 markers = [
     "slow: long-running or integration tests (deselect with -m 'not slow')",
+    "network: tests that require internet access for model downloads",
 ]
 
 [project.urls]
