@@ -39,11 +39,14 @@ INITIAL_DATASET_GENERATION:
   initial_sampling: foundational
   foundational_model: so3lr
   foundational_model_settings:
-    r_max_lr: null
+    r_max_lr: 12.0
+    dispersion_lr_damping: 2.0
   use_teacher_reference: true
   teacher_reference_settings:
     model_type: so3lr
     model_path: {model_path}
+    r_max_lr: 12.0
+    dispersion_lr_damping: 2.0
   max_initial_epochs: 2
   max_initial_set_size: 8
   converge_initial: false
@@ -66,6 +69,8 @@ ACTIVE_LEARNING:
   teacher_reference_settings:
     model_type: so3lr
     model_path: {model_path}
+    r_max_lr: 12.0
+    dispersion_lr_damping: 2.0
   save_trajectories: false
 
 MD:
