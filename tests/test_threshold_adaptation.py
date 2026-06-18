@@ -10,7 +10,6 @@ Targets:
 
 from types import SimpleNamespace
 
-import numpy as np
 import pytest
 
 from aims_PAX.procedures.al_managers import ALRunningManager
