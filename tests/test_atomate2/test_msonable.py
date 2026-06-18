@@ -3,6 +3,9 @@ This module contains tests for the `msonable` module.
 """
 
 import pytest
+
+pytest.importorskip("atomate2")
+
 import torch
 import numpy as np
 from ase import Atoms

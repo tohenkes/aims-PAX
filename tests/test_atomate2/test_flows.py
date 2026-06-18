@@ -2,6 +2,11 @@
 Tests for atomate2 part of aims-PAX.
 """
 
+import pytest
+
+pytest.importorskip("jobflow")
+pytest.importorskip("atomate2")
+
 from jobflow import run_locally
 
 from aims_PAX.settings import ModelSettings

@@ -5,6 +5,9 @@ This module contains tests for the `msonable.Ensemble` module.
 import logging
 
 import pytest
+
+pytest.importorskip("atomate2")
+
 from ase.io import read
 
 from aims_PAX.atomate2.atomic_energies import AtomicEnergies

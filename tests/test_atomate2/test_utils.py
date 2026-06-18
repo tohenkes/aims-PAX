@@ -2,6 +2,11 @@
 The module tests utils from an atomate2 subsystem of aims-PAX.
 """
 
+import pytest
+
+pytest.importorskip("jobflow")
+pytest.importorskip("atomate2")
+
 from jobflow import job, run_locally
 import numpy as np
 from aims_PAX.atomate2.random import RandomState
