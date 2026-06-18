@@ -109,8 +109,8 @@ There is a `pytest` suite under `tests/` (run in the conda/mamba env
 `aimspax_test`):
 
 ```bash
-mamba run -n aimspax_test python -m pytest -q                    # full suite
-mamba run -n aimspax_test python -m pytest -m "not slow" -q      # fast subset (skips integration)
+mamba run -n aimspax_test python -m pytest -q                           # full suite
+mamba run -n aimspax_test python -m pytest -m "not slow and not network" -q  # fast subset (skips integration)
 mamba run -n aimspax_test python -m pytest --cov=aims_PAX --cov-report=term-missing
 ```
 
