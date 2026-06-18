@@ -22,14 +22,6 @@ jobs:
           activate-environment: aimspax_test
           auto-activate-base: false
 
-      - name: Cache conda packages
-        uses: actions/cache@v4
-        with:
-          path: ~/conda_pkgs_dir
-          key: conda-${{ runner.os }}-py310-${{ hashFiles('requirements.txt', 'pyproject.toml') }}
-          restore-keys: |
-            conda-${{ runner.os }}-py310-
-
       - name: Install ndcctools (conda-forge)
         shell: bash -el {0}
         run: mamba install -y -c conda-forge ndcctools
@@ -50,7 +42,7 @@ jobs:
 
       - name: Run fast test suite
         shell: bash -el {0}
-        run: pytest -m "not slow" -q
+        run: pytest -m "not slow and not network" -q
 
   pipeline-gate:
     name: Pipeline gate (hermetic SO3LR e2e)
@@ -67,14 +59,6 @@ jobs:
           use-mamba: true
           activate-environment: aimspax_test
           auto-activate-base: false
-
-      - name: Cache conda packages
-        uses: actions/cache@v4
-        with:
-          path: ~/conda_pkgs_dir
-          key: conda-${{ runner.os }}-py310-${{ hashFiles('requirements.txt', 'pyproject.toml') }}
-          restore-keys: |
-            conda-${{ runner.os }}-py310-
 
       - name: Install ndcctools (conda-forge)
         shell: bash -el {0}
