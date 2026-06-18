@@ -4,6 +4,8 @@ Fixtures specific to Atomate2 workflows
 
 import pytest
 
+atomate2 = pytest.importorskip("atomate2")
+
 from atomate2.aims.jobs.core import StaticMaker as AimsStaticMaker
 from atomate2.forcefields.md import ForceFieldMDMaker
 
