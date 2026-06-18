@@ -142,11 +142,11 @@ def pipeline_ws(tmp_path_factory):
 @pytest.mark.slow
 def test_idg_teacher_student(pipeline_ws):
     ws = pipeline_ws
-    cfg = ws.initial_ds.config
+    ds = ws.initial_ds
 
     # --- training/validation XYZ files written ---
-    train_dir = Path(cfg.dataset_dir) / "initial" / "training"
-    valid_dir = Path(cfg.dataset_dir) / "initial" / "validation"
+    train_dir = Path(ds.dataset_dir) / "initial" / "training"
+    valid_dir = Path(ds.dataset_dir) / "initial" / "validation"
     train_files = list(train_dir.glob("initial_train_set_*.xyz"))
     valid_files = list(valid_dir.glob("initial_valid_set_*.xyz"))
     assert len(train_files) >= 1, "No training XYZ files written"
@@ -165,7 +165,7 @@ def test_idg_teacher_student(pipeline_ws):
 
     # --- at least one ensemble model file saved ---
     model_files = list(
-        Path(cfg.model_settings.GENERAL.model_dir).glob("*.model")
+        Path(ds.model_settings.GENERAL.model_dir).glob("*.model")
     )
     assert len(model_files) >= 1, "No model checkpoint files written"
 
