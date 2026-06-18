@@ -1,0 +1,99 @@
+name: CI
+
+on:
+  push:
+    branches: ["**"]
+  pull_request:
+
+jobs:
+  fast-gate:
+    name: Fast gate (unit + integration, not slow)
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Miniconda
+        uses: conda-incubator/setup-miniconda@v3
+        with:
+          python-version: "3.10"
+          miniforge-variant: Mambaforge
+          use-mamba: true
+          activate-environment: aimspax_test
+          auto-activate-base: false
+
+      - name: Cache conda packages
+        uses: actions/cache@v4
+        with:
+          path: ~/conda_pkgs_dir
+          key: conda-${{ runner.os }}-py310-${{ hashFiles('requirements.txt', 'pyproject.toml') }}
+          restore-keys: |
+            conda-${{ runner.os }}-py310-
+
+      - name: Install ndcctools (conda-forge)
+        shell: bash -el {0}
+        run: mamba install -y -c conda-forge ndcctools
+
+      - name: Cache pip packages
+        uses: actions/cache@v4
+        with:
+          path: ~/.cache/pip
+          key: pip-${{ runner.os }}-py310-${{ hashFiles('requirements.txt', 'pyproject.toml') }}
+          restore-keys: |
+            pip-${{ runner.os }}-py310-
+
+      - name: Install Python dependencies
+        shell: bash -el {0}
+        run: |
+          pip install -r requirements.txt
+          pip install -e ".[tests]"
+
+      - name: Run fast test suite
+        shell: bash -el {0}
+        run: pytest -m "not slow" -q
+
+  pipeline-gate:
+    name: Pipeline gate (hermetic SO3LR e2e)
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Miniconda
+        uses: conda-incubator/setup-miniconda@v3
+        with:
+          python-version: "3.10"
+          miniforge-variant: Mambaforge
+          use-mamba: true
+          activate-environment: aimspax_test
+          auto-activate-base: false
+
+      - name: Cache conda packages
+        uses: actions/cache@v4
+        with:
+          path: ~/conda_pkgs_dir
+          key: conda-${{ runner.os }}-py310-${{ hashFiles('requirements.txt', 'pyproject.toml') }}
+          restore-keys: |
+            conda-${{ runner.os }}-py310-
+
+      - name: Install ndcctools (conda-forge)
+        shell: bash -el {0}
+        run: mamba install -y -c conda-forge ndcctools
+
+      - name: Cache pip packages
+        uses: actions/cache@v4
+        with:
+          path: ~/.cache/pip
+          key: pip-${{ runner.os }}-py310-${{ hashFiles('requirements.txt', 'pyproject.toml') }}
+          restore-keys: |
+            pip-${{ runner.os }}-py310-
+
+      - name: Install Python dependencies
+        shell: bash -el {0}
+        run: |
+          pip install -r requirements.txt
+          pip install -e ".[tests]"
+
+      - name: Run hermetic SO3LR e2e tests
+        shell: bash -el {0}
+        run: pytest tests/test_teacher_student_e2e.py -m "slow and not network" -q
