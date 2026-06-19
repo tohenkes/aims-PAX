@@ -15,9 +15,10 @@ INITIAL_DATASET_GENERATION:
   teacher_reference_settings:
     model_type: mace-mp
     mace_model: small
+  save_trajectories: true
 
 ACTIVE_LEARNING:
-  desired_acc: 0.1
+  desired_acc: 0.125
   valid_ratio: 0.1
   epochs_per_worker: 2
   intermediate_epochs_al: 1
@@ -34,6 +35,7 @@ ACTIVE_LEARNING:
   teacher_reference_settings:
     model_type: mace-mp
     mace_model: small
+  save_trajectories: true
 
 MD:
   stat_ensemble: NVT

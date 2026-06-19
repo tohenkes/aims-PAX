@@ -1,13 +1,9 @@
 from aims_PAX.procedures.initial_dataset import (
     InitialDatasetAIMD,
-    InitialDatasetFoundational,
     InitialDatasetPARSL,
     InitialDatasetPARSLTeacher,
 )
-from aims_PAX.procedures.active_learning import (
-    ALProcedureSerial,
-    ALProcedurePARSL,
-)
+from aims_PAX.procedures.active_learning import ALProcedurePARSL
 from aims_PAX.tools.utilities.input_utils import read_input_files
 import argparse
 
@@ -39,38 +35,42 @@ def main():
         )
     )
 
-    if aimsPAX_settings.INITIAL_DATASET_GENERATION.initial_sampling == "aimd":
+    if "CLUSTER" not in aimsPAX_settings.model_fields_set:
+        raise ValueError(
+            "aims-PAX requires CLUSTER settings. "
+            "Please add a CLUSTER section to aimsPAX.yaml."
+        )
+
+    idg = aimsPAX_settings.INITIAL_DATASET_GENERATION
+    if idg.initial_sampling == "aimd":
         initial_ds = InitialDatasetAIMD(
             model_settings=model_settings,
             aimsPAX_settings=aimsPAX_settings,
             path_to_control=path_to_control,
             path_to_geometry=path_to_geometry,
         )
-    elif aimsPAX_settings.INITIAL_DATASET_GENERATION.initial_sampling == "foundational":
-        if "CLUSTER" in aimsPAX_settings.model_fields_set:
-            if aimsPAX_settings.INITIAL_DATASET_GENERATION.use_teacher_reference:
-                initial_ds = InitialDatasetPARSLTeacher(
-                    model_settings=model_settings,
-                    aimsPAX_settings=aimsPAX_settings,
-                    path_to_control=path_to_control,
-                    path_to_geometry=path_to_geometry,
-                    close_parsl=False,
-                )
-            else:
-                initial_ds = InitialDatasetPARSL(
-                    model_settings=model_settings,
-                    aimsPAX_settings=aimsPAX_settings,
-                    path_to_control=path_to_control,
-                    path_to_geometry=path_to_geometry,
-                    close_parsl=False,
-                )
-        else:
-            initial_ds = InitialDatasetFoundational(
+    elif idg.initial_sampling == "foundational":
+        if idg.use_teacher_reference:
+            initial_ds = InitialDatasetPARSLTeacher(
                 model_settings=model_settings,
                 aimsPAX_settings=aimsPAX_settings,
                 path_to_control=path_to_control,
                 path_to_geometry=path_to_geometry,
+                close_parsl=False,
             )
+        else:
+            initial_ds = InitialDatasetPARSL(
+                model_settings=model_settings,
+                aimsPAX_settings=aimsPAX_settings,
+                path_to_control=path_to_control,
+                path_to_geometry=path_to_geometry,
+                close_parsl=False,
+            )
+    else:
+        raise ValueError(
+            f"Unknown initial_sampling: {idg.initial_sampling!r}. "
+            "Expected 'aimd' or 'foundational'."
+        )
 
     if not initial_ds.check_initial_ds_done():
         initial_ds.run()
@@ -78,20 +78,12 @@ def main():
     if aimsPAX_settings.INITIAL_DATASET_GENERATION.converge_initial:
         initial_ds.converge()
 
-    if "CLUSTER" in aimsPAX_settings.model_fields_set:
-        al = ALProcedurePARSL(
-            model_settings=model_settings,
-            aimsPAX_settings=aimsPAX_settings,
-            path_to_control=path_to_control,
-            path_to_geometry=path_to_geometry,
-        )
-    else:
-        al = ALProcedureSerial(
-            model_settings=model_settings,
-            aimsPAX_settings=aimsPAX_settings,
-            path_to_control=path_to_control,
-            path_to_geometry=path_to_geometry,
-        )
+    al = ALProcedurePARSL(
+        model_settings=model_settings,
+        aimsPAX_settings=aimsPAX_settings,
+        path_to_control=path_to_control,
+        path_to_geometry=path_to_geometry,
+    )
 
     if not al.check_al_done():
         al.run()

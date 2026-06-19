@@ -62,12 +62,6 @@ try:
     import parsl
 except ImportError:
     parsl = None
-try:
-    import asi4py
-except Exception as e:
-    asi4py = None
-
-
 class ALDataManager:
     """
     Tasked with handling all data relevant tasks i.e.
@@ -1552,9 +1546,6 @@ class ALTeacherModelManagerPARSL(ALReferenceManagerPARSL):
 
 
 # Backward-compatible alias
-ALDFTManagerPARSL = ALDFTReferenceManagerPARSL
-
-
 class ALRunningManager:
     """
     Manages the "running" state of the active learning
@@ -1567,7 +1558,7 @@ class ALRunningManager:
         state_manager: ALStateManager,
         ensemble_manager: ALEnsemble,
         mlff_manager: ALCalculatorMLFF,
-        dft_manager: ALDFTManager,
+        dft_manager: ALReferenceManagerPARSL,
     ):
         self.config = config
         self.state_manager = state_manager
@@ -1891,7 +1882,7 @@ class ALAnalysisManager:
         self,
         config: ALConfiguration,
         ensemble_manager: ALEnsemble,
-        dft_manager: ALDFTManager,
+        dft_manager: ALReferenceManagerPARSL,
         state_manager: ALStateManager,
         md_manager: ALMD,
     ):
@@ -1901,23 +1892,8 @@ class ALAnalysisManager:
         self.state_manager = state_manager
         self.md_manager = md_manager
 
-        self.aims_calculator = self.dft_manager.aims_calculator
-
     def _analysis_dft_call(self, point: ase.Atoms, idx: int = None) -> bool:
-        """
-        Base DFT call for analysis.
-
-        Args:
-            point (ase.Atoms): Geometry to be analyzed
-            idx (int, optional): Index of the trajectory. Defaults to None.
-
-        Returns:
-            bool: True if the SCF cycle converged, False otherwise.
-        """
-        self.aims_calculator.calculate(
-            point, properties=self.config.properties
-        )
-        return self.aims_calculator.asi.is_scf_converged
+        raise NotImplementedError
 
     def save_analysis(self):
         """
@@ -1947,43 +1923,7 @@ class ALAnalysisManager:
     def _process_analysis(
         self, idx: int, converged: bool, analysis_prediction: np.ndarray
     ):
-        """
-        Processes the results of the analysis after DFT calculation.
-        Collects the uncertainty threshold. Discards point if
-        SCF not converged.
-
-        Args:
-            idx (int): Index of trajectory.
-            converged (bool): Whether the SCF cycles converged.
-            analysis_prediction (np.ndarray): MLFF prediction.
-        """
-        if converged:
-            check_results = self.analysis_check(
-                current_md_step=self.state_manager.trajectory_MD_steps[idx],
-                analysis_prediction=analysis_prediction,
-                true_forces=self.aims_calculator.results["forces"],
-            )
-            for key in check_results.keys():
-                self.state_manager.analysis_checks[idx][key].append(
-                    check_results[key]
-                )
-            self.state_manager.analysis_checks[idx]["threshold"].append(
-                self.state_manager.threshold
-            )
-
-            self.state_manager.collect_thresholds[idx].append(
-                self.state_manager.threshold
-            )
-
-            self.state_manager.check += 1
-
-            self.save_analysis()
-            logging.info(f"SCF converged at worker {idx} for analysis.")
-        else:
-            logging.info(
-                f"SCF not converged at worker {idx} for analysis. "
-                "Discarding point."
-            )
+        raise NotImplementedError
 
     def perform_analysis(
         self,

@@ -145,7 +145,7 @@ Description of all settings and their default values for FHI aims, *aims-PAX*, a
 The settings here are the same as for usual FHI aims calculations (see the official FHI aims [manual](https://fhi-aims.org/uploads/documents/FHI-aims.250320_1.pdf)) and are 
 parsed internally in *aims-PAX*. MD settings are not specified here.
 
-As we are using ASE/ASI for running FHI aims, it is not needed to add the basis set information at the ned of the ```control.in``` file. That information is taken straight from the indicated species directory (see ```species_dir``` in the settings).
+As we are using ASE for running FHI-aims, it is not needed to add the basis set information at the end of the ```control.in``` file. That information is taken straight from the indicated species directory (see ```species_dir``` in the settings).
 
 ### *aims-PAX* (aimsPAX.yaml)
 
@@ -199,9 +199,6 @@ After the initial dataset generation is finished *aims PAX* does not converge th
 | margin                 | `float`         | `0.002` | Margin to decide if a model has improved over the previous training epoch.                       |
 | max_convergence_epochs | `int`           | `500`   | Maximum total epochs allowed before halting convergence                                          |
 
-<!--
-| aims_lib_path          | `str` or `None` | `None`  | Path to the compiled FHI-aims library for direct force and energy evaluation.                    |
--->
 
 #### ACTIVE_LEARNING:
 

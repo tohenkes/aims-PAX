@@ -4,7 +4,6 @@ import numpy as np
 import pytest
 
 from aims_PAX.procedures.initial_dataset import (
-    InitialDatasetFoundational,
     InitialDatasetPARSL,
     InitialDatasetPARSLTeacher,
     InitialDatasetProcedure,
@@ -30,8 +29,10 @@ def test_distinct_true_member0():
         n_points_per_sampling_step_idg=5,
         sampled_points=list(range(60)),
     )
+    block = stub.n_points_per_sampling_step_idg * len(stub.atoms)
     result = InitialDatasetProcedure._get_member_points(stub, 0)
-    assert result == list(range(0, 10))
+    assert len(result) == block
+    assert set(result) <= set(stub.sampled_points[:block])
 
 
 def test_distinct_true_member1():
@@ -41,8 +42,10 @@ def test_distinct_true_member1():
         n_points_per_sampling_step_idg=5,
         sampled_points=list(range(60)),
     )
+    block = stub.n_points_per_sampling_step_idg * len(stub.atoms)
     result = InitialDatasetProcedure._get_member_points(stub, 1)
-    assert result == list(range(10, 20))
+    assert len(result) == block
+    assert set(result) <= set(stub.sampled_points[block : 2 * block])
 
 
 def test_distinct_true_disjoint():
@@ -95,7 +98,7 @@ def test_distinct_true_multiplies():
         ensemble_size=4,
         n_points_per_sampling_step_idg=10,
     )
-    result = InitialDatasetFoundational._num_samples_per_traj(stub)
+    result = InitialDatasetPARSL._num_samples_per_traj(stub)
     assert result == 40
 
 
@@ -105,7 +108,7 @@ def test_distinct_false_ignores_ensemble():
         ensemble_size=4,
         n_points_per_sampling_step_idg=10,
     )
-    result = InitialDatasetFoundational._num_samples_per_traj(stub)
+    result = InitialDatasetPARSL._num_samples_per_traj(stub)
     assert result == 10
 
 

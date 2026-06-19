@@ -7,6 +7,7 @@
 *.extxyz
 *.pt
 *.model
+!example/local/so3_zbl_r6_des370K.model
 !tests/test_data/models/Si.model
 *.out
 *.db
@@ -18,6 +19,7 @@
 #*.in
 #*.yaml
 #*.sh
+.coverage
 src/aims_PAX.egg-info
 /build
 /dev_examples
@@ -26,4 +28,5 @@ CLAUDE.md
 docs
 .df_scripts
 .vscode
+.plans
 

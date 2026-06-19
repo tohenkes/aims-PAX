@@ -174,7 +174,8 @@ class IDGSettings(ProjectBaseModel):
         description="Maximum total epochs allowed before halting convergence.",
     )
     initial_sampling: Literal["aimd", "foundational"] = Field(default="foundational")
-    aims_lib_path: str | None = Field(default=None, description="Path to the compiled FHI-aims library for direct force and energy evaluation.")
+    save_trajectories: bool = Field(default=False)
+    save_trajectories_interval: int = Field(default=5)
     use_teacher_reference: bool = False
     teacher_reference_settings: Union[Dict[str, Any], FMSettings] = Field(
         default_factory=dict,
@@ -236,7 +237,7 @@ class IDGSettings(ProjectBaseModel):
 
 
 class ALSettings(ProjectBaseModel):
-    species_dir: str | None = Field(
+    species_dir: DirectoryPath | None = Field(
         default=None,
         description="Path to FHI-aims species defaults. Required unless use_teacher_reference=True."
     )
@@ -263,7 +264,8 @@ class ALSettings(ProjectBaseModel):
     )
     ensemble_size: int = Field(
         default=4,
-        description="Number of models in the ensemble for uncertainty estimation."
+        description="Number of models in the ensemble for uncertainty estimation.",
+        gt=0
     )
     epochs_per_worker: int = Field(
         default=2,
@@ -307,7 +309,8 @@ class ALSettings(ProjectBaseModel):
     )
     valid_ratio: float = Field(
         default=0.1,
-        description="Fraction of data reserved for validation during active learning."
+        description="Fraction of data reserved for validation during active learning.",
+        gt=0
     )
     valid_skip: int = Field(
         default=1,
@@ -331,18 +334,15 @@ class ALSettings(ProjectBaseModel):
     )
     convergence_patience: int = Field(
         default=50,
-        description="Number of epochs without improvement before halting convergence."
+        description="Number of epochs without improvement before halting convergence.",
+        gt=0
     )
     max_convergence_epochs: int = Field(
         default=500,
-        description="Maximum total epochs allowed before halting convergence."
+        description="Maximum total epochs allowed before halting convergence.",
+        gt=0
     )
 
-    # --- Not actively used, but are working ---
-    aims_lib_path: str | None = Field(
-        default=None,
-        description="Path to the compiled FHI-aims library for direct force and energy evaluation via API."
-    )
     intermol_crossed_limit: int = Field(
         default=10,
         description="Max uncertainty threshold crossings allowed for intermolecular interactions before stopping."
@@ -407,10 +407,23 @@ class ALSettings(ProjectBaseModel):
             )
         return self
 
+    @model_validator(mode="after")
+    def check_random_subset_size(self) -> "ALSettings":
+        """train_subset_size is required when replay_strategy='random_subset'."""
+        if (
+            self.replay_strategy == "random_subset"
+            and self.train_subset_size is None
+        ):
+            raise ValueError(
+                "train_subset_size must be specified when "
+                "replay_strategy='random_subset'."
+            )
+        return self
+
 
 class TrajectoryMDBase(ProjectBaseModel):
     timestep: float = Field(
-        default=0.5,
+        default=1.0,
         description="Time step for molecular dynamics (in femtoseconds)."
     )
     temperature: float = Field(

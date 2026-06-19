@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "aims_PAX"
-version = "0.1"
+version = "0.2"
 description = "Active learning for FHI-aims"
 readme = "README.md"
 requires-python = ">=3.10"
@@ -40,6 +40,14 @@ tests = [
     "pytest-cov"
 ]
 
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+addopts = "-ra"
+markers = [
+    "slow: long-running or integration tests (deselect with -m 'not slow')",
+    "network: tests that require internet access for model downloads",
+]
+
 [project.urls]
 homepage = "https://github.com/tohenkes/aims_PAX"
 
@@ -53,10 +61,3 @@ aims-PAX-idg-v2 = "aims_PAX.atomate2.cli.idg:main"
 aims-PAX-idg-split = "aims_PAX.atomate2.cli.datasets:main"
 aims-PAX-al = "aims_PAX.cli.al_procedure_only:main"
 aims-PAX-recalc = "aims_PAX.cli.recalculate_data:main"
-aims-PAX-test = "aims_PAX.cli.test_ensemble:main"
-
-[tool.pytest.ini_options]
-testpaths = ["tests"]
-markers = [
-    "slow: marks tests as slow (deselect with '-m \"not slow\"')",
-]

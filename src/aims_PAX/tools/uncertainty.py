@@ -122,11 +122,17 @@ class MolForceUncertainty(HandleUncertainty):
             )
 
         for idx, mol in enumerate(select_idxs):
+            # `mol` is a collection of atom indices defining one molecule; the
+            # net molecular force is the sum of its atoms' forces. Normalize to
+            # a 1-D index array so the atom axis is always preserved (even for a
+            # single-atom molecule) and the sum reliably reduces over atoms
+            # rather than over n_mols/members.
+            sel = np.atleast_1d(mol)
             if ensemble_prediction.ndim == 4:
-                per_mol = ensemble_prediction[:, :, mol, :].sum(axis=-2)
+                per_mol = ensemble_prediction[:, :, sel, :].sum(axis=-2)
                 mol_forces[:, :, idx, :] = per_mol
             elif ensemble_prediction.ndim == 3:
-                per_mol = ensemble_prediction[:, mol, :].sum(axis=-2)
+                per_mol = ensemble_prediction[:, sel, :].sum(axis=-2)
                 mol_forces[:, idx, :] = per_mol
             else:
                 raise ValueError(

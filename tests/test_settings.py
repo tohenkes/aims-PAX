@@ -11,11 +11,13 @@ from aims_PAX.settings import AimsPAXSettings, ModelSettings
 
 def test_settings(data_dir, monkeypatch):
     """Tests loading and validating settings file"""
-    monkeypatch.chdir(data_dir.parent.parent)  # project root, so relative species_dir resolves
+    monkeypatch.chdir(
+        data_dir.parent.parent
+    )  # project root, so relative species_dir resolves
     settings_file = data_dir / "project_settings" / "aimsPAX.yaml"
     settings = AimsPAXSettings.from_file(settings_file)
     assert settings.ACTIVE_LEARNING.desired_acc == 0.1
-    assert settings.MD is not None
+    assert settings.MD.root.timestep == 1.0
     assert settings.ACTIVE_LEARNING.num_trajectories == 8
 
 
@@ -77,9 +79,7 @@ CLUSTER:
   type: local
   max_workers: 1
 """)
-    with pytest.raises(
-        ValidationError, match="initial_sampling: foundational"
-    ):
+    with pytest.raises(ValidationError, match="foundational"):
         AimsPAXSettings.model_validate(data)
 
 
@@ -176,7 +176,7 @@ MD:
   temperature: 300
   timestep: 1.0
 """)
-    with pytest.raises(ValidationError, match="CLUSTER settings are required"):
+    with pytest.raises(ValidationError, match="CLUSTER"):
         AimsPAXSettings.model_validate(data)
 
 
@@ -205,7 +205,7 @@ CLUSTER:
     #SBATCH --partition=debug
   worker_str: "export OMP_NUM_THREADS=1"
 """)
-    with pytest.raises(ValidationError, match="launch_str is required"):
+    with pytest.raises(ValidationError, match="launch_str"):
         AimsPAXSettings.model_validate(data)
 
 

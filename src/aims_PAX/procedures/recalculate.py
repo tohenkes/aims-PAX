@@ -1,15 +1,13 @@
-import ase.build
 from mace import tools
 from pyfhiaims import AimsControl
 import ase
 from ase.io import read, write
 import logging
-from asi4py.asecalc import ASI_ASE_calculator
 from yaml import safe_load
-from aims_PAX.tools.utilities.parsl_utils import(
+from aims_PAX.tools.utilities.parsl_utils import (
     recalc_dft_parsl,
     prepare_parsl,
-    handle_parsl_logger
+    handle_parsl_logger,
 )
 import shutil
 import time

@@ -178,6 +178,7 @@ def _make_setup_model_training_return():
 # ===========================================================================
 
 
+@pytest.mark.parametrize("epochs,members,expected", [(3, 1, 3), (2, 2, 4)])
 @patch(f"{TRAIN_MOD}.save_datasets")
 @patch(f"{TRAIN_MOD}.save_checkpoint")
 @patch(f"{TRAIN_MOD}.validate_epoch")
@@ -188,7 +189,7 @@ def _make_setup_model_training_return():
     f"{TRAIN_MOD}.create_dataloader", return_value=(MagicMock(), MagicMock())
 )
 @patch(f"{TRAIN_MOD}.update_datasets", return_value=_UPDATE_DATASETS_RETURN)
-def test_train_calls_train_epoch_per_epoch_and_member(
+def test_train_calls_train_epoch_count(
     mock_update_datasets,
     mock_create_dataloader,
     mock_update_model_auxiliaries,
@@ -197,48 +198,22 @@ def test_train_calls_train_epoch_per_epoch_and_member(
     mock_validate_epoch,
     mock_save_checkpoint,
     mock_save_datasets,
+    epochs,
+    members,
+    expected,
 ):
-    # 3 epochs, 1 member → train_epoch called 3 times
-    stub = make_train_stub()
-    stub.intermediate_epochs_idg = 3
-    stub.valid_skip = 1000  # skips most validation; provide return anyway
-    mock_validate_epoch.return_value = _VALIDATE_EPOCH_RETURN
-    InitialDatasetProcedure._train(stub)
-    assert mock_train_epoch.call_count == 3
-
-
-@patch(f"{TRAIN_MOD}.save_datasets")
-@patch(f"{TRAIN_MOD}.save_checkpoint")
-@patch(f"{TRAIN_MOD}.validate_epoch")
-@patch(f"{TRAIN_MOD}.train_epoch")
-@patch(f"{TRAIN_MOD}.tools")
-@patch(f"{TRAIN_MOD}.update_model_auxiliaries")
-@patch(
-    f"{TRAIN_MOD}.create_dataloader", return_value=(MagicMock(), MagicMock())
-)
-@patch(f"{TRAIN_MOD}.update_datasets", return_value=_UPDATE_DATASETS_RETURN)
-def test_train_calls_train_epoch_for_each_ensemble_member(
-    mock_update_datasets,
-    mock_create_dataloader,
-    mock_update_model_auxiliaries,
-    mock_tools,
-    mock_train_epoch,
-    mock_validate_epoch,
-    mock_save_checkpoint,
-    mock_save_datasets,
-):
-    # 2 epochs × 2 members → train_epoch called 4 times
-    stub = make_train_stub_2members()
-    stub.intermediate_epochs_idg = 2
+    stub = make_train_stub() if members == 1 else make_train_stub_2members()
+    stub.intermediate_epochs_idg = epochs
     stub.valid_skip = 1000
+    tags = [f"m{i}" for i in range(members)]
     mock_validate_epoch.return_value = (
-        {"m0": 0.5, "m1": 0.5},
+        {t: 0.5 for t in tags},
         0.5,
         {"mae_f": 0.5},
         None,
     )
     InitialDatasetProcedure._train(stub)
-    assert mock_train_epoch.call_count == 4
+    assert mock_train_epoch.call_count == expected
 
 
 @patch(f"{TRAIN_MOD}.save_datasets")

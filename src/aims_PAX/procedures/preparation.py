@@ -60,12 +60,6 @@ from ase import units
 from contextlib import nullcontext
 from mace.calculators import mace_mp
 
-try:
-    import asi4py
-except Exception as e:
-    asi4py = None
-
-
 class PrepareInitialDatasetProcedure:
     """
     Class to prepare the inital dataset generation procedure for
@@ -378,42 +372,6 @@ class PrepareInitialDatasetProcedure:
                 parents=True, exist_ok=True
             )
 
-    def _setup_aims_calculator(
-        self,
-        atoms: ase.Atoms,
-    ) -> Aims:
-        """
-        Attaches the AIMS calculator to the atoms object.
-        Uses the AIMS settings from the control.in to set up the calculator.
-
-        Args:
-            atoms (ase.Atoms): Atoms object to attach the calculator to.
-            pbc (bool, optional): If periodic boundry conditions are required
-                                    or not.
-            Defaults to False.
-
-        Returns:
-            ase.Atoms: Atoms object with the calculator attached.
-        """
-        aims_settings = self.aims_settings.copy()
-
-        def init_via_ase(asi):
-            aims_settings["profile"] = AimsProfile(
-                command="asi-doesnt-need-command"
-            )
-            calc = Aims(**aims_settings)
-            calc.write_inputfiles(asi.atoms, properties=self.properties)
-
-        if asi4py is None:
-            raise ImportError(
-                "asi4py is not properly installed. "
-                "Please install it to use the AIMS calculator."
-            )
-        calc = asi4py.asecalc.ASI_ASE_calculator(
-            self.ASI_path, init_via_ase, None, atoms
-        )
-        return calc
-
     def _handle_aims_settings(
         self, control_source: Union[str, dict[int, str]], log: bool = False
     ):
@@ -433,9 +391,6 @@ class PrepareInitialDatasetProcedure:
                 aims_settings["output"] = aims_control.outputs
             aims_settings["compute_forces"] = True
             aims_settings["species_dir"] = self.species_dir
-            aims_settings["postprocess_anyway"] = (
-                True  # this is necessary to check for convergence in ASI
-            )
             self.aims_settings = {0: aims_settings}
         elif isinstance(control_source, dict):
             self.aims_settings = {}
@@ -446,9 +401,6 @@ class PrepareInitialDatasetProcedure:
                     aims_settings["output"] = aims_control.outputs
                 aims_settings["compute_forces"] = True
                 aims_settings["species_dir"] = self.species_dir
-                aims_settings["postprocess_anyway"] = (
-                    True  # this is necessary to check for convergence in ASI
-                )
                 if log:
                     logging.info(f"Control file for geometry {key}: {value}.")
                 self.aims_settings[key] = aims_settings
@@ -944,7 +896,6 @@ class ALConfiguration:
         )
 
         self.species_dir = self.al_settings.species_dir
-        self.ASI_path = self.al_settings.aims_lib_path
 
         # Optional settings
         self.analysis = self.al_settings.analysis

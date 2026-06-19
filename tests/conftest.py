@@ -1,6 +1,7 @@
 """
 Fixtures used for aims-PAX tests
 """
+
 import os
 import tempfile
 
@@ -18,29 +19,37 @@ from aims_PAX.settings import AimsPAXSettings
 def data_dir():
     return Path(__file__).parent / "test_data"
 
+
 @pytest.fixture(scope="session")
 def species_dir(data_dir) -> Path:
     return data_dir / "species_defaults" / "light"
+
 
 @pytest.fixture(scope="session")
 def control_molecule(data_dir) -> Path:
     return data_dir / "control_files" / "molecule.in"
 
+
 @pytest.fixture(scope="session")
 def control_periodic(data_dir) -> Path:
     return data_dir / "control_files" / "periodic.in"
+
 
 @pytest.fixture(scope="session")
 def aspirin(data_dir) -> Path:
     return data_dir / "structures" / "aspirin.in"
 
+
 @pytest.fixture(scope="session")
 def si(data_dir) -> Path:
     return data_dir / "structures" / "Si.in"
 
+
 @pytest.fixture
 def project_settings(data_dir, species_dir):
-    def get_settings(path_to_control: Path, path_to_geometry: Path, output_dir: Path):
+    def get_settings(
+        path_to_control: Path, path_to_geometry: Path, output_dir: Path
+    ):
         settings_file = data_dir / "project_settings" / "aimsPAX.yaml"
         with open(settings_file) as f:
             data = yaml.safe_load(f)
@@ -52,6 +61,7 @@ def project_settings(data_dir, species_dir):
         settings.MISC.path_to_geometry = path_to_geometry
         settings.MISC.output_dir = output_dir
         return settings
+
     return get_settings
 
 

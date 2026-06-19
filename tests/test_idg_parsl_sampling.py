@@ -294,9 +294,7 @@ def make_poll_stub(sampled_points, future_factory, monkeypatch):
         calc_dir=None,  # not used when clean_dirs=False
     )
     stub._md_w_foundational = lambda: None
-    stub._submit_reference_job = lambda atoms, idx: future_factory(
-        atoms, idx
-    )
+    stub._submit_reference_job = lambda atoms, idx: future_factory(atoms, idx)
     stub._process_reference_result = lambda r, p: (
         None
         if r is None

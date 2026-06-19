@@ -19,7 +19,7 @@ def create_base_so3_settings(
     tools.set_seeds(settings.GENERAL.seed)
 
     model_config = settings.ARCHITECTURE.model_dump()
-    model_config.pop("model")
+    model_config.pop("model_choice")
     model_config.update({
         "num_elements": len(z_table),
         "avg_num_neighbors": avg_num_neighbors,
@@ -87,7 +87,9 @@ def setup_so3lr(
         atomic_energies_dict,
         avg_num_neighbors
     )
-    
+    model_config.pop("use_multihead_model", None)
+    model_config.pop("num_multihead_heads", None)
+
     model = SO3LR(**model_config).to(settings.MISC.device)
     return model
 

@@ -2,13 +2,20 @@
 Tests for atomate2 part of aims-PAX.
 """
 
+import pytest
+
+pytest.importorskip("jobflow")
+pytest.importorskip("atomate2")
+
 from jobflow import run_locally
 
 from aims_PAX.settings import ModelSettings
 from aims_PAX.atomate2.flows.idg import InitialDatasetGenerator
 
 
-def test_idg_maker(data_dir, clean_dir, project_settings, control_periodic, si):
+def test_idg_maker(
+    data_dir, clean_dir, project_settings, control_periodic, si
+):
     """
     Ensures that the InitialDatasetGenerator maker job can be run.
     """
@@ -20,9 +27,8 @@ def test_idg_maker(data_dir, clean_dir, project_settings, control_periodic, si):
         settings=settings.INITIAL_DATASET_GENERATION,
         md_settings=settings.MD,
         misc_settings=settings.MISC,
-        model_settings=model_settings
+        model_settings=model_settings,
     ).make()
-    
+
     response = run_locally(job, create_folders=True)
     assert response
-    
