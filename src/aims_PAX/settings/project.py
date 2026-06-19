@@ -354,6 +354,22 @@ class ALSettings(ProjectBaseModel):
     extend_existing_final_ds: bool = Field(
         default=False
     )
+    initial_train_dataset: Path | dict[str, Path] | None = Field(
+        default=None,
+        description=(
+            "Path to a single initial training set replicated across all ensemble "
+            "members, or a dict mapping model tag (filename stem without .model) "
+            "to a per-member path."
+        ),
+    )
+    initial_valid_dataset: Path | dict[str, Path] | None = Field(
+        default=None,
+        description=(
+            "Path to a single initial validation set replicated across all ensemble "
+            "members, or a dict mapping model tag to a per-member path. "
+            "Must be set if initial_train_dataset is set."
+        ),
+    )
     use_foundational: bool = False
     foundational_model_settings: FMSettings | None = None
 
@@ -418,6 +434,68 @@ class ALSettings(ProjectBaseModel):
                 "train_subset_size must be specified when "
                 "replay_strategy='random_subset'."
             )
+        return self
+
+    @model_validator(mode="after")
+    def validate_initial_datasets(self) -> "ALSettings":
+        """Validate initial_train_dataset and initial_valid_dataset.
+
+        Rules:
+        1. Both must be set or both must be None.
+        2. If both are dicts, their key sets must be identical.
+        3. If one is Path and the other is dict, raise ValueError.
+        """
+        train_ds = self.initial_train_dataset
+        valid_ds = self.initial_valid_dataset
+
+        # Rule 1: Both must be set or both must be None
+        if (train_ds is None) != (valid_ds is None):
+            raise ValueError(
+                "ACTIVE_LEARNING: initial_train_dataset and "
+                "initial_valid_dataset must both be set or both be None."
+            )
+
+        # If both are None, no further validation needed
+        if train_ds is None and valid_ds is None:
+            return self
+
+        # At this point, both are not None
+        # Check type consistency
+        train_is_dict = isinstance(train_ds, dict)
+        valid_is_dict = isinstance(valid_ds, dict)
+
+        # Rule 3: If one is Path and the other is dict, raise ValueError
+        if train_is_dict != valid_is_dict:
+            raise ValueError(
+                "ACTIVE_LEARNING: initial_train_dataset and "
+                "initial_valid_dataset must have the same type "
+                "(both Path or both dict[str, Path])."
+            )
+
+        # Rule 2: If both are dicts, check key sets are identical
+        if train_is_dict and valid_is_dict:
+            train_keys = set(train_ds.keys())
+            valid_keys = set(valid_ds.keys())
+
+            if train_keys != valid_keys:
+                missing_in_valid = train_keys - valid_keys
+                extra_in_valid = valid_keys - train_keys
+                msg = (
+                    "ACTIVE_LEARNING: initial_train_dataset and "
+                    "initial_valid_dataset dict keys must match."
+                )
+                if missing_in_valid:
+                    msg += (
+                        f" Missing in initial_valid_dataset: "
+                        f"{sorted(missing_in_valid)}"
+                    )
+                if extra_in_valid:
+                    msg += (
+                        f" Extra in initial_valid_dataset: "
+                        f"{sorted(extra_in_valid)}"
+                    )
+                raise ValueError(msg)
+
         return self
 
 
