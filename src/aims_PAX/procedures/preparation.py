@@ -159,7 +159,7 @@ class PrepareInitialDatasetProcedure:
             f"{len(self.trajectories)} geometries."
         )
 
-        if self.model_choice == "mace":
+        if self.model_choice in ["mace", "maceles"]:
             self.z = Z_from_geometry(self.trajectories)
         elif self.model_choice in ["so3lr", "so3krates"]:
             self.z = np.array([i for i in range(1, 119)])
@@ -1177,7 +1177,7 @@ class ALEnsemble:
     def _setup_system_properties(self, path_to_geometry: str):
         """Setup system-specific properties."""
         atoms = read_geometry(path_to_geometry)
-        if self.config.model_choice == "mace":
+        if self.config.model_choice in ["mace", "maceles"]:
             self.z = Z_from_geometry(atoms)
         elif self.config.model_choice in ["so3lr", "so3krates"]:
             self.z = np.array([i for i in range(1, 119)])
@@ -1647,7 +1647,7 @@ class ALCalculatorMLFF:
                 for p in ensemble_paths
                 if p.endswith(".model")
             ]
-            if self.config.model_choice == "mace":
+            if self.config.model_choice in ["mace", "maceles"]:
                 self.mlff_calc_ensemble = MACECalculator(
                     models=self.models,
                     device=self.config.device,
@@ -1686,7 +1686,7 @@ class ALCalculatorMLFF:
                 for model_path in model_paths
                 if model_path.endswith(".model")
             ]
-            if self.config.model_choice == "mace":
+            if self.config.model_choice in ["mace", "maceles"]:
                 self.mlff_calc = MACECalculator(
                     models=self.models,
                     device=self.config.device,
