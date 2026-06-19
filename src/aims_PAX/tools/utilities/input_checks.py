@@ -135,6 +135,8 @@ SCHEME = {
             "mace_model": "small",
             "model_path": None,
         },
+        "initial_train_dataset": None,
+        "initial_valid_dataset": None,
     },
     "optional_cluster": {
         "type": "slurm",
