@@ -19,7 +19,7 @@ from so3krates_torch.tools.finetune import setup_finetuning
 from aims_PAX.settings import ModelSettings
 from aims_PAX.settings.model import BaseArchitectureSettings
 from aims_PAX.settings.project import MDSettings
-from aims_PAX.tools.model_tools.setup_MACE import setup_mace
+from aims_PAX.tools.model_tools.setup_MACE import setup_mace, setup_maceles
 from aims_PAX.tools.model_tools.setup_so3 import setup_so3krates, setup_so3lr, setup_multihead_so3lr
 from aims_PAX.tools.model_tools.training_tools import setup_model_training
 import ase.data
@@ -128,8 +128,16 @@ def apply_model_settings(
         "r_max_lr": model_settings.ARCHITECTURE.r_max_lr if model_choice == "so3lr" else None,
         "dispersion_energy_cutoff_lr_damping": (model_settings.ARCHITECTURE.dispersion_energy_cutoff_lr_damping
                                                 if model_choice == "so3lr" else None),
-        "atomic_energies_dict": None if model_choice != "mace" else model_settings.ARCHITECTURE.atomic_energies,
-        "scaling": None if model_choice != "mace" else model_settings.ARCHITECTURE.scaling,
+        "atomic_energies_dict": (
+            None
+            if model_choice not in ["mace", "maceles"]
+            else model_settings.ARCHITECTURE.atomic_energies
+        ),
+        "scaling": (
+            None
+            if model_choice not in ["mace", "maceles"]
+            else model_settings.ARCHITECTURE.scaling
+        ),
         "set_batch_size": model_settings.TRAINING.batch_size,
         "set_valid_batch_size": model_settings.TRAINING.valid_batch_size,
         "update_avg_num_neighbors": model_settings.TRAINING.update_avg_num_neighbors,
@@ -468,6 +476,12 @@ def setup_ensemble_dicts(
                 z_table=z_table,
                 atomic_energies_dict=ensemble_atomic_energies_dict[tag],
             )
+        elif model_choice == "maceles":
+            ensemble[tag] = setup_maceles(
+                settings=model_settings,
+                z_table=z_table,
+                atomic_energies_dict=ensemble_atomic_energies_dict[tag],
+            )
         elif model_choice == "so3krates":
             ensemble[tag] = setup_so3krates(
                 settings=model_settings,
@@ -658,7 +672,7 @@ def get_atomic_energies_from_ensemble(
     ensemble_atomic_energies_dict = {}
     ensemble_atomic_energies = {}
     for tag, model in ensemble.items():
-        if model_choice == "mace":
+        if model_choice in ["mace", "maceles"]:
             ensemble_atomic_energies[tag] = np.array(
                 model.atomic_energies_fn.atomic_energies.cpu(), dtype=dtype
             )
@@ -715,7 +729,7 @@ def get_atomic_energies_from_pt(
             path_to_checkpoints / (tag + f"_epoch-{last_epoch}.pt")
         )
         
-        if model_choice == "mace":
+        if model_choice in ["mace", "maceles"]:
             atomic_energies_array = check_pt["model"][
                 "atomic_energies_fn.atomic_energies"
             ]
@@ -808,7 +822,7 @@ def update_model_auxiliaries(
     )
     atomic_energies_dict.update(new_atomic_energies_dict)
     
-    if model_choice == "mace":
+    if model_choice in ["mace", "maceles"]:
         if update_atomic_energies:
             update_energy_shifts_mace(
                 model,
@@ -982,7 +996,7 @@ def save_models(
         settings = model_settings.model_dump()
         for k in ("model", "atomic_energies", "use_multihead_model", "num_multihead_heads"):
             settings.pop(k, None)
-        if model_choice == "mace":
+        if model_choice in ["mace", "maceles"]:
             settings["avg_num_neighbors"] = model.interactions[0].avg_num_neighbors
         else:
             settings["avg_num_neighbors"] = model.avg_num_neighbors
