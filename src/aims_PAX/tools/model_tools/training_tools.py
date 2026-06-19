@@ -46,7 +46,7 @@ def setup_model_training(
 
     training_setup["loss_fn"] = loss_fn
 
-    if model_choice.lower() == "mace":
+    if model_choice.lower() in ["mace", "maceles"]:
         optimizer = create_mace_optimizer(
             model=model,
             training_settings=training_settings,
@@ -331,7 +331,7 @@ def reset_model_optimizer(
     training_settings: TrainingSettings,
     model_choice: str,
 ):
-    if model_choice.lower() == "mace":
+    if model_choice.lower() in ["mace", "maceles"]:
         optimizer = create_mace_optimizer(model, training_settings)
     else:
         optimizer = create_standard_optimizer(model, training_settings)
