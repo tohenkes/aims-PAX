@@ -39,7 +39,8 @@ from aims_PAX.tools.utilities.utilities import (
     normalize_md_settings,
     apply_model_settings,
     apply_finetuning_settings,
-    ModifyMD, log_ensemble,
+    ModifyMD,
+    log_ensemble,
 )
 from pyfhiaims import AimsControl
 from aims_PAX.tools.utilities.input_utils import read_geometry
@@ -49,6 +50,7 @@ from aims_PAX.tools.model_tools.train_epoch import (
 )
 from aims_PAX.tools.model_tools.training_tools import setup_model_training
 import ase
+import ase.io
 import logging
 from ase.calculators.aims import Aims, AimsProfile
 from ase.md.velocitydistribution import MaxwellBoltzmannDistribution
@@ -59,6 +61,7 @@ from ase.md.nose_hoover_chain import MTKNPT, IsotropicMTKNPT
 from ase import units
 from contextlib import nullcontext
 from mace.calculators import mace_mp
+
 
 class PrepareInitialDatasetProcedure:
     """
@@ -72,7 +75,7 @@ class PrepareInitialDatasetProcedure:
         self,
         model_settings: ModelSettings,
         aimsPAX_settings: AimsPAXSettings,
-        path_to_control: str = "./control.in", #TODO: Rename
+        path_to_control: str = "./control.in",  # TODO: Rename
         path_to_geometry: str = "./geometry.in",
     ) -> None:
         """
@@ -85,9 +88,10 @@ class PrepareInitialDatasetProcedure:
                                                 Defaults to "./geometry.in".
         """
 
-
         self.log_dir = Path(aimsPAX_settings.MISC.log_dir)
-        logger_level = getattr(logging, model_settings.MISC.log_level, logging.INFO)
+        logger_level = getattr(
+            logging, model_settings.MISC.log_level, logging.INFO
+        )
 
         for handler in logging.root.handlers[:]:
             logging.root.removeHandler(handler)
@@ -106,7 +110,9 @@ class PrepareInitialDatasetProcedure:
         )
 
         self._handle_model_settings(model_settings)
-        logging.info(f"Using following settings for {self.model_choice.upper()}:")
+        logging.info(
+            f"Using following settings for {self.model_choice.upper()}:"
+        )
         log_yaml_block(self.model_choice.upper(), model_settings.model_dump())
 
         self._handle_settings(aimsPAX_settings)
@@ -192,9 +198,7 @@ class PrepareInitialDatasetProcedure:
         )
         if self.restart:
             self.epoch = (
-                self.training_setups[list(self.ensemble.keys())[0]][
-                    "epoch"
-                ]
+                self.training_setups[list(self.ensemble.keys())[0]]["epoch"]
                 + 1
             )
 
@@ -218,8 +222,7 @@ class PrepareInitialDatasetProcedure:
 
         else:
             self.ensemble_ase_sets = {
-                tag: {"train": [], "valid": []}
-                for tag in self.ensemble.keys()
+                tag: {"train": [], "valid": []} for tag in self.ensemble.keys()
             }
 
             if self.use_multihead_model:
@@ -297,13 +300,13 @@ class PrepareInitialDatasetProcedure:
             return p if p.is_absolute() else self.output_dir / p
 
         self.checkpoints_dir = _r(self.checkpoints_dir)
-        self.model_settings.GENERAL.checkpoints_dir = (
-            self.checkpoints_dir
-        )
+        self.model_settings.GENERAL.checkpoints_dir = self.checkpoints_dir
         self.model_dir = _r(self.model_dir)
         self.model_settings.GENERAL.model_dir = self.model_dir
 
-        self.model_settings.GENERAL.loss_dir = _r(self.model_settings.GENERAL.loss_dir)
+        self.model_settings.GENERAL.loss_dir = _r(
+            self.model_settings.GENERAL.loss_dir
+        )
 
         self.initial_ds_restart_path = (
             self.output_dir
@@ -579,9 +582,7 @@ class PrepareInitialDatasetProcedure:
                 tag: np.array(
                     [
                         self.ensemble_atomic_energies_dict[tag][z]
-                        for z in self.ensemble_atomic_energies_dict[
-                            tag
-                        ].keys()
+                        for z in self.ensemble_atomic_energies_dict[tag].keys()
                     ]
                 )
                 for tag in self.seeds_tags_dict.keys()
@@ -674,9 +675,7 @@ class PrepareInitialDatasetProcedure:
                 scaling=self.scaling,
                 update_atomic_energies=self.update_atomic_energies,
                 z_table=self.z_table,
-                atomic_energies_dict=self.ensemble_atomic_energies_dict[
-                    tag
-                ],
+                atomic_energies_dict=self.ensemble_atomic_energies_dict[tag],
                 update_avg_num_neighbors=self.config.update_avg_num_neighbors,
                 dtype=self.dtype,
                 device=self.device,
@@ -703,9 +702,7 @@ class PrepareInitialDatasetProcedure:
 
         convergence_patience = self.idg_settings.convergence_patience
         no_improvement = 0
-        ensemble_valid_losses = {
-            tag: np.inf for tag in self.ensemble.keys()
-        }
+        ensemble_valid_losses = {tag: np.inf for tag in self.ensemble.keys()}
         for j in range(self.max_convergence_epochs):
             for tag, model in self.ensemble.items():
                 logger = tools.MetricsLogger(
@@ -714,12 +711,8 @@ class PrepareInitialDatasetProcedure:
                 )
                 train_epoch(
                     model=model,
-                    train_loader=self.ensemble_model_sets[tag][
-                        "train_loader"
-                    ],
-                    loss_fn=self.training_setups_convergence[tag][
-                        "loss_fn"
-                    ],
+                    train_loader=self.ensemble_model_sets[tag]["train_loader"],
+                    loss_fn=self.training_setups_convergence[tag]["loss_fn"],
                     optimizer=self.training_setups_convergence[tag][
                         "optimizer"
                     ],
@@ -744,17 +737,13 @@ class PrepareInitialDatasetProcedure:
                 epoch % self.valid_skip == 0
                 or epoch == self.max_convergence_epochs - 1
             ):
-                ensemble_valid_losses, valid_loss, _ = (
-                    validate_epoch_ensemble(
-                        ensemble=self.ensemble,
-                        valid_loader=self.ensemble_model_sets[tag][
-                            "valid_loader"
-                        ],
-                        training_setups=self.training_setups_convergence,
-                        logger=logger,
-                        log_errors=self.model_settings.MISC.error_table,
-                        epoch=epoch,
-                    )
+                ensemble_valid_losses, valid_loss, _ = validate_epoch_ensemble(
+                    ensemble=self.ensemble,
+                    valid_loader=self.ensemble_model_sets[tag]["valid_loader"],
+                    training_setups=self.training_setups_convergence,
+                    logger=logger,
+                    log_errors=self.model_settings.MISC.error_table,
+                    epoch=epoch,
                 )
                 if (
                     best_valid_loss > valid_loss
@@ -775,7 +764,8 @@ class PrepareInitialDatasetProcedure:
                         with param_context:
                             torch.save(
                                 model,
-                                self.model_settings.GENERAL.model_dir / (tag + ".model"),
+                                self.model_settings.GENERAL.model_dir
+                                / (tag + ".model"),
                             )
                         save_checkpoint(
                             checkpoint_handler=self.training_setups_convergence[
@@ -833,13 +823,10 @@ class ALConfiguration:
 
     def _setup_model_configuration(self):
         """Setup model-specific configuration."""
-        
-        apply_model_settings(
-            target=self,
-            model_settings=self.model_settings
-        )
+
+        apply_model_settings(target=self, model_settings=self.model_settings)
         self.checkpoints_dir /= "al"
-        
+
     def _setup_aimsPAX_configuration(self):
         """Setup active learning configuration."""
         # Training parameters
@@ -847,7 +834,9 @@ class ALConfiguration:
         self.epochs_per_worker = self.al_settings.epochs_per_worker
         self.max_convergence_epochs = self.al_settings.max_convergence_epochs
         self.intermediate_epochs_al = self.al_settings.intermediate_epochs_al
-        self.convergence_patience = self.al_settings.convergence_patience  # for convergence only
+        self.convergence_patience = (
+            self.al_settings.convergence_patience
+        )  # for convergence only
         self.desired_accuracy = self.al_settings.desired_acc
         self.margin = self.al_settings.margin  # for convergence only
 
@@ -859,9 +848,11 @@ class ALConfiguration:
         self.valid_ratio = self.al_settings.valid_ratio
         self.max_train_set_size = self.al_settings.max_train_set_size
         self.c_x = self.al_settings.c_x
-        self.extend_existing_final_ds = self.al_settings.extend_existing_final_ds
+        self.extend_existing_final_ds = (
+            self.al_settings.extend_existing_final_ds
+        )
         self.update_md_checkpoints = self.al_settings.update_md_checkpoints
-        
+
         # Training procedures (TODO: Move training methods from model file here)
         self.replay_strategy = self.al_settings.replay_strategy
         self.train_subset_size = self.al_settings.train_subset_size
@@ -884,12 +875,12 @@ class ALConfiguration:
         self.dataset_dir = _r(self.misc.dataset_dir)
         self.log_dir = _r(self.misc.log_dir)
         self.checkpoints_dir = _r(self.checkpoints_dir)
-        self.model_settings.GENERAL.checkpoints_dir = (
-            self.checkpoints_dir
-        )
+        self.model_settings.GENERAL.checkpoints_dir = self.checkpoints_dir
         self.model_dir = _r(self.model_dir)
         self.model_settings.GENERAL.model_dir = self.model_dir
-        self.model_settings.GENERAL.loss_dir = _r(self.model_settings.GENERAL.loss_dir)
+        self.model_settings.GENERAL.loss_dir = _r(
+            self.model_settings.GENERAL.loss_dir
+        )
 
         self.al_restart_path = (
             self.output_dir / "restart" / "al" / "al_restart.npy"
@@ -906,8 +897,12 @@ class ALConfiguration:
         self.converge_best = self.al_settings.converge_best
         self.uncertainty_type = self.al_settings.uncertainty_type
 
-        self.uncert_not_crossed_limit = self.al_settings.uncert_not_crossed_limit
-        self.freeze_threshold_dataset = self.al_settings.freeze_threshold_dataset
+        self.uncert_not_crossed_limit = (
+            self.al_settings.uncert_not_crossed_limit
+        )
+        self.freeze_threshold_dataset = (
+            self.al_settings.freeze_threshold_dataset
+        )
         self.freeze_threshold = False
 
         self.key_specification = create_keyspec(
@@ -933,11 +928,15 @@ class ALConfiguration:
         # FIXME: If one can use foundational model in AL as well, then it would be better
         #        to have the model name (mace/so3lr) in the model settings
         self.use_foundational = self.al_settings.use_foundational
-        self.foundational_model_settings = self.al_settings.foundational_model_settings
+        self.foundational_model_settings = (
+            self.al_settings.foundational_model_settings
+        )
 
         # teacher model usage during AL (replaces DFT with teacher model)
         self.use_teacher_reference = self.al_settings.use_teacher_reference
-        self.teacher_reference_settings = self.al_settings.teacher_reference_settings
+        self.teacher_reference_settings = (
+            self.al_settings.teacher_reference_settings
+        )
 
     def _setup_molecular_indices(self):
         """
@@ -955,8 +954,12 @@ class ALConfiguration:
 
         if self.mol_idxs is not None:
             self.intermol_crossed = 0
-            self.intermol_crossed_limit = self.al_settings.intermol_crossed_limit
-            self.intermol_forces_weight = self.al_settings.intermol_forces_weight
+            self.intermol_crossed_limit = (
+                self.al_settings.intermol_crossed_limit
+            )
+            self.intermol_forces_weight = (
+                self.al_settings.intermol_forces_weight
+            )
             self.switched_on_intermol = False
 
             # Check if using intermolecular loss
@@ -1198,6 +1201,16 @@ class ALEnsemble:
                     "learning settings or put it as "
                     f"seeds_tags_dict.npz in {self.config.dataset_dir}."
                 )
+            if self.config.seeds_tags_dict is None and self.ensemble:
+                self.config.seeds_tags_dict = {
+                    tag: i
+                    for i, tag in enumerate(sorted(self.ensemble.keys()))
+                }
+                logging.warning(
+                    "seeds_tags_dict.npz not found — derived tags from "
+                    "model filenames with synthetic seeds. Checkpoint "
+                    "restarts may not be reproducible."
+                )
 
     def setup_ensemble_and_datasets(self):
         """Setup ensemble and datasets."""
@@ -1236,6 +1249,10 @@ class ALEnsemble:
 
     def _setup_datasets(self):
         """Setup initial datasets (rank 0 only)."""
+        if self.config.al_settings.initial_train_dataset is not None:
+            self._setup_datasets_from_provided_files()
+            return
+
         dataset_subdir = (
             "final"
             if (self.config.restart or self.config.extend_existing_final_ds)
@@ -1254,6 +1271,77 @@ class ALEnsemble:
             ensemble=self.ensemble,
             path_to_folder=self.config.dataset_dir / dataset_subdir,
         )
+
+        self.ensemble_model_sets = ase_to_model_ensemble_sets(
+            ensemble_ase_sets=self.ensemble_ase_sets,
+            z_table=self.z_table,
+            r_max=self.config.r_max,
+            r_max_lr=self.config.r_max_lr,
+            seed=self.config.seed,
+            key_specification=self.config.key_specification,
+            all_heads=self.config.all_heads,
+        )
+
+        self.train_dataset_len = len(
+            self.ensemble_ase_sets[list(self.ensemble.keys())[0]]["train"]
+        )
+        logging.info(f"Length of training set: {self.train_dataset_len}")
+
+    def _setup_datasets_from_provided_files(self):
+        """Load datasets from user-provided files (rank 0 only)."""
+        logging.info("Loading datasets from provided files.")
+
+        tags = list(self.ensemble.keys())
+        train_src = self.config.al_settings.initial_train_dataset
+        valid_src = self.config.al_settings.initial_valid_dataset
+
+        if isinstance(train_src, dict):
+            missing = set(tags) - set(train_src.keys())
+            extra = set(train_src.keys()) - set(tags)
+            if missing or extra:
+                raise ValueError(
+                    "initial_train_dataset keys do not match "
+                    "ensemble tags.\n"
+                    f"Missing from dict: {missing}.\n"
+                    f"Extra in dict: {extra}."
+                )
+            train_paths = train_src
+        else:
+            train_paths = {tag: train_src for tag in tags}
+
+        if isinstance(valid_src, dict):
+            missing = set(tags) - set(valid_src.keys())
+            extra = set(valid_src.keys()) - set(tags)
+            if missing or extra:
+                raise ValueError(
+                    "initial_valid_dataset keys do not match "
+                    "ensemble tags.\n"
+                    f"Missing from dict: {missing}.\n"
+                    f"Extra in dict: {extra}."
+                )
+            valid_paths = valid_src
+        else:
+            valid_paths = {tag: valid_src for tag in tags}
+
+        train_out_dir = self.config.dataset_dir / "initial" / "training"
+        valid_out_dir = self.config.dataset_dir / "initial" / "validation"
+        train_out_dir.mkdir(parents=True, exist_ok=True)
+        valid_out_dir.mkdir(parents=True, exist_ok=True)
+
+        self.ensemble_ase_sets = {}
+        for tag in tags:
+            train_atoms = ase.io.read(str(train_paths[tag]), index=":")
+            valid_atoms = ase.io.read(str(valid_paths[tag]), index=":")
+            ase.io.write(
+                str(train_out_dir / f"{tag}_train.extxyz"), train_atoms
+            )
+            ase.io.write(
+                str(valid_out_dir / f"{tag}_valid.extxyz"), valid_atoms
+            )
+            self.ensemble_ase_sets[tag] = {
+                "train": train_atoms,
+                "valid": valid_atoms,
+            }
 
         self.ensemble_model_sets = ase_to_model_ensemble_sets(
             ensemble_ase_sets=self.ensemble_ase_sets,
@@ -1744,7 +1832,6 @@ class ALMD:
         else:
             return MTKNPT(**npt_settings)
 
-
     def _initialize_velocities(self, atoms: ase.Atoms, md_settings: dict):
         """
         Initialize Maxwell-Boltzmann velocity distribution
@@ -2071,9 +2158,7 @@ class PrepareALProcedure:
         self.mlff_manager = ALCalculatorMLFF(
             self.config, self.ensemble_manager
         )
-        self.md_manager = ALMD(
-            self.config, self.state_manager
-        )
+        self.md_manager = ALMD(self.config, self.state_manager)
         self.restart_manager = ALRestart(
             self.config,
             self.state_manager,
@@ -2121,8 +2206,9 @@ class PrepareALProcedure:
                     lambda i=idx, t=traj: log_ensemble(
                         self.state_manager.seeds_tags_dict,
                         t,
-                        filename=f"trajectories/{i}.extxyz"),
-                    interval=aimsPAX_settings.ACTIVE_LEARNING.save_trajectories_interval
+                        filename=f"trajectories/{i}.extxyz",
+                    ),
+                    interval=aimsPAX_settings.ACTIVE_LEARNING.save_trajectories_interval,
                 )
 
         # TODO: Remove hardcode
@@ -2134,7 +2220,9 @@ class PrepareALProcedure:
         for handler in logging.root.handlers[:]:
             logging.root.removeHandler(handler)
 
-        logger_level = getattr(logging, self.config.model_settings.MISC.log_level, logging.INFO)
+        logger_level = getattr(
+            logging, self.config.model_settings.MISC.log_level, logging.INFO
+        )
 
         self.log_dir = Path(self.config.log_dir)
         tools.setup_logger(
