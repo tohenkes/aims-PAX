@@ -3,6 +3,7 @@ import numpy as np
 from e3nn import o3
 from mace import modules, tools
 from mace.cli.convert_e3nn_cueq import run as convert_e3nn_cueq
+from mace.modules.extensions import MACELES
 
 from aims_PAX.settings import ModelSettings
 
@@ -86,6 +87,89 @@ def setup_mace(
         MLP_irreps=MLP_irreps,
     )
     
+    if misc_settings.enable_cueq_train:
+        model = convert_e3nn_cueq(
+            input_model=model,
+            device=misc_settings.device,
+            return_model=True,
+        )
+    else:
+        model.to(misc_settings.device)
+    return model
+
+
+def setup_maceles(
+    settings: ModelSettings,
+    z_table: tools.AtomicNumberTable,
+    atomic_energies_dict: dict,
+    avg_num_neighbors: Optional[np.ndarray] = 1.0,
+):
+    """
+    Setup the MACE-LES model according to the settings and return it.
+
+    Args:
+        settings (dict): MACE-LES model settings
+        z_table (tools.AtomicNumberTable): Table of atomic numbers
+        atomic_energies_dict (dict): Dictionary of atomic energies
+        avg_num_neighbors (Optional[np.ndarray], optional): Average number of
+                                                    neighbors. Defaults to 1.
+
+    Returns:
+        MACELES model
+    """
+    general_settings = settings.GENERAL
+    architecture_settings = settings.ARCHITECTURE
+    misc_settings = settings.MISC
+
+    tools.set_default_dtype(general_settings.default_dtype)
+    tools.set_seeds(general_settings.seed)
+
+    atomic_energies: np.ndarray = np.array(
+        [atomic_energies_dict[z] for z in z_table.zs]
+    )
+
+    hidden_irreps = f"{architecture_settings.num_channels:d}x0e"
+    if architecture_settings.max_L > 0:
+        hidden_irreps += f" + {architecture_settings.num_channels:d}x1o"
+    if architecture_settings.max_L > 1:
+        hidden_irreps += f" + {architecture_settings.num_channels:d}x2e"
+    if architecture_settings.max_L > 2:
+        hidden_irreps += f" + {architecture_settings.num_channels:d}x3o"
+
+    model_config = dict(
+        r_max=architecture_settings.r_max,
+        num_bessel=architecture_settings.num_radial_basis,
+        num_polynomial_cutoff=architecture_settings.num_cutoff_basis,
+        max_ell=architecture_settings.max_ell,
+        interaction_cls=modules.interaction_classes[
+            architecture_settings.interaction
+        ],
+        num_interactions=architecture_settings.num_interactions,
+        num_elements=len(z_table),
+        hidden_irreps=o3.Irreps(hidden_irreps),
+        atomic_energies=atomic_energies,
+        avg_num_neighbors=avg_num_neighbors,
+        atomic_numbers=z_table.zs,
+        radial_type=architecture_settings.radial_type,
+        radial_MLP=architecture_settings.radial_MLP,
+    )
+
+    MLP_irreps = o3.Irreps(architecture_settings.MLP_irreps)
+
+    arch = settings.ARCHITECTURE
+    model = MACELES(
+        **model_config,
+        correlation=arch.correlation,
+        gate=modules.gate_dict[arch.gate],
+        interaction_cls_first=modules.interaction_classes[
+            arch.interaction_first
+        ],
+        MLP_irreps=MLP_irreps,
+        les_arguments=arch.les_arguments,
+        atomic_inter_scale=arch.atomic_inter_scale,
+        atomic_inter_shift=arch.atomic_inter_shift,
+    )
+
     if misc_settings.enable_cueq_train:
         model = convert_e3nn_cueq(
             input_model=model,
