@@ -390,7 +390,7 @@ def _build_teacher_calculator(
                 "dispersion_cutoff", 12.0
             ),
         )
-    elif model_type == "mace":
+    elif model_type in ["mace", "maceles"]:
         from mace.calculators import MACECalculator
 
         return MACECalculator(
