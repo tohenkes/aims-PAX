@@ -1,6 +1,7 @@
 """
 Model settings for aims-PAX project
 """
+
 from pathlib import Path
 from typing import Literal, Annotated, Union, ClassVar, Optional, Dict
 
@@ -10,42 +11,49 @@ from .project import ProjectBaseModel
 
 
 class GeneralSettings(ProjectBaseModel):
-    model_choice: Literal["mace", "maceles", "so3krates", "so3lr"] | None = Field(
-        default=None,
-        description="The model to use. Derived from ARCHITECTURE.model_choice when not set."
+    model_choice: Literal["mace", "maceles", "so3krates", "so3lr"] | None = (
+        Field(
+            default=None,
+            description=(
+                "The model to use. "
+                "Derived from ARCHITECTURE.model_choice when not set."
+            ),
+        )
     )
     name_exp: str = Field(
         ...,
-        description="The name given to the experiment, models, and datasets."
+        description="The name given to the experiment, models, and datasets.",
     )
     checkpoints_dir: Path = Field(
         default=Path("./checkpoints"),
         description="Directory path for storing model checkpoints.",
-        validate_default=True
+        validate_default=True,
     )
     compute_stress: bool = Field(
-        default=False,
-        description="Whether to compute stress tensors."
+        default=False, description="Whether to compute stress tensors."
     )
     default_dtype: Literal["float32", "float64"] = Field(
         default="float32",
-        description="Default data type for model parameters."
+        description="Default data type for model parameters.",
     )
     loss_dir: Path = Field(
         default=Path("./losses"),
         description="Directory path for storing training losses.",
-        validate_default=True
+        validate_default=True,
     )
     model_dir: Path = Field(
         default=Path("./model"),
         description="Directory path for storing final trained models.",
-        validate_default=True
+        validate_default=True,
     )
     seed: int = Field(
-        default=42,
-        description="Random seed for ensemble member generation."
+        default=42, description="Random seed for ensemble member generation."
     )
-    _relative_dirs: ClassVar[list[str]] = ["checkpoints_dir", "loss_dir", "model_dir"]
+    _relative_dirs: ClassVar[list[str]] = [
+        "checkpoints_dir",
+        "loss_dir",
+        "model_dir",
+    ]
 
 
 class BaseArchitectureSettings(ProjectBaseModel):
@@ -57,74 +65,64 @@ class MACEArchitectureSettings(BaseArchitectureSettings):
     atomic_energies: dict[int, float] | None = Field(
         default=None,
         description="Atomic energy references {atomic_number: energy}. "
-                    "If None, determined via linear least squares on training set."
+        "If None, determined via linear least squares on training set.",
     )
     compute_avg_num_neighbors: bool = Field(
         default=True,
-        description="Whether to compute average number of neighbors."
+        description="Whether to compute average number of neighbors.",
     )
     correlation: int = Field(
-        default=3,
-        description="Correlation order for many-body interactions."
+        default=3, description="Correlation order for many-body interactions."
     )
     gate: str = Field(
         default="silu",
-        description="Activation function (e.g., 'silu', 'tanh')."
+        description="Activation function (e.g., 'silu', 'tanh').",
     )
     interaction: str = Field(
         default="RealAgnosticResidualInteractionBlock",
-        description="Type of interaction block."
+        description="Type of interaction block.",
     )
     interaction_first: str = Field(
         default="RealAgnosticResidualInteractionBlock",
-        description="Type of first interaction block."
+        description="Type of first interaction block.",
     )
     max_ell: int = Field(
-        default=3,
-        description="Maximum degree of direction embeddings."
+        default=3, description="Maximum degree of direction embeddings."
     )
     max_L: int = Field(
         default=1,
         description="Maximum degree for equivariant features.",
         ge=0,
-        lt=4
+        lt=4,
     )
     MLP_irreps: str = Field(
         default="16x0e",
-        description="Irreps of the MLP in the last readout (e3nn format)."
+        description="Irreps of the MLP in the last readout (e3nn format).",
     )
     num_channels: int = Field(
-        default=128,
-        description="Number of channels (features).",
-        gt=0
+        default=128, description="Number of channels (features).", gt=0
     )
     num_cutoff_basis: int = Field(
-        default=5,
-        description="Number of cutoff basis functions."
+        default=5, description="Number of cutoff basis functions."
     )
     num_interactions: int = Field(
-        2,
-        description="Number of interaction layers."
+        2, description="Number of interaction layers."
     )
     num_radial_basis: int = Field(
-        default=8,
-        description="Number of radial basis functions."
+        default=8, description="Number of radial basis functions."
     )
     r_max: float = Field(
-        default=5.0,
-        description="Cutoff radius in Angstroms."
+        default=5.0, description="Cutoff radius in Angstroms."
     )
     radial_MLP: list[int] = Field(
         default=[64, 64, 64],
-        description="Architecture of the radial MLP (hidden layer sizes)."
+        description="Architecture of the radial MLP (hidden layer sizes).",
     )
     radial_type: str = Field(
-        default="bessel",
-        description="Type of radial basis functions."
+        default="bessel", description="Type of radial basis functions."
     )
     scaling: str = Field(
-        default="rms_forces_scaling",
-        description="Scaling method used."
+        default="rms_forces_scaling", description="Scaling method used."
     )
 
 
@@ -212,107 +210,89 @@ ArchitectureSettings = Annotated[
     ],
     Field(
         discriminator="model_choice",
-        description="Type of model architecture to use."
-    )
+        description="Type of model architecture to use.",
+    ),
 ]
 
 
 class TrainingSettings(ProjectBaseModel):
     optimizer: Literal["adam", "adamw"] = Field(
-        default="adam",
-        description="Optimizer type (adam/adamw)."
+        default="adam", description="Optimizer type (adam/adamw)."
     )
     lr: float = Field(
-        default=0.01,
-        description="Initial learning rate for optimizer."
+        default=0.01, description="Initial learning rate for optimizer."
     )
     weight_decay: float = Field(
-        default=5.e-07,
-        description="L2 regularization weight decay factor."
+        default=5.0e-07, description="L2 regularization weight decay factor."
     )
     amsgrad: bool = Field(
         default=True,
-        description="Whether to use AMSGrad variant of Adam optimizer."
+        description="Whether to use AMSGrad variant of Adam optimizer.",
     )
     clip_grad: float = Field(
-        default=10.0,
-        description="Gradient clipping threshold."
+        default=10.0, description="Gradient clipping threshold."
     )
     batch_size: int = Field(
-        default=5,
-        description="Batch size for training data."
+        default=5, description="Batch size for training data."
     )
     valid_batch_size: int = Field(
-        default=5,
-        description="Batch size for validation data."
+        default=5, description="Batch size for validation data."
     )
     seed: int = Field(
-        default=42,
-        description="Random seed for ensemble generation."
+        default=42, description="Random seed for ensemble generation."
     )
-    loss: str = Field(
-        default="weighted",
-        description="Loss function type."
-    )
+    loss: str = Field(default="weighted", description="Loss function type.")
     energy_weight: float = Field(
-        default=1.0,
-        description="Weight for energy loss component."
+        default=1.0, description="Weight for energy loss component."
     )
     forces_weight: float = Field(
-        default=1000.0,
-        description="Weight for forces loss component."
+        default=1000.0, description="Weight for forces loss component."
     )
     stress_weight: float = Field(
-        default=1.0,
-        description="Weight for stress loss component."
+        default=1.0, description="Weight for stress loss component."
     )
     virials_weight: float = Field(
-        default=1.0,
-        description="Weight for virials loss component."
+        default=1.0, description="Weight for virials loss component."
     )
     dipole_weight: float = Field(
-        default=1.0,
-        description="Weight for dipole loss component."
+        default=1.0, description="Weight for dipole loss component."
     )
     hirshfeld_weight: float = Field(
-        default=1.0,
-        description="Weight for Hirshfeld charge loss component."
+        default=1.0, description="Weight for Hirshfeld charge loss component."
     )
     config_type_weights: dict[str, float] = Field(
         default_factory=lambda: {"Default": 1.0},
-        description="Weights for different configuration types (e.g., TS vs Ground State)."
+        description="Weights for different configuration types (e.g., TS vs Ground State).",
     )
     scheduler: Literal["ReduceLROnPlateau", "ExponentialLR"] = Field(
         default="ReduceLROnPlateau",
-        description="Learning rate scheduler type."
+        description="Learning rate scheduler type.",
     )
     lr_factor: float = Field(
         default=0.8,
-        description="Factor by which learning rate is reduced (for ReduceLROnPlateau)."
+        description="Factor by which learning rate is reduced (for ReduceLROnPlateau).",
     )
     lr_scheduler_gamma: float = Field(
         default=0.9993,
-        description="Learning rate decay factor (for ExponentialLR)."
+        description="Learning rate decay factor (for ExponentialLR).",
     )
     scheduler_patience: int = Field(
-        default=5,
-        description="Number of epochs to wait before reducing LR."
+        default=5, description="Number of epochs to wait before reducing LR."
     )
     ema: bool = Field(
-        default=True,
-        description="Whether to use Exponential Moving Average."
+        default=True, description="Whether to use Exponential Moving Average."
     )
     ema_decay: float = Field(
         default=0.99,
-        description="Decay factor for exponential moving average."
+        description="Decay factor for exponential moving average.",
     )
     swa: bool = Field(
         default=False,
-        description="Whether to use Stochastic Weight Averaging."
+        description="Whether to use Stochastic Weight Averaging.",
     )
     start_swa: int | None = Field(
         default=None,
-        description="Amount of training completed before stochastic weight averaging begins."
+        description="Amount of training completed before stochastic weight averaging begins.",
     )
     # extra fields
     pretrained_model: str | None = None
@@ -336,50 +316,41 @@ class TrainingSettings(ProjectBaseModel):
 class MiscSettings(ProjectBaseModel):
     device: Literal["cpu", "cuda"] = Field(
         default="cpu",
-        description="Device used for training and inference (cpu or cuda)."
+        description="Device used for training and inference (cpu or cuda).",
     )
     error_table: str = Field(
         default="PerAtomMAE",
-        description="Type of error metrics to compute and display in logs."
+        description="Type of error metrics to compute and display in logs.",
     )
     log_level: Literal["DEBUG", "INFO", "WARNING", "ERROR"] = Field(
-        default="INFO",
-        description="Logging verbosity level."
+        default="INFO", description="Logging verbosity level."
     )
     keep_checkpoints: bool = Field(
         default=False,
-        description="Whether to keep all checkpoint files or only the best/latest."
+        description="Whether to keep all checkpoint files or only the best/latest.",
     )
     restart_latest: bool = Field(
         default=False,
-        description="Whether to restart training from the latest available checkpoint."
+        description="Whether to restart training from the latest available checkpoint.",
     )
     compute_stress: bool = Field(
-        default=False,
-        description="Whether to compute stress tensors."
+        default=False, description="Whether to compute stress tensors."
     )
     compute_dipole: bool = Field(
-        default=False,
-        description="Whether to compute dipole moments."
+        default=False, description="Whether to compute dipole moments."
     )
     enable_cueq: bool = Field(
-        default=False,
-        description="Enable Charge Equilibration (CuEq) module."
+        default=False, description="Enable Charge Equilibration (CuEq) module."
     )
     enable_cueq_train: bool = Field(
-        default=False,
-        description="Enable training for the CuEq parameters."
+        default=False, description="Enable training for the CuEq parameters."
     )
 
 
 class ModelSettings(ProjectBaseModel):
-    GENERAL: GeneralSettings = Field(
-        ...,
-        description="General model settings"
-    )
+    GENERAL: GeneralSettings = Field(..., description="General model settings")
     ARCHITECTURE: ArchitectureSettings = Field(
-        ...,
-        description="Architecture settings"
+        ..., description="Architecture settings"
     )
     TRAINING: TrainingSettings = Field(default_factory=TrainingSettings)
     MISC: MiscSettings = Field(default_factory=MiscSettings)
@@ -398,7 +369,9 @@ class ModelSettings(ProjectBaseModel):
                 # Backward compat: copy from GENERAL.model_choice if absent
                 elif "model_choice" not in item:
                     general = data.get("GENERAL", {})
-                    if isinstance(general, dict) and general.get("model_choice"):
+                    if isinstance(general, dict) and general.get(
+                        "model_choice"
+                    ):
                         item["model_choice"] = general["model_choice"].lower()
         return data
 
@@ -408,13 +381,16 @@ class ModelSettings(ProjectBaseModel):
             self.GENERAL.model_choice = self.ARCHITECTURE.model_choice
         return self
 
-
     def resolve_dirs(self, output_dir: Path) -> None:
         """Call this from wherever output_dir is known."""
-        sub_models: list[ProjectBaseModel] = [self.GENERAL, ]
+        sub_models: list[ProjectBaseModel] = [
+            self.GENERAL,
+        ]
         for sub_model in sub_models:
             for field_name in sub_model._relative_dirs:
                 path = getattr(sub_model, field_name)
                 if not path.is_absolute():
                     setattr(sub_model, field_name, output_dir / path)
-                getattr(sub_model, field_name).mkdir(parents=True, exist_ok=True)
+                getattr(sub_model, field_name).mkdir(
+                    parents=True, exist_ok=True
+                )
