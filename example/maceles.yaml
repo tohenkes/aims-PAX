@@ -1,0 +1,70 @@
+# MACE-ES (MACELES) model configuration
+#
+# MACE-ES extends MACE with a Latent Ewald Summation (LES) layer that adds
+# long-range electrostatic interactions. It is well-suited for polar and ionic
+# systems where standard short-range force fields struggle.
+#
+# Prerequisites:
+#   pip install git+https://github.com/ChengUCB/les.git
+#
+# Usage: pass this file with --model-settings maceles.yaml
+#   aims-PAX --model-settings maceles.yaml
+#
+# The ARCHITECTURE section is identical to MACE plus three new fields:
+#   les_arguments, atomic_inter_scale, atomic_inter_shift
+
+GENERAL:
+  name_exp: test
+  checkpoints_dir: ./checkpoints
+  model_dir: ./model
+  default_dtype: float32
+  compute_stress: False
+  seed: 100
+
+ARCHITECTURE:
+  model_choice: maceles
+  r_max: 5.
+  num_channels: 32
+  max_L: 1
+  radial_MLP:
+  - 16
+  - 16
+  - 16
+
+  # LES (Latent Ewald Summation) solver configuration.
+  # The model learns per-atom latent charges; the LES solver computes their
+  # long-range electrostatic energy via an Ewald-like sum.
+  #
+  # use_atomwise: whether to apply atom-wise LES corrections (default: false).
+  # compute_bec:  whether to output Born Effective Charges in addition to
+  #               forces and energies (default: false). Born Effective Charges
+  #               describe how polarization changes with atomic displacement
+  #               and are needed for IR spectra and dielectric constants.
+  # Additional keys are passed directly to the Les() constructor — consult
+  # https://github.com/ChengUCB/les for the full list.
+  # Set les_arguments to null to use the LES defaults {use_atomwise: false}.
+  les_arguments:
+    use_atomwise: false
+    compute_bec: false
+
+  # Scale and shift applied to the atomic interaction energies
+  # (inherited from ScaleShiftMACE).
+  # atomic_inter_scale: in MACE's official training this is set to the RMS of
+  #   forces in the training set. The default of 1.0 is safe — the model will
+  #   learn to compensate during training.
+  # atomic_inter_shift: should be 0.0 for single-head models.
+  atomic_inter_scale: 1.0
+  atomic_inter_shift: 0.0
+
+TRAINING:
+  batch_size: 5
+  valid_batch_size: 5
+  lr: 0.01
+  amsgrad: True
+  optimizer: adam
+  loss: weighted
+  energy_weight: 1.
+  forces_weight: 1000.
+
+MISC:
+  device: cuda
