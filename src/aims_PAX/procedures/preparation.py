@@ -1291,9 +1291,15 @@ class ALEnsemble:
         """Load datasets from user-provided files (rank 0 only)."""
         logging.info("Loading datasets from provided files.")
 
-        tags = list(self.ensemble.keys())
         train_src = self.config.al_settings.initial_train_dataset
         valid_src = self.config.al_settings.initial_valid_dataset
+        if train_src is None or valid_src is None:
+            raise ValueError(
+                "Both initial_train_dataset and initial_valid_dataset "
+                "must be set to use provided-file loading."
+            )
+
+        tags = list(self.ensemble.keys())
 
         if isinstance(train_src, dict):
             missing = set(tags) - set(train_src.keys())
