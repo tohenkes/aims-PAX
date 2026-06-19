@@ -1,0 +1,65 @@
+# Active Learning with Pretrained Ensemble
+#
+# This configuration skips initial dataset generation and starts active learning
+# directly from a pretrained ensemble and existing training/validation datasets.
+#
+# Use this when you already have:
+#   - A trained ensemble of MACE/SO3LR models
+#   - Labeled training and validation datasets
+#
+# Set the initial_train_dataset and initial_valid_dataset to the path(s) of your
+# dataset(s). You can either provide a single dataset path (Option A, shared by
+# all ensemble members) or a dictionary mapping model stems to per-member datasets
+# (Option B, for bootstrap/seed-specific datasets).
+
+ACTIVE_LEARNING:
+  desired_acc: 0.1
+  valid_ratio: 0.1
+  epochs_per_worker: 2
+  intermediate_epochs_al: 1
+  converge_al: true
+  converge_best: true
+  max_convergence_epochs: 50
+  convergence_patience: 50
+  valid_skip: 5
+  ensemble_size: 4
+  c_x: -0.1
+  skip_step_mlff: 25
+  num_trajectories: 4
+  species_dir: "path/to/FHIaims/species_defaults/defaults_2020/light"
+
+  # --- Pretrained Dataset Options ---
+  # Option A: single dataset replicated to all ensemble members (simplest)
+  initial_train_dataset: ./train.extxyz
+  initial_valid_dataset: ./valid.extxyz
+
+  # Option B: explicit per-member mapping (uncomment and fill in)
+  # The key must match the model filename stem (e.g., myrun-42.model -> myrun-42).
+  # This is useful when you have bootstrapped datasets for ensemble diversity.
+  # initial_train_dataset:
+  #   myrun-42: ./train_seed0.extxyz
+  #   myrun-99: ./train_seed1.extxyz
+  # initial_valid_dataset:
+  #   myrun-42: ./valid_seed0.extxyz
+  #   myrun-99: ./valid_seed1.extxyz
+
+
+MD:
+  stat_ensemble: NVT
+  thermostat: Langevin
+  temperature: 500
+  timestep: 1.0
+  friction: 0.01
+  seed: 42
+
+
+MISC:
+  # Base directory for ALL output (logs, data, models, checkpoints, analysis,
+  # results, restart, PARSL scratch). Relative sub-paths (dataset_dir, log_dir,
+  # model_dir, checkpoints_dir) are resolved against this directory.
+  output_dir: "."
+  create_restart: true
+
+
+CLUSTER:
+  type: local
