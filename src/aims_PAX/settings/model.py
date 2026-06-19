@@ -2,7 +2,7 @@
 Model settings for aims-PAX project
 """
 from pathlib import Path
-from typing import Literal, Annotated, Union, ClassVar
+from typing import Literal, Annotated, Union, ClassVar, Optional, Dict
 
 from pydantic import Field, model_validator
 
@@ -10,7 +10,7 @@ from .project import ProjectBaseModel
 
 
 class GeneralSettings(ProjectBaseModel):
-    model_choice: Literal["mace", "so3krates", "so3lr"] | None = Field(
+    model_choice: Literal["mace", "maceles", "so3krates", "so3lr"] | None = Field(
         default=None,
         description="The model to use. Derived from ARCHITECTURE.model_choice when not set."
     )
@@ -128,6 +128,34 @@ class MACEArchitectureSettings(BaseArchitectureSettings):
     )
 
 
+class MACELESArchitectureSettings(MACEArchitectureSettings):
+    model_choice: Literal["maceles"] = "maceles"
+    les_arguments: Optional[Dict] = Field(
+        default=None,
+        description=(
+            "Config dict for the LES (Latent Ewald Summation) solver. "
+            "Known keys: use_atomwise (bool), compute_bec (bool), "
+            "bec_output_index. Remaining keys passed through to Les(). "
+            "Defaults to {'use_atomwise': False} when None."
+        ),
+    )
+    atomic_inter_scale: float = Field(
+        default=1.0,
+        description=(
+            "Scale factor for atomic interactions (ScaleShiftMACE). "
+            "MACE's run_train sets this to the RMS of training forces; "
+            "1.0 is a safe default."
+        ),
+    )
+    atomic_inter_shift: float = Field(
+        default=0.0,
+        description=(
+            "Shift for atomic interactions (ScaleShiftMACE). "
+            "Should be 0.0 for single-head models."
+        ),
+    )
+
+
 class So3kratesArchitectureSettings(BaseArchitectureSettings):
     model_choice: Literal["so3krates"] = "so3krates"
     r_max: float = 4.5
@@ -176,7 +204,12 @@ class SO3LRArchitectureSettings(So3kratesArchitectureSettings):
 
 
 ArchitectureSettings = Annotated[
-    Union[MACEArchitectureSettings, So3kratesArchitectureSettings, SO3LRArchitectureSettings],
+    Union[
+        MACEArchitectureSettings,
+        MACELESArchitectureSettings,
+        So3kratesArchitectureSettings,
+        SO3LRArchitectureSettings,
+    ],
     Field(
         discriminator="model_choice",
         description="Type of model architecture to use."
