@@ -1612,7 +1612,7 @@ class ALCalculatorMLFF:
                     device=self.config.device,
                     enable_cueq=self.config.enable_cueq,
                 )
-            elif model_type == "mace":
+            elif model_type in ["mace", "maceles"]:
                 self.mlff_calc = MACECalculator(
                     model_paths=model_path,
                     device=self.config.device,
