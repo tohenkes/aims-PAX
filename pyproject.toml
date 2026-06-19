@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "aims_PAX"
-version = "0.1"
+version = "0.2"
 description = "Active learning for FHI-aims"
 readme = "README.md"
 requires-python = ">=3.10"
