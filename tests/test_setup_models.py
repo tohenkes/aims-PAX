@@ -6,7 +6,8 @@ import torch
 from mace.tools import AtomicNumberTable
 
 from aims_PAX.settings import ModelSettings
-from aims_PAX.tools.model_tools.setup_MACE import setup_mace
+from aims_PAX.settings.model import MACELESArchitectureSettings
+from aims_PAX.tools.model_tools.setup_MACE import setup_mace, setup_maceles
 from aims_PAX.tools.model_tools.setup_so3 import setup_so3krates, setup_so3lr
 from aims_PAX.tools.utilities.utilities import (
     compute_average_E0s,
@@ -27,6 +28,21 @@ def mace_settings(seed=42):
             "GENERAL": {"name_exp": "test", "seed": seed},
             "ARCHITECTURE": {
                 "model_choice": "mace",
+                "num_channels": 8,
+                "num_interactions": 1,
+                "max_L": 0,
+            },
+            "MISC": {"device": "cpu"},
+        }
+    )
+
+
+def maceles_settings(seed=42):
+    return ModelSettings(
+        **{
+            "GENERAL": {"name_exp": "test", "seed": seed},
+            "ARCHITECTURE": {
+                "model_choice": "maceles",
                 "num_channels": 8,
                 "num_interactions": 1,
                 "max_L": 0,
@@ -177,6 +193,56 @@ def test_setup_so3lr_output_shapes():
     model = setup_so3lr(settings, z_table, atomic_energies_dict)
     loader = make_loader(
         atoms_list, create_keyspec(), z_table, r_max=4.5, batch_size=1
+    )
+    for batch in loader:
+        batch_dict = batch.to_dict()
+        output = model(
+            batch_dict,
+            training=False,
+            compute_force=True,
+            compute_virials=False,
+            compute_stress=False,
+        )
+        break
+    assert output["energy"].shape == (1,)
+    assert output["forces"].shape[1] == 3
+
+
+def test_maceles_settings_parsing():
+    settings = maceles_settings()
+    assert isinstance(settings.ARCHITECTURE, MACELESArchitectureSettings)
+    assert settings.ARCHITECTURE.model_choice == "maceles"
+    assert settings.ARCHITECTURE.les_arguments is None
+    assert settings.ARCHITECTURE.atomic_inter_scale == 1.0
+    assert settings.ARCHITECTURE.atomic_inter_shift == 0.0
+    assert settings.GENERAL.model_choice == "maceles"
+
+
+@pytest.mark.slow
+def test_setup_maceles_distinct_seeds():
+    pytest.importorskip("les")
+    _, z_table, atomic_energies_dict = load_si_fixtures()
+    model_a = setup_maceles(
+        maceles_settings(seed=1), z_table, atomic_energies_dict
+    )
+    model_b = setup_maceles(
+        maceles_settings(seed=2), z_table, atomic_energies_dict
+    )
+    assert isinstance(model_a, torch.nn.Module)
+    assert isinstance(model_b, torch.nn.Module)
+    params_a = list(model_a.parameters())[0].detach().flatten()
+    params_b = list(model_b.parameters())[0].detach().flatten()
+    assert not torch.allclose(params_a, params_b)
+
+
+@pytest.mark.slow
+def test_setup_maceles_output_shapes():
+    pytest.importorskip("les")
+    atoms_list, z_table, atomic_energies_dict = load_si_fixtures()
+    settings = maceles_settings()
+    model = setup_maceles(settings, z_table, atomic_energies_dict)
+    loader = make_loader(
+        atoms_list, create_keyspec(), z_table, r_max=5.0, batch_size=1
     )
     for batch in loader:
         batch_dict = batch.to_dict()
