@@ -1,8 +1,14 @@
 import logging
+from pathlib import Path
 from types import SimpleNamespace
-from unittest.mock import MagicMock
+from unittest.mock import MagicMock, patch
+
+import pytest
+from ase import Atoms
+from ase.io import write
 
 from aims_PAX.procedures.active_learning import ALProcedure
+from aims_PAX.procedures.preparation import ALEnsemble
 
 # ===========================================================================
 # Stub helpers
@@ -220,3 +226,130 @@ def test_running_task_stores_point_from_uncertainty_data():
     ALProcedure._running_task(stub, idx=0)
     assert stub.point is point
     assert stub.run_manager.process_uncertainty_decision.call_count == 1
+
+
+# ===========================================================================
+# §6 — ALEnsemble._setup_datasets_from_provided_files
+# ===========================================================================
+
+_PATCH_TARGET = "aims_PAX.procedures.preparation.ase_to_model_ensemble_sets"
+
+
+def _make_single_h2_extxyz(path: Path) -> None:
+    """Write a minimal extxyz file with one H2 Atoms object."""
+    atoms = [Atoms("H2", positions=[[0, 0, 0], [0, 0, 0.74]])]
+    write(str(path), atoms)
+
+
+def _make_ensemble_stub(tmp_path, train_src, valid_src):
+    """Build a minimal SimpleNamespace that satisfies _setup_datasets_from_provided_files."""
+    al_settings = SimpleNamespace(
+        initial_train_dataset=train_src,
+        initial_valid_dataset=valid_src,
+    )
+    config = SimpleNamespace(
+        al_settings=al_settings,
+        dataset_dir=tmp_path / "dataset",
+        r_max=5.0,
+        r_max_lr=None,
+        seed=42,
+        key_specification=None,
+        all_heads=None,
+    )
+    stub = SimpleNamespace(
+        config=config,
+        ensemble={"tag_a": MagicMock(), "tag_b": MagicMock()},
+        z_table=MagicMock(),
+    )
+    return stub
+
+
+def test_single_dataset_replicated_to_all_members(tmp_path):
+    """A single-path dataset is replicated to every ensemble member."""
+    train_path = tmp_path / "train.extxyz"
+    valid_path = tmp_path / "valid.extxyz"
+    _make_single_h2_extxyz(train_path)
+    _make_single_h2_extxyz(valid_path)
+
+    stub = _make_ensemble_stub(tmp_path, train_path, valid_path)
+
+    with patch(_PATCH_TARGET, return_value={}) as mock_convert:
+        ALEnsemble._setup_datasets_from_provided_files(stub)
+
+    assert "tag_a" in stub.ensemble_ase_sets
+    assert "tag_b" in stub.ensemble_ase_sets
+    assert len(stub.ensemble_ase_sets["tag_a"]["train"]) > 0
+    assert len(stub.ensemble_ase_sets["tag_b"]["train"]) > 0
+    mock_convert.assert_called_once()
+
+
+def test_per_member_dict_assigns_correctly(tmp_path):
+    """Per-member dict datasets are assigned to the correct tag."""
+    train_a = tmp_path / "train_a.extxyz"
+    train_b = tmp_path / "train_b.extxyz"
+    valid_a = tmp_path / "valid_a.extxyz"
+    valid_b = tmp_path / "valid_b.extxyz"
+
+    # tag_a gets 1 structure, tag_b gets 2 structures
+    write(str(train_a), [Atoms("H2", positions=[[0, 0, 0], [0, 0, 0.74]])])
+    write(
+        str(train_b),
+        [
+            Atoms("H2", positions=[[0, 0, 0], [0, 0, 0.74]]),
+            Atoms("H2", positions=[[0, 0, 0], [0, 0, 0.80]]),
+        ],
+    )
+    write(str(valid_a), [Atoms("H2", positions=[[0, 0, 0], [0, 0, 0.74]])])
+    write(str(valid_b), [Atoms("H2", positions=[[0, 0, 0], [0, 0, 0.74]])])
+
+    train_src = {"tag_a": train_a, "tag_b": train_b}
+    valid_src = {"tag_a": valid_a, "tag_b": valid_b}
+    stub = _make_ensemble_stub(tmp_path, train_src, valid_src)
+
+    with patch(_PATCH_TARGET, return_value={}):
+        ALEnsemble._setup_datasets_from_provided_files(stub)
+
+    assert len(stub.ensemble_ase_sets["tag_a"]["train"]) == 1
+    assert len(stub.ensemble_ase_sets["tag_b"]["train"]) == 2
+
+
+def test_per_member_dict_wrong_tags_raises(tmp_path):
+    """Dict with keys that don't match ensemble tags raises ValueError."""
+    train_x = tmp_path / "train_x.extxyz"
+    valid_x = tmp_path / "valid_x.extxyz"
+    _make_single_h2_extxyz(train_x)
+    _make_single_h2_extxyz(valid_x)
+
+    # ensemble has tag_a/tag_b but dict provides tag_x
+    train_src = {"tag_x": train_x}
+    valid_src = {"tag_x": valid_x}
+    stub = _make_ensemble_stub(tmp_path, train_src, valid_src)
+
+    with pytest.raises(ValueError, match="tag"):
+        ALEnsemble._setup_datasets_from_provided_files(stub)
+
+
+# ===========================================================================
+# §7 — ALEnsemble._load_seeds_tags_dict fallback
+# ===========================================================================
+
+
+def test_seeds_tags_dict_fallback(tmp_path):
+    """When seeds_tags_dict.npz is absent, dict is derived from ensemble keys."""
+    dataset_dir = tmp_path / "dataset"
+    dataset_dir.mkdir()
+
+    config = SimpleNamespace(
+        seeds_tags_dict=None,
+        dataset_dir=dataset_dir,
+    )
+    stub = SimpleNamespace(
+        config=config,
+        ensemble={"tag_a": MagicMock(), "tag_b": MagicMock()},
+    )
+
+    # No seeds_tags_dict.npz file present — fallback must trigger
+    ALEnsemble._load_seeds_tags_dict(stub)
+
+    assert stub.config.seeds_tags_dict is not None
+    assert set(stub.config.seeds_tags_dict.keys()) == {"tag_a", "tag_b"}
