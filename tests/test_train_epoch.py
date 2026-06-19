@@ -48,6 +48,23 @@ def make_settings(arch, tmp_path):
                 "MISC": {"device": "cpu"},
             }
         )
+    elif arch == "maceles":
+        return ModelSettings(
+            **{
+                "GENERAL": {
+                    "name_exp": "test",
+                    "seed": 42,
+                    "checkpoints_dir": str(tmp_path / "checkpoints"),
+                },
+                "ARCHITECTURE": {
+                    "model_choice": "maceles",
+                    "num_channels": 8,
+                    "num_interactions": 1,
+                    "max_L": 0,
+                },
+                "MISC": {"device": "cpu"},
+            }
+        )
     elif arch == "so3krates":
         return ModelSettings(
             **{
@@ -106,6 +123,10 @@ def build_model(arch, settings, z_table, atomic_energies_dict):
         from aims_PAX.tools.model_tools.setup_MACE import setup_mace
 
         return setup_mace(settings, z_table, atomic_energies_dict)
+    elif arch == "maceles":
+        from aims_PAX.tools.model_tools.setup_MACE import setup_maceles
+
+        return setup_maceles(settings, z_table, atomic_energies_dict)
     elif arch == "so3krates":
         from aims_PAX.tools.model_tools.setup_so3 import setup_so3krates
 
@@ -160,13 +181,17 @@ def build_training_setup(settings, model, arch, tmp_path):
 
 
 @pytest.mark.slow
-@pytest.mark.parametrize("arch", ["mace", "so3krates", "so3lr"])
+@pytest.mark.parametrize(
+    "arch", ["mace", "so3krates", "so3lr", "maceles"]
+)
 def test_train_epoch_loss_decreases(arch, tmp_path):
+    if arch == "maceles":
+        pytest.importorskip("les")
     train_atoms, valid_atoms, z_table, atomic_energies_dict = (
         load_si_fixtures()
     )
     settings = make_settings(arch, tmp_path)
-    r_max = 5.0 if arch == "mace" else 4.5
+    r_max = 5.0 if arch in ["mace", "maceles"] else 4.5
     model = build_model(arch, settings, z_table, atomic_energies_dict)
     train_loader, valid_loaders = build_loaders(
         train_atoms, valid_atoms, z_table, r_max, tmp_path
@@ -200,13 +225,17 @@ def test_train_epoch_loss_decreases(arch, tmp_path):
 
 
 @pytest.mark.slow
-@pytest.mark.parametrize("arch", ["mace", "so3krates", "so3lr"])
+@pytest.mark.parametrize(
+    "arch", ["mace", "so3krates", "so3lr", "maceles"]
+)
 def test_validate_epoch_ensemble_returns_metrics(arch, tmp_path):
+    if arch == "maceles":
+        pytest.importorskip("les")
     train_atoms, valid_atoms, z_table, atomic_energies_dict = (
         load_si_fixtures()
     )
     settings = make_settings(arch, tmp_path)
-    r_max = 5.0 if arch == "mace" else 4.5
+    r_max = 5.0 if arch in ["mace", "maceles"] else 4.5
     model = build_model(arch, settings, z_table, atomic_energies_dict)
     train_loader, valid_loaders = build_loaders(
         train_atoms, valid_atoms, z_table, r_max, tmp_path
