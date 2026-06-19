@@ -113,6 +113,54 @@ CLUSTER:
   max_workers: 4
 ```
 
+### Starting AL from a pretrained ensemble and existing dataset
+
+If you have already trained an ensemble of models and labeled datasets from a previous run, you can skip the initial dataset generation step and directly run active learning. This is useful for:
+- **Continuing a training pipeline** with a different configuration or adaptive strategy
+- **Using models trained outside aims-PAX** (as long as they are compatible with the model architecture)
+- **Rapid experimentation** with new active learning hyperparameters
+
+**What to prepare:**
+
+1. **Pretrained models**: Place `.model` files in the directory specified by `model.yaml → GENERAL.model_dir` (default: `./model/`). Each model filename (without the `.model` extension) becomes the ensemble tag used when mapping datasets to models.
+
+2. **Datasets**: Prepare initial training and validation sets as `.extxyz` or `.xyz` files.
+
+3. **Configuration files**: Ensure the standard required files are present:
+   - `geometry.in` — Initial atomic geometry (or path via `MISC.path_to_geometry`)
+   - `control.in` — FHI-aims settings
+   - `model.yaml` — Model architecture settings
+   - `aimsPAX.yaml` — aims-PAX workflow settings
+
+**Two modes for dataset specification in `aimsPAX.yaml`:**
+
+**Option A — Single dataset for all ensemble members** (simplest):
+```yaml
+ACTIVE_LEARNING:
+  initial_train_dataset: ./train.extxyz
+  initial_valid_dataset: ./valid.extxyz
+```
+
+**Option B — Per-member dataset mapping** (when different seeds require different training data):
+```yaml
+ACTIVE_LEARNING:
+  initial_train_dataset:
+    myrun-42: ./train_seed0.extxyz
+    myrun-99: ./train_seed1.extxyz
+  initial_valid_dataset:
+    myrun-42: ./valid_seed0.extxyz
+    myrun-99: ./valid_seed1.extxyz
+```
+
+**Important:** The dictionary keys must exactly match the model filename stems (without `.model`).
+
+**Then run:**
+```bash
+aims-PAX-al
+```
+
+See also `example/pretrained_al/` for a complete working configuration.
+
 ### Common Pitfalls
 
 1. **Not specifying all required settings:** Take a look at the settings below. Mandatory ones are marked by *.
@@ -232,6 +280,8 @@ After the initial dataset generation is finished *aims PAX* does not converge th
 | extend\_existing\_final\_ds | `bool`           | `False`           | Append to an existing final dataset rather than overwriting it when re-running active learning. |
 | use\_teacher\_reference     | `bool`           | `False`           | Use an ML model instead of DFT for reference calculations. Requires `CLUSTER` settings. Disables `analysis`. See [Using a teacher model](#using-a-teacher-model-instead-of-dft). |
 | teacher\_reference\_settings| `dict`           | `None`            | Teacher model configuration. Must contain `model_type` when `use_teacher_reference: true`. See [Using a teacher model](#using-a-teacher-model-instead-of-dft). |
+| initial\_train\_dataset     | `str` or `dict`  | `null`            | Path to a single initial training set (replicated to all ensemble members) or a dict mapping model tag → path. See [Starting AL from a pretrained ensemble](#starting-al-from-a-pretrained-ensemble-and-existing-dataset). |
+| initial\_valid\_dataset     | `str` or `dict`  | `null`            | Path to a single initial validation set, or a dict mapping model tag → path. Must be set if `initial_train_dataset` is set. See [Starting AL from a pretrained ensemble](#starting-al-from-a-pretrained-ensemble-and-existing-dataset). |
 
 ##### Convergence 
 
