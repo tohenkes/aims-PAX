@@ -16,7 +16,8 @@ from pymatgen.io.ase import MSONAtoms
 from aims_PAX.atomate2 import AllowedMDMakers, AllowedReferenceMakers
 from aims_PAX.atomate2.random import RandomState
 from aims_PAX.settings.project import MDSettings, IDGSettings, MiscSettings
-from aims_PAX.tools.utilities.utilities import AIMSControlParser, Z_from_geometry, create_ztable
+from aims_PAX.tools.utilities.utilities import Z_from_geometry, create_ztable
+from pyfhiaims import AimsControl
 
 
 def get_idg_makers_from_settings(
@@ -100,7 +101,10 @@ def get_aims_maker(
         path_to_control: Path, species_dir: Path
 ) -> AllowedReferenceMakers:
     """Create a maker for reference runs."""
-    control_dict = AIMSControlParser()(path_to_control.as_posix())
+    aims_control = AimsControl.from_file(path_to_control)
+    control_dict = aims_control.parameters
+    if aims_control.outputs:
+        control_dict["output"] = aims_control.outputs
     control_dict["species_dir"] = species_dir
     return AimsStaticMaker(
         name="static-aims",

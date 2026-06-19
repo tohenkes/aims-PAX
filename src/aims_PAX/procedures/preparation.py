@@ -39,9 +39,9 @@ from aims_PAX.tools.utilities.utilities import (
     normalize_md_settings,
     apply_model_settings,
     apply_finetuning_settings,
-    AIMSControlParser,
     ModifyMD, log_ensemble,
 )
+from pyfhiaims import AimsControl
 from aims_PAX.tools.utilities.input_utils import read_geometry
 from aims_PAX.tools.model_tools.train_epoch import (
     train_epoch,
@@ -105,7 +105,6 @@ class PrepareInitialDatasetProcedure:
             aimsPAX_settings.INITIAL_DATASET_GENERATION.model_dump(),
         )
 
-        self.control_parser = AIMSControlParser()
         self._handle_model_settings(model_settings)
         logging.info(f"Using following settings for {self.model_choice.upper()}:")
         log_yaml_block(self.model_choice.upper(), model_settings.model_dump())
@@ -386,14 +385,20 @@ class PrepareInitialDatasetProcedure:
         """
 
         if isinstance(control_source, (str, Path)):
-            aims_settings = self.control_parser(control_source)
+            aims_control = AimsControl.from_file(control_source)
+            aims_settings = aims_control.parameters
+            if aims_control.outputs:
+                aims_settings["output"] = aims_control.outputs
             aims_settings["compute_forces"] = True
             aims_settings["species_dir"] = self.species_dir
             self.aims_settings = {0: aims_settings}
         elif isinstance(control_source, dict):
             self.aims_settings = {}
             for key, value in control_source.items():
-                aims_settings = self.control_parser(value)
+                aims_control = AimsControl.from_file(value)
+                aims_settings = aims_control.parameters
+                if aims_control.outputs:
+                    aims_settings["output"] = aims_control.outputs
                 aims_settings["compute_forces"] = True
                 aims_settings["species_dir"] = self.species_dir
                 if log:

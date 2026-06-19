@@ -70,7 +70,7 @@ Both procedures, initial dataset acquisition and active learning, are classes th
 Instead of calling FHI-aims for reference energies and forces, *aims-PAX* can use a pre-trained ML model (the "teacher") as the reference. This enables:
 - Running the full workflow on a **local machine without a DFT installation**
 - **Rapid prototyping** of active learning settings before committing to expensive DFT runs
-- **Distilling** a large foundational model (e.g. MACE-MP) into a lean custom MACE ensemble
+- **Distilling** a large foundational model (e.g. MACE-MP) into a lean custom model
 
 **Requirements:**
 - `CLUSTER` settings are required — teacher jobs are dispatched via PARSL. Use `type: local` for a local run.
@@ -537,46 +537,7 @@ SO3LR inherits all SO3Krates parameters above (`model_choice: "so3lr"`) and adds
 ## The workflow 
 <img src="readme_figs/aims_PAX_overview.png" alt="drawing" width="650"/>
 
-Please consult the [publication](https://arxiv.org/abs/2508.12888) for a description of the *aims-PAX* workflow.
-
-<!---
-
-The overall workflow of the procedure and some comments thereupon are written here. For more details on specific parameters take a look at the settings glossary at the bottom.
-
-Creating the initial ensemble and dataset.
-
-In the beginning a set of MACE models is trained on a initial dataset to serve as a starting point for the actual active learning. Each ensemble member gets their own initial training and validation set. See a) in the figure above.
-
-For that, *ab initio* MD is run (one trajectory) using FHI-aims via ASE. Alternatively, the *"foundational"* model MACE-MP0 is used to sample structures, which are subsequently recomputed using DFT via PARSL. This is recommended as one ideally wants to have uncorrelated structures and MACE-MP0 is much cheaper to evaluate and gives reasonable structures. Using PARSL, the calculations can be processed in parallel.
- 
-After a set number of samples  is collected the models are trained. Afterwards, new points are sampled and this loop is repeated until a desired level of accurcay (or a different criterion like max number of epochs etc.) of the ensemble on the validation datasets is reached.
-
-The model parameters are kept and updated throughout, so they are not reinitialized when new points are added.
-
-Optionally, the model(s) can be converged on the dataset. This means that the models are trained on the initial dataset until there is no improvement anymore. 
-
-
-
-Active Learning
-
-During the active learning procedure (c in the figure above), multiple MD trajectories are launched and run with the MLFF model(s). At a specified interval the uncertainty of the forces are computed. After a warmup (currently 10 uncertainty estimations) the moving average of the uncertainties is calculated. Using this the uncertainty threshold (with c~x) is computed. If the threshold is crossed during MD the DFT energies and forces are calculated for that point. The point is then added to the training or validation set.  
-
-In the former case the MD is halted for the given trajectory and when the program loops back to it the models are trained for some epochs instead before continuing to the next trajectory. This state is kept until a maximum number of epochs is reached and the trajectory is propageted again.
-
-In the serial version of *aims-PAX*, the whole workflow halts when a DFT calculation is being run. When using the PARSL version (requires `CLUSTER` settings), all DFT calculations are dispatched asynchronously and processed in parallel depending on the available resources.
-
-
-Similarly to the creation of the initial dataset, the models are updated throughout the whole process and are not reinitialized. As we are only adding a few points at a time this can lead to models getting stuck on a local minimum. If this happens, the optimizer state is reinitialized, which is supposed to kick the model out of the local minimum.
-
-If the ```analysis``` keyword is set to ```True```, points from the MLFF MD are taken at fixed intervals and re-computed using FHI AIMS. The results and other metrics are saved in a dictionary. This can be used to track how the uncertainty behaves etc. As this results in many more DFT calculations it is generally not recommended for production runs.
--->
-<!---
-Atomic Energies
-
-```THIS IS NOT IMPLEMENTED PROPERLY, RIGHT NOW!!!```
-
-It is recommended to use the isolated atomic energies of the elements in a given system as the *zero point* energy in MACE. This enables the model have the correct asymptotic behavior when dissocating molecules. The package includes a script that calculates the energies of all the elements found in a the ```geometry.in``` file. For this run ```aims-PAX-atomic-energies```. Make sure to have defined the path to aims, the species directory in the ```aimsPAX.yaml``` and also that a ```control.in``` file is present. The results are saved in a log file. The energies can then be included in ```model.yaml```.
--->
+Please consult the [publication](https://pubs.acs.org/doi/10.1021/acs.jcim.5c02682) for a description of the *aims-PAX* workflow.
 
 # References
 
@@ -704,10 +665,5 @@ For bugs or feature requests, please use [GitHub Issues](https://github.com/tohe
 ## License
 
 The *aims-PAX* code is published and distributed under the [MIT License](MIT.md).
-
-## TODO
-
-- [ ] add force restart
-- [ ] add units in setting variable names
 
 
