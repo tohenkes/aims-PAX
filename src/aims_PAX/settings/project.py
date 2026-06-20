@@ -438,33 +438,22 @@ class ALSettings(ProjectBaseModel):
 
     @model_validator(mode="after")
     def validate_initial_datasets(self) -> "ALSettings":
-        """Validate initial_train_dataset and initial_valid_dataset.
-
-        Rules:
-        1. Both must be set or both must be None.
-        2. If both are dicts, their key sets must be identical.
-        3. If one is Path and the other is dict, raise ValueError.
-        """
+        """Validate initial_train_dataset and initial_valid_dataset."""
         train_ds = self.initial_train_dataset
         valid_ds = self.initial_valid_dataset
 
-        # Rule 1: Both must be set or both must be None
         if (train_ds is None) != (valid_ds is None):
             raise ValueError(
                 "ACTIVE_LEARNING: initial_train_dataset and "
                 "initial_valid_dataset must both be set or both be None."
             )
 
-        # If both are None, no further validation needed
-        if train_ds is None and valid_ds is None:
+        if train_ds is None:
             return self
 
-        # At this point, both are not None
-        # Check type consistency
         train_is_dict = isinstance(train_ds, dict)
         valid_is_dict = isinstance(valid_ds, dict)
 
-        # Rule 3: If one is Path and the other is dict, raise ValueError
         if train_is_dict != valid_is_dict:
             raise ValueError(
                 "ACTIVE_LEARNING: initial_train_dataset and "
@@ -472,11 +461,9 @@ class ALSettings(ProjectBaseModel):
                 "(both Path or both dict[str, Path])."
             )
 
-        # Rule 2: If both are dicts, check key sets are identical
-        if train_is_dict and valid_is_dict:
+        if train_is_dict:
             train_keys = set(train_ds.keys())
             valid_keys = set(valid_ds.keys())
-
             if train_keys != valid_keys:
                 missing_in_valid = train_keys - valid_keys
                 extra_in_valid = valid_keys - train_keys
@@ -495,6 +482,21 @@ class ALSettings(ProjectBaseModel):
                         f"{sorted(extra_in_valid)}"
                     )
                 raise ValueError(msg)
+            paths = list(train_ds.values()) + list(valid_ds.values())
+        else:
+            paths = [train_ds, valid_ds]
+
+        _VALID_EXTS = {".xyz", ".extxyz"}
+        for p in paths:
+            if not p.exists():
+                raise ValueError(
+                    f"ACTIVE_LEARNING: dataset path does not exist: {p}"
+                )
+            if p.suffix not in _VALID_EXTS:
+                raise ValueError(
+                    f"ACTIVE_LEARNING: dataset path must be .xyz or "
+                    f".extxyz, got: {p}"
+                )
 
         return self
 
