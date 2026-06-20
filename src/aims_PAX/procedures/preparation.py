@@ -1215,6 +1215,7 @@ class ALEnsemble:
     def setup_ensemble_and_datasets(self):
         """Setup ensemble and datasets."""
         self._setup_ensemble()
+        self._load_seeds_tags_dict()  # re-run now that self.ensemble is populated
         self._setup_datasets()
 
         self._broadcast_dataset_info()
@@ -1249,7 +1250,10 @@ class ALEnsemble:
 
     def _setup_datasets(self):
         """Setup initial datasets (rank 0 only)."""
-        if self.config.al_settings.initial_train_dataset is not None:
+        if (
+            self.config.al_settings.initial_train_dataset is not None
+            and not self.config.restart
+        ):
             self._setup_datasets_from_provided_files()
             return
 
