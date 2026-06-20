@@ -1280,6 +1280,7 @@ class ALReferenceManagerPARSL:
         }
         self.results_lock = threading.Lock()
         self.kill_thread = False
+        self.reference_done = False
         threading.Thread(target=self._reference_thread, daemon=True).start()
 
     def handle_reference_call(self, point, idx: int):
@@ -1328,24 +1329,31 @@ class ALReferenceManagerPARSL:
         for idx in range(self.config.num_trajectories):
             futures[idx] = {}
 
+        kill_requested = False
+
         while True:
-            if self.kill_thread:
-                logging.info("Reference manager thread is stopping.")
-                return
-            try:
-                idx, data = self.reference_queue.get(timeout=1)
-                with self.results_lock:
-                    curr_job_no = self.reference_counter[idx]
-
-                futures[idx][curr_job_no] = self._submit_parsl_job(
-                    idx, data, curr_job_no
+            if self.kill_thread and not kill_requested:
+                logging.info(
+                    "Reference manager kill switch triggered. "
+                    "Waiting for pending reference jobs..."
                 )
-                with self.results_lock:
-                    self.reference_counter[idx] += 1
-                self.reference_queue.task_done()
+                kill_requested = True
 
-            except queue.Empty:
-                pass
+            if not kill_requested:
+                try:
+                    idx, data = self.reference_queue.get(timeout=1)
+                    with self.results_lock:
+                        curr_job_no = self.reference_counter[idx]
+
+                    futures[idx][curr_job_no] = self._submit_parsl_job(
+                        idx, data, curr_job_no
+                    )
+                    with self.results_lock:
+                        self.reference_counter[idx] += 1
+                    self.reference_queue.task_done()
+
+                except queue.Empty:
+                    pass
 
             # check futures for completion
             done_jobs = []
@@ -1380,11 +1388,19 @@ class ALReferenceManagerPARSL:
                                 " not found. Skipping removal."
                             )
 
+            if kill_requested and not any(futures.values()):
+                logging.info("Reference manager thread is stopping.")
+                self.reference_done = True
+                break
+
+            time.sleep(0.1)
+
     def finalize_reference(self):
         """Stop the reference thread and clean up PARSL."""
         with threading.Lock():
             self.kill_thread = True
-        time.sleep(10)
+        while not self.reference_done:
+            time.sleep(0.1)
         if not self.config.analysis:
             parsl.dfk().cleanup()
 
