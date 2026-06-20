@@ -154,6 +154,8 @@ ACTIVE_LEARNING:
 
 **Important:** The dictionary keys must exactly match the model filename stems (without `.model`).
 
+**Multihead models:** If your `model.yaml` enables a multihead architecture, each frame in the dataset files must carry a `head` annotation in its `atoms.info` dict (e.g. `atoms.info["head"] = "head_0"`). Without it every frame is silently assigned to head `"Default"`, which causes a `KeyError` during dataset construction. aims-PAX will emit a warning if unannotated frames are detected. Single-head models are unaffected.
+
 **Then run:**
 ```bash
 aims-PAX-al

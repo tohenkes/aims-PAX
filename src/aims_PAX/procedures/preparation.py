@@ -1353,6 +1353,21 @@ class ALEnsemble:
                 "valid": valid_atoms,
             }
 
+        if self.config.all_heads is not None:
+            first_tag = tags[0]
+            sample = self.ensemble_ase_sets[first_tag]["train"]
+            unannotated = [a for a in sample if a.info.get("head") is None]
+            if unannotated:
+                logging.warning(
+                    f"{len(unannotated)} of {len(sample)} training frames "
+                    "have no 'head' annotation. For multihead models each "
+                    "frame must carry atoms.info['head'] set to one of: "
+                    f"{self.config.all_heads}. Frames without this key are "
+                    "assigned to head 'Default', which will cause a KeyError "
+                    "during dataset construction. Add head annotations to "
+                    "your extxyz files before proceeding."
+                )
+
         self.ensemble_model_sets = ase_to_model_ensemble_sets(
             ensemble_ase_sets=self.ensemble_ase_sets,
             z_table=self.z_table,

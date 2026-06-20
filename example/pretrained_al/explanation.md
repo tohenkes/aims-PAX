@@ -53,8 +53,6 @@ initial_train_dataset: ./train.extxyz
 initial_valid_dataset: ./valid.extxyz
 ```
 - Simplest approach
-- All ensemble members train on the same data
-- Use when you want consistent ensemble initialization
 
 **Option B: Per-member datasets**
 ```yaml
@@ -70,6 +68,23 @@ initial_valid_dataset:
 - Keys must match model filename stems exactly
 
 
+### Multihead Models
+
+If your `model.yaml` uses a multihead architecture, each frame in your dataset files must include a `head` annotation. Without it, frames are silently assigned to head `"Default"` and dataset construction will fail with a `KeyError`.
+
+Add the annotation when building or converting your dataset:
+```python
+from ase.io import read, write
+
+atoms_list = read("my_dataset.extxyz", index=":")
+for atoms in atoms_list:
+    atoms.info["head"] = "head_0"   # or "head_1", etc.
+write("my_dataset_annotated.extxyz", atoms_list)
+```
+
+aims-PAX will emit a warning if it detects training frames without `head` annotations when a multihead model is configured. Single-head models are unaffected.
+
+
 ### Running
 
 Start active learning with:
@@ -79,16 +94,3 @@ aims-PAX-al --model-settings model.yaml --aimsPAX-settings aimsPAX.yaml
 
 The command reads your pretrained models and datasets, initializes the ensemble with the provided data, and begins active learning iterations.
 
-
-### What Happens Next
-
-The workflow proceeds as follows:
-
-1. **Initialization** — Loads pretrained ensemble members and the provided training/validation data
-2. **MD Propagation** — Runs MD trajectories using the ensemble for dynamics
-3. **Uncertainty Check** — Evaluates ensemble force variance (std-dev) on sampled structures
-4. **Selective Labeling** — Structures exceeding the uncertainty threshold are sent to DFT
-5. **Retraining** — Ensemble is retrained on the updated dataset (original data + new DFT labels)
-6. **Convergence** — Iteration continues until desired accuracy is reached or convergence criteria are met
-
-All settings (trajectories, threshold adaptation, retraining frequency, etc.) are controlled by the `ACTIVE_LEARNING` section in this file.

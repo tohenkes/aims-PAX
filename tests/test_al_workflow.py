@@ -329,6 +329,51 @@ def test_per_member_dict_wrong_tags_raises(tmp_path):
         ALEnsemble._setup_datasets_from_provided_files(stub)
 
 
+def test_multihead_warning_fires_for_unannotated_frames(tmp_path, caplog):
+    """Warning logged when multihead config is used but frames lack head key."""
+    train_path = tmp_path / "train.extxyz"
+    valid_path = tmp_path / "valid.extxyz"
+    _make_single_h2_extxyz(train_path)
+    _make_single_h2_extxyz(valid_path)
+
+    stub = _make_ensemble_stub(tmp_path, train_path, valid_path)
+    stub.config.all_heads = ["head_0", "head_1"]
+
+    with patch(_PATCH_TARGET, return_value={}):
+        with caplog.at_level(logging.WARNING):
+            ALEnsemble._setup_datasets_from_provided_files(stub)
+
+    assert any(
+        "head" in r.message and "annotation" in r.message
+        for r in caplog.records
+        if r.levelno == logging.WARNING
+    )
+
+
+def test_multihead_no_warning_when_frames_annotated(tmp_path, caplog):
+    """No head-annotation warning when all frames carry a head key."""
+    train_path = tmp_path / "train.extxyz"
+    valid_path = tmp_path / "valid.extxyz"
+
+    atoms = [Atoms("H2", positions=[[0, 0, 0], [0, 0, 0.74]])]
+    atoms[0].info["head"] = "head_0"
+    write(str(train_path), atoms)
+    write(str(valid_path), atoms)
+
+    stub = _make_ensemble_stub(tmp_path, train_path, valid_path)
+    stub.config.all_heads = ["head_0", "head_1"]
+
+    with patch(_PATCH_TARGET, return_value={}):
+        with caplog.at_level(logging.WARNING):
+            ALEnsemble._setup_datasets_from_provided_files(stub)
+
+    assert not any(
+        "head" in r.message and "annotation" in r.message
+        for r in caplog.records
+        if r.levelno == logging.WARNING
+    )
+
+
 # ===========================================================================
 # §7 — ALEnsemble._load_seeds_tags_dict fallback
 # ===========================================================================
