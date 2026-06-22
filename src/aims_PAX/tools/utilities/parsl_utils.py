@@ -414,7 +414,7 @@ def _build_teacher_calculator(
     else:
         raise ValueError(
             f"Unknown teacher model type: {model_type}. "
-            "Supported types: 'mace-mp', 'mace', 'so3lr', 'so3krates'."
+            "Supported types: 'mace-mp', 'mace', 'maceles', 'so3lr', 'so3krates'."
         )
 
 
@@ -482,7 +482,7 @@ def recalc_teacher_model_parsl(
         cell (np.ndarray): Unit cell of the system.
         pbc (bool): Periodic boundary conditions.
         model_type (str): Type of the teacher model.
-            One of "mace-mp", "mace", "so3lr", "so3krates".
+            One of "mace-mp", "mace", "maceles", "so3lr", "so3krates".
         model_path (str, optional): Path to a trained model file.
             Required for "mace", "so3lr", "so3krates".
         model_settings (dict, optional): Additional model settings
