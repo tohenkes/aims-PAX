@@ -347,3 +347,92 @@ def test_random_subset_with_subset_size(tmp_path):
     )
     assert s.replay_strategy == "random_subset"
     assert s.train_subset_size == 50
+
+
+# ===========================================================================
+# §11 — initial_train_dataset / initial_valid_dataset cross-field validation
+# ===========================================================================
+
+
+def test_initial_dataset_single_path_valid(tmp_path):
+    """Both fields as Path to existing files → ALSettings succeeds."""
+    train_file = tmp_path / "train.xyz"
+    valid_file = tmp_path / "valid.xyz"
+    train_file.touch()
+    valid_file.touch()
+    s = ALSettings(
+        **make_base(
+            tmp_path,
+            initial_train_dataset=train_file,
+            initial_valid_dataset=valid_file,
+        )
+    )
+    assert s.initial_train_dataset == train_file
+    assert s.initial_valid_dataset == valid_file
+
+
+def test_initial_dataset_dict_valid(tmp_path):
+    """Both fields as dicts with identical keys → ALSettings succeeds."""
+    train_a = tmp_path / "train_a.xyz"
+    train_b = tmp_path / "train_b.xyz"
+    valid_a = tmp_path / "valid_a.xyz"
+    valid_b = tmp_path / "valid_b.xyz"
+    for f in (train_a, train_b, valid_a, valid_b):
+        f.touch()
+    s = ALSettings(
+        **make_base(
+            tmp_path,
+            initial_train_dataset={"tag_a": train_a, "tag_b": train_b},
+            initial_valid_dataset={"tag_a": valid_a, "tag_b": valid_b},
+        )
+    )
+    assert set(s.initial_train_dataset.keys()) == {"tag_a", "tag_b"}
+    assert set(s.initial_valid_dataset.keys()) == {"tag_a", "tag_b"}
+
+
+def test_initial_dataset_only_train_set(tmp_path):
+    """Setting only initial_train_dataset without valid raises ValidationError."""
+    train_file = tmp_path / "train.xyz"
+    train_file.touch()
+    with pytest.raises(ValidationError):
+        ALSettings(
+            **make_base(
+                tmp_path,
+                initial_train_dataset=train_file,
+                initial_valid_dataset=None,
+            )
+        )
+
+
+def test_initial_dataset_dict_mismatched_keys(tmp_path):
+    """Dict keys that differ between train and valid raise ValidationError."""
+    train_a = tmp_path / "train_a.xyz"
+    train_b = tmp_path / "train_b.xyz"
+    valid_a = tmp_path / "valid_a.xyz"
+    valid_c = tmp_path / "valid_c.xyz"
+    for f in (train_a, train_b, valid_a, valid_c):
+        f.touch()
+    with pytest.raises(ValidationError):
+        ALSettings(
+            **make_base(
+                tmp_path,
+                initial_train_dataset={"a": train_a, "b": train_b},
+                initial_valid_dataset={"a": valid_a, "c": valid_c},
+            )
+        )
+
+
+def test_initial_dataset_type_mismatch(tmp_path):
+    """Train as Path and valid as dict (type mismatch) raises ValidationError."""
+    train_file = tmp_path / "train.xyz"
+    valid_a = tmp_path / "valid_a.xyz"
+    for f in (train_file, valid_a):
+        f.touch()
+    with pytest.raises(ValidationError):
+        ALSettings(
+            **make_base(
+                tmp_path,
+                initial_train_dataset=train_file,
+                initial_valid_dataset={"a": valid_a},
+            )
+        )

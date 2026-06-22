@@ -354,6 +354,22 @@ class ALSettings(ProjectBaseModel):
     extend_existing_final_ds: bool = Field(
         default=False
     )
+    initial_train_dataset: Path | dict[str, Path] | None = Field(
+        default=None,
+        description=(
+            "Path to a single initial training set replicated across all ensemble "
+            "members, or a dict mapping model tag (filename stem without .model) "
+            "to a per-member path."
+        ),
+    )
+    initial_valid_dataset: Path | dict[str, Path] | None = Field(
+        default=None,
+        description=(
+            "Path to a single initial validation set replicated across all ensemble "
+            "members, or a dict mapping model tag to a per-member path. "
+            "Must be set if initial_train_dataset is set."
+        ),
+    )
     use_foundational: bool = False
     foundational_model_settings: FMSettings | None = None
 
@@ -418,6 +434,70 @@ class ALSettings(ProjectBaseModel):
                 "train_subset_size must be specified when "
                 "replay_strategy='random_subset'."
             )
+        return self
+
+    @model_validator(mode="after")
+    def validate_initial_datasets(self) -> "ALSettings":
+        """Validate initial_train_dataset and initial_valid_dataset."""
+        train_ds = self.initial_train_dataset
+        valid_ds = self.initial_valid_dataset
+
+        if (train_ds is None) != (valid_ds is None):
+            raise ValueError(
+                "ACTIVE_LEARNING: initial_train_dataset and "
+                "initial_valid_dataset must both be set or both be None."
+            )
+
+        if train_ds is None:
+            return self
+
+        train_is_dict = isinstance(train_ds, dict)
+        valid_is_dict = isinstance(valid_ds, dict)
+
+        if train_is_dict != valid_is_dict:
+            raise ValueError(
+                "ACTIVE_LEARNING: initial_train_dataset and "
+                "initial_valid_dataset must have the same type "
+                "(both Path or both dict[str, Path])."
+            )
+
+        if train_is_dict:
+            train_keys = set(train_ds.keys())
+            valid_keys = set(valid_ds.keys())
+            if train_keys != valid_keys:
+                missing_in_valid = train_keys - valid_keys
+                extra_in_valid = valid_keys - train_keys
+                msg = (
+                    "ACTIVE_LEARNING: initial_train_dataset and "
+                    "initial_valid_dataset dict keys must match."
+                )
+                if missing_in_valid:
+                    msg += (
+                        f" Missing in initial_valid_dataset: "
+                        f"{sorted(missing_in_valid)}"
+                    )
+                if extra_in_valid:
+                    msg += (
+                        f" Extra in initial_valid_dataset: "
+                        f"{sorted(extra_in_valid)}"
+                    )
+                raise ValueError(msg)
+            paths = list(train_ds.values()) + list(valid_ds.values())
+        else:
+            paths = [train_ds, valid_ds]
+
+        _VALID_EXTS = {".xyz", ".extxyz"}
+        for p in paths:
+            if not p.exists():
+                raise ValueError(
+                    f"ACTIVE_LEARNING: dataset path does not exist: {p}"
+                )
+            if p.suffix not in _VALID_EXTS:
+                raise ValueError(
+                    f"ACTIVE_LEARNING: dataset path must be .xyz or "
+                    f".extxyz, got: {p}"
+                )
+
         return self
 
 
