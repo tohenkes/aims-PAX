@@ -6,10 +6,6 @@ from typing import Any
 
 import numpy as np
 from ase import units, Atoms
-from atomate2.aims.jobs.core import StaticMaker as AimsStaticMaker
-from atomate2.ase.md import MDEnsemble
-from atomate2.forcefields import MLFF
-from atomate2.forcefields.md import ForceFieldMDMaker
 from pymatgen.io.aims.sets.core import StaticSetGenerator as AimsStaticSetGenerator
 from pymatgen.io.ase import MSONAtoms
 
@@ -52,6 +48,9 @@ def get_mace_mp_maker(
         md_settings: MDSettings,
 ) -> dict[int, AllowedMDMakers]:
     """Create a maker for MD runs."""
+    from atomate2.ase.md import MDEnsemble
+    from atomate2.forcefields import MLFF
+    from atomate2.forcefields.md import ForceFieldMDMaker
     makers = {}
     idx_makers = (
         md_settings.root.keys()
@@ -101,6 +100,7 @@ def get_aims_maker(
         path_to_control: Path, species_dir: Path
 ) -> AllowedReferenceMakers:
     """Create a maker for reference runs."""
+    from atomate2.aims.jobs.core import StaticMaker as AimsStaticMaker
     aims_control = AimsControl.from_file(path_to_control)
     control_dict = aims_control.parameters
     if aims_control.outputs:
