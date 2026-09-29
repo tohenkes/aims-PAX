@@ -31,14 +31,13 @@ jobs:
         uses: actions/cache@v4
         with:
           path: ~/.cache/pip
-          key: pip-${{ runner.os }}-py310-${{ hashFiles('requirements.txt', 'pyproject.toml') }}
+          key: pip-${{ runner.os }}-py310-${{ hashFiles('pyproject.toml') }}
           restore-keys: |
             pip-${{ runner.os }}-py310-
 
       - name: Install Python dependencies
         shell: bash -el {0}
         run: |
-          pip install -r requirements.txt
           pip install -e ".[tests]"
 
       - name: Run fast test suite
@@ -71,14 +70,13 @@ jobs:
         uses: actions/cache@v4
         with:
           path: ~/.cache/pip
-          key: pip-${{ runner.os }}-py310-${{ hashFiles('requirements.txt', 'pyproject.toml') }}
+          key: pip-${{ runner.os }}-py310-${{ hashFiles('pyproject.toml') }}
           restore-keys: |
             pip-${{ runner.os }}-py310-
 
       - name: Install Python dependencies
         shell: bash -el {0}
         run: |
-          pip install -r requirements.txt
           pip install -e ".[tests]"
 
       - name: Run hermetic SO3LR e2e tests

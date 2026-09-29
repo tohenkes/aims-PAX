@@ -2,8 +2,5 @@
 echo "Installing conda dependencies..."
 conda install -y -c conda-forge ndcctools
 
-echo "Installing pip dependencies..."
-pip install -r requirements.txt
-
-echo "Installing aimsPAX..."
+echo "Installing aimsPAX and its pip dependencies..."
 pip install .

@@ -17,25 +17,26 @@ classifiers = [
     "Programming Language :: Python :: 3"
 ]
 dependencies = [
-    "numpy==1.26.4",
-    "mace-torch==0.3.14",
-    "so3krates-torch==0.2.0",
-    "torch==2.8.0",
-    "pyyaml>=6.0.1",
-    "ase==3.26.0",
-    "parsl==2024.12.16",
+    "numpy>=1.26.4,<2",
+    "torch>=2.6",
+    "mace-torch>=0.3.14",
+    "so3krates-torch>=0.2.1",
+    "ase>=3.26.0",
+    "parsl>=2024.12.16",
     "pydantic>=2.0,<3.0.0",
+    "pyyaml>=6.0.1",
     "pyfhiaims",
-    "pymatgen-io-aims",
-    "monty"
+    "monty",
 ]
 
 [project.optional-dependencies]
 atomate2 = [
     "atomate2",
     "jobflow",
+    "pymatgen-io-aims",
 ]
 tests = [
+    "aims_PAX[atomate2]",
     "pytest",
     "pytest-cov"
 ]

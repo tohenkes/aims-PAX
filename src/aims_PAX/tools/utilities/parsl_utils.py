@@ -159,7 +159,6 @@ def create_parsl_config(cluster_settings: ClusterSettings, output_dir: Path = Pa
                 )
             ],
             run_dir=str(run_dir),
-            app_cache=False,
             initialize_logging=False,
             retries=0,
         )
@@ -215,7 +214,6 @@ def create_parsl_config(cluster_settings: ClusterSettings, output_dir: Path = Pa
                 )
             ],
             run_dir=str(run_dir),
-            app_cache=False,
             initialize_logging=False,
             retries=3,
         )
@@ -239,7 +237,6 @@ def create_parsl_config(cluster_settings: ClusterSettings, output_dir: Path = Pa
                 )
             ],
             run_dir=str(run_dir),
-            app_cache=False,
             initialize_logging=False,
             retries=3,
         )
