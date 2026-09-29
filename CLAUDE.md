@@ -16,7 +16,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 conda create -n my_env python=3.10
 conda activate my_env
 cd aims-PAX
-bash setup.sh  # installs ndcctools (conda-forge) + pip dependencies + package in editable mode
+bash setup.sh  # installs ndcctools (conda-forge) + aims-PAX and its dependencies (pyproject.toml)
 ```
 
 ## CLI Entry Points
