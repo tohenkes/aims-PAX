@@ -415,7 +415,6 @@ def local_parsl_config():
     config = Config(
         executors=[ParslThreadPoolExecutor(label="local", max_threads=2)],
         run_dir=run_dir,
-        app_cache=False,
         initialize_logging=False,
         retries=0,
     )
