@@ -24,7 +24,7 @@ To install *aims-PAX* and all its requirements do the following steps:
 4. Move to the *aims-PAX* directory: `cd aims-PAX`
 5. run the setup script: `bash setup.sh`
 
-The latter will install the PARSL tools, other packages specified in `requirements.txt`, and *aims-PAX* itself.
+The latter will install the PARSL tools (`ndcctools`, via conda-forge) and *aims-PAX* together with its dependencies as declared in `pyproject.toml`. The optional atomate2 workflows can be enabled with `pip install ".[atomate2]"`.
 
 ### FHI aims
 
