@@ -36,6 +36,7 @@ atomate2 = [
     "pymatgen-io-aims",
 ]
 tests = [
+    "aims_PAX[atomate2]",
     "pytest",
     "pytest-cov"
 ]
