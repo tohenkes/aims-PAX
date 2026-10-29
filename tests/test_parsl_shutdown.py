@@ -4,6 +4,7 @@ instead of leaving non-daemon PARSL threads alive (which made the process
 hang and left Slurm blocks running until their idle timeout).
 """
 
+import io
 import logging
 import subprocess
 import sys
@@ -98,14 +99,61 @@ def test_keyboard_interrupt_cleans_up_and_propagates(caplog):
     assert not [r for r in caplog.records if r.exc_info]
 
 
-def test_logs_traceback(caplog):
-    with caplog.at_level(logging.ERROR):
-        with pytest.raises(RuntimeError):
-            with shutdown_parsl_on_exit():
-                raise RuntimeError("boom")
-    records = [r for r in caplog.records if r.exc_info]
-    assert len(records) == 1
-    assert records[0].exc_info[0] is RuntimeError
+@pytest.fixture
+def file_and_console_handlers(tmp_path):
+    """A file handler and a console-like handler on the root logger."""
+    root = logging.getLogger()
+    log_file = tmp_path / "run.log"
+    file_handler = logging.FileHandler(log_file)
+    console = io.StringIO()
+    console_handler = logging.StreamHandler(console)
+    for handler in (file_handler, console_handler):
+        handler.setLevel(logging.DEBUG)
+        root.addHandler(handler)
+    yield log_file, console
+    for handler in (file_handler, console_handler):
+        root.removeHandler(handler)
+    file_handler.close()
+
+
+def test_traceback_goes_to_log_file_but_not_console(
+    file_and_console_handlers,
+):
+    log_file, console = file_and_console_handlers
+    with pytest.raises(RuntimeError, match="boom"):
+        with shutdown_parsl_on_exit():
+            raise RuntimeError("boom")
+    assert "Traceback" in log_file.read_text()
+    assert "RuntimeError: boom" in log_file.read_text()
+    # the interpreter prints the traceback itself once the error propagates
+    assert "Traceback" not in console.getvalue()
+    assert "shutting PARSL down" in console.getvalue()
+
+
+_LOGGING_SCRIPT = textwrap.dedent("""
+    import sys
+    from aims_PAX.tools.utilities.utilities import setup_logger
+    from aims_PAX.tools.utilities.parsl_utils import shutdown_parsl_on_exit
+
+    setup_logger(tag="run", directory=sys.argv[1])
+    with shutdown_parsl_on_exit():
+        raise FileNotFoundError("geometry.in")
+    """)
+
+
+def test_traceback_is_printed_once_on_the_console_and_once_in_the_log(
+    tmp_path,
+):
+    result = subprocess.run(
+        [sys.executable, "-c", _LOGGING_SCRIPT, str(tmp_path)],
+        capture_output=True,
+        text=True,
+        timeout=120,
+        cwd=tmp_path,
+    )
+    assert result.returncode != 0
+    assert (result.stdout + result.stderr).count("Traceback") == 1
+    assert (tmp_path / "run.log").read_text().count("Traceback") == 1
 
 
 _WQ_SCRIPT = textwrap.dedent("""

@@ -257,6 +257,30 @@ def handle_parsl_logger(log_dir: Path = Path("./")):
     parsl_logger.propagate = False
 
 
+def _log_abort(error: Exception) -> None:
+    """
+    Logs that the run is aborting. File handlers get the traceback (stderr
+    may be lost, e.g. when the job's output file was deleted); other
+    handlers get the message only, since the interpreter prints the
+    traceback itself once the error propagates.
+    """
+    root = logging.getLogger()
+    message = "aims-PAX aborted with an unhandled error; shutting PARSL down."
+    exc_info = (type(error), error, error.__traceback__)
+    for handler in root.handlers:
+        record = root.makeRecord(
+            root.name,
+            logging.ERROR,
+            __file__,
+            0,
+            message,
+            (),
+            exc_info if isinstance(handler, logging.FileHandler) else None,
+        )
+        if record.levelno >= handler.level:
+            handler.handle(record)
+
+
 def _shutdown_parsl():
     """Cleans up the loaded DataFlowKernel, if any. Never raises."""
     try:
@@ -281,17 +305,14 @@ def shutdown_parsl_on_exit():
     after a run that finishes without ever closing PARSL (e.g. AL already
     marked as done). The process then hangs silently until the Slurm job is
     killed, while the DFT workers idle out. Cleaning up here lets the process
-    exit and cancels the blocks. On an error, the traceback is logged first
-    (stderr may be lost) and the original exception is re-raised unchanged.
+    exit and cancels the blocks. On an error, the traceback is logged to the
+    log files first and the original exception is re-raised unchanged.
     """
     try:
         yield
     except BaseException as error:
         if isinstance(error, Exception):
-            logging.exception(
-                "aims-PAX aborted with an unhandled error; "
-                "shutting PARSL down."
-            )
+            _log_abort(error)
         _shutdown_parsl()
         raise
     else:
