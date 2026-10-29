@@ -1,7 +1,10 @@
+import contextlib
 import os
 import socket
 import threading
+import parsl
 from parsl.config import Config
+from parsl.errors import NoDataFlowKernelError
 from parsl.executors import WorkQueueExecutor, MPIExecutor
 from parsl.executors import ThreadPoolExecutor as ParslThreadPoolExecutor
 from parsl.providers import SlurmProvider
@@ -252,6 +255,38 @@ def handle_parsl_logger(log_dir: Path = Path("./")):
     parsl_logger.handlers.clear()
     parsl_logger.addHandler(parsl_handler)
     parsl_logger.propagate = False
+
+
+@contextlib.contextmanager
+def shutdown_parsl_on_error():
+    """
+    Shuts PARSL down if the wrapped block fails, then re-raises.
+
+    A loaded PARSL (executor threads, Slurm blocks) keeps the process alive
+    after an unhandled exception in the main thread. The run then hangs
+    silently until the Slurm job is killed, while the DFT workers idle out.
+    Cleaning up here lets the process exit with the original traceback and
+    cancels the blocks. Nothing happens if the block finishes normally.
+    """
+    try:
+        yield
+    except BaseException as error:
+        if isinstance(error, Exception):
+            logging.exception(
+                "aims-PAX aborted with an unhandled error; "
+                "shutting PARSL down."
+            )
+        try:
+            dfk = parsl.dfk()
+        except NoDataFlowKernelError:
+            dfk = None
+        if dfk is not None:
+            try:
+                dfk.cleanup()
+                parsl.clear()
+            except Exception:
+                logging.exception("PARSL cleanup after error failed.")
+        raise
 
 
 @python_app

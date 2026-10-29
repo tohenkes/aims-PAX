@@ -12,6 +12,7 @@ Convention focus:
   #3 (assert the dispatched class, not just "ran without error")
 """
 
+import contextlib
 import sys
 from unittest.mock import MagicMock, patch
 
@@ -269,3 +270,77 @@ def test_recalc_constructs_calculator_with_correct_kwargs(monkeypatch):
     assert kw["path_to_control"] == "ctrl.in"
     assert kw["start_idx"] == 5
     assert kw["end_idx"] == 20
+
+
+# ---------------------------------------------------------------------------
+# §6 — a failing run shuts PARSL down (instead of hanging on live threads)
+# ---------------------------------------------------------------------------
+
+_SHUTDOWN_CASES = [
+    ("full", full_wf_mod, "aims_PAX.cli.__main__", "ALProcedurePARSL"),
+    (
+        "initial-ds",
+        initial_ds_mod,
+        "aims_PAX.cli.create_initial_ds",
+        "InitialDatasetPARSL",
+    ),
+    (
+        "al-only",
+        al_only_mod,
+        "aims_PAX.cli.al_procedure_only",
+        "ALProcedurePARSL",
+    ),
+    (
+        "recalc",
+        recalc_mod,
+        "aims_PAX.cli.recalculate_data",
+        "ReCalculatorPARSL",
+    ),
+]
+
+
+@pytest.mark.parametrize(
+    "module,mod_path,failing_cls",
+    [c[1:] for c in _SHUTDOWN_CASES],
+    ids=[c[0] for c in _SHUTDOWN_CASES],
+)
+def test_cli_shuts_down_parsl_on_error(
+    module, mod_path, failing_cls, monkeypatch
+):
+    argv = [
+        "cmd",
+        "--model-settings",
+        "m.yaml",
+        "--aimsPAX-settings",
+        "a.yaml",
+    ]
+    if module is recalc_mod:
+        argv = ["cmd", "--data", "dataset.xyz"]
+    monkeypatch.setattr(sys, "argv", argv)
+    settings = _mock_settings(
+        initial_sampling="foundational", has_cluster=True
+    )
+    patches = [
+        patch(
+            f"{mod_path}.{failing_cls}",
+            side_effect=FileNotFoundError("geometry.in"),
+        ),
+        patch("parsl.dfk"),
+        patch("parsl.clear"),
+    ]
+    if module is not recalc_mod:
+        patches.append(_rif_patch(mod_path, settings))
+    if module is full_wf_mod:
+        # the IDG stage succeeds; the crash happens when AL is constructed
+        patches.append(
+            patch(
+                f"{mod_path}.InitialDatasetPARSL",
+                return_value=_done_instance(),
+            )
+        )
+    with contextlib.ExitStack() as stack:
+        mocks = [stack.enter_context(p) for p in patches]
+        mock_dfk = mocks[1]
+        with pytest.raises(FileNotFoundError, match="geometry.in"):
+            module.main()
+    mock_dfk.return_value.cleanup.assert_called_once()
