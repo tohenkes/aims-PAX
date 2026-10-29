@@ -1,6 +1,6 @@
 from aims_PAX.procedures.recalculate import ReCalculatorPARSL
 import argparse
-from aims_PAX.tools.utilities.parsl_utils import shutdown_parsl_on_error
+from aims_PAX.tools.utilities.parsl_utils import shutdown_parsl_on_exit
 
 
 def main():
@@ -57,7 +57,7 @@ def main():
 
     args = parse_arguments()
 
-    with shutdown_parsl_on_error():
+    with shutdown_parsl_on_exit():
         recalc = ReCalculatorPARSL(
             path_to_data=args.data,
             basis_dir=args.basis_dir,

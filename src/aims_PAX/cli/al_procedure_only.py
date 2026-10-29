@@ -1,7 +1,7 @@
 from aims_PAX.procedures.active_learning import ALProcedurePARSL
 import argparse
 from aims_PAX.tools.utilities.input_utils import read_input_files
-from aims_PAX.tools.utilities.parsl_utils import shutdown_parsl_on_error
+from aims_PAX.tools.utilities.parsl_utils import shutdown_parsl_on_exit
 
 
 def main():
@@ -36,7 +36,7 @@ def main():
             "Please add a CLUSTER section to aimsPAX.yaml."
         )
 
-    with shutdown_parsl_on_error():
+    with shutdown_parsl_on_exit():
         al = ALProcedurePARSL(
             model_settings=model_settings,
             aimsPAX_settings=aimsPAX_settings,

@@ -6,7 +6,7 @@ from aims_PAX.procedures.initial_dataset import (
     InitialDatasetPARSLTeacher,
 )
 from aims_PAX.tools.utilities.input_utils import read_input_files
-from aims_PAX.tools.utilities.parsl_utils import shutdown_parsl_on_error
+from aims_PAX.tools.utilities.parsl_utils import shutdown_parsl_on_exit
 
 
 def main():
@@ -35,7 +35,7 @@ def main():
         )
     )
 
-    with shutdown_parsl_on_error():
+    with shutdown_parsl_on_exit():
         idg = aimsPAX_settings.INITIAL_DATASET_GENERATION
         if idg.initial_sampling.lower() == "aimd":
             initial_ds = InitialDatasetAIMD(

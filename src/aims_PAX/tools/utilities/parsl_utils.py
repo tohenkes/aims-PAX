@@ -257,16 +257,31 @@ def handle_parsl_logger(log_dir: Path = Path("./")):
     parsl_logger.propagate = False
 
 
+def _shutdown_parsl():
+    """Cleans up the loaded DataFlowKernel, if any. Never raises."""
+    try:
+        dfk = parsl.dfk()
+    except NoDataFlowKernelError:
+        return
+    try:
+        dfk.cleanup()
+        parsl.clear()
+    except Exception:
+        logging.exception("PARSL cleanup failed.")
+
+
 @contextlib.contextmanager
-def shutdown_parsl_on_error():
+def shutdown_parsl_on_exit():
     """
-    Shuts PARSL down if the wrapped block fails, then re-raises.
+    Shuts PARSL down when the wrapped block ends, however it ends.
 
     A loaded PARSL (executor threads, Slurm blocks) keeps the process alive
-    after an unhandled exception in the main thread. The run then hangs
-    silently until the Slurm job is killed, while the DFT workers idle out.
-    Cleaning up here lets the process exit with the original traceback and
-    cancels the blocks. Nothing happens if the block finishes normally.
+    after the main thread is done: after an unhandled exception, but also
+    after a run that finishes without ever closing PARSL (e.g. AL already
+    marked as done). The process then hangs silently until the Slurm job is
+    killed, while the DFT workers idle out. Cleaning up here lets the process
+    exit and cancels the blocks. On an error, the traceback is logged first
+    (stderr may be lost) and the original exception is re-raised unchanged.
     """
     try:
         yield
@@ -276,17 +291,10 @@ def shutdown_parsl_on_error():
                 "aims-PAX aborted with an unhandled error; "
                 "shutting PARSL down."
             )
-        try:
-            dfk = parsl.dfk()
-        except NoDataFlowKernelError:
-            dfk = None
-        if dfk is not None:
-            try:
-                dfk.cleanup()
-                parsl.clear()
-            except Exception:
-                logging.exception("PARSL cleanup after error failed.")
+        _shutdown_parsl()
         raise
+    else:
+        _shutdown_parsl()
 
 
 @python_app
