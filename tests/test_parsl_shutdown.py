@@ -75,6 +75,16 @@ def test_cleanup_failure_does_not_mask_original_error():
     dfk.cleanup.assert_called_once()
 
 
+def test_dfk_is_cleared_even_if_cleanup_fails():
+    dfk = MagicMock()
+    dfk.cleanup.side_effect = OSError("cleanup failed")
+    with patch("parsl.dfk", return_value=dfk), patch("parsl.clear") as clear:
+        with pytest.raises(RuntimeError, match="boom"):
+            with shutdown_parsl_on_exit():
+                raise RuntimeError("boom")
+    clear.assert_called_once()
+
+
 def test_keyboard_interrupt_cleans_up_and_propagates(caplog):
     with (
         patch("parsl.dfk") as mock_dfk,

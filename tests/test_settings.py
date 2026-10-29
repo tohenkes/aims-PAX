@@ -310,6 +310,22 @@ def test_calc_dir_refused_when_it_contains_output_dir(tmp_path, monkeypatch):
         AimsPAXSettings.model_validate(data)
 
 
+def test_calc_dir_refused_when_it_equals_dataset_dir_under_other_output_dir(
+    tmp_path, monkeypatch
+):
+    """dataset_dir is resolved against output_dir, not the cwd."""
+    workdir = tmp_path / "work"
+    workdir.mkdir()
+    monkeypatch.chdir(workdir)
+    output_dir = tmp_path / "out"
+    data = _settings_data(
+        _local_cluster(calc_dir=str(output_dir / "data")),
+        _misc(output_dir=str(output_dir)),
+    )
+    with pytest.raises(ValidationError, match="MISC.dataset_dir"):
+        AimsPAXSettings.model_validate(data)
+
+
 def test_calc_dir_refused_when_it_equals_dataset_dir(tmp_path, monkeypatch):
     monkeypatch.chdir(tmp_path)
     data = _settings_data(_local_cluster(calc_dir="data"))

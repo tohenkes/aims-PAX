@@ -265,9 +265,10 @@ def _shutdown_parsl():
         return
     try:
         dfk.cleanup()
-        parsl.clear()
     except Exception:
         logging.exception("PARSL cleanup failed.")
+    finally:
+        parsl.clear()
 
 
 @contextlib.contextmanager
