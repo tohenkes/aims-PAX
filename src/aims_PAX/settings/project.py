@@ -819,6 +819,36 @@ class MiscSettings(ProjectBaseModel):
         return self
 
 
+def _calc_dir_conflict(
+    calc_dir: Path, protected: dict[str, Path]
+) -> tuple[str, Path] | None:
+    """
+    Returns the first protected (label, path) that is equal to or lies
+    inside ``calc_dir``, or None if there is no overlap. Paths are resolved
+    (non-strict, relative paths against the current working directory).
+    """
+    calc = calc_dir.resolve()
+    for label, path in protected.items():
+        resolved = path.resolve()
+        if resolved == calc or calc in resolved.parents:
+            return label, resolved
+    return None
+
+
+def _input_file_dirs(source: Any) -> list[Path]:
+    """Directories holding the given input path(s) (file, dir or dict)."""
+    if source is None:
+        return []
+    if isinstance(source, dict):
+        return [
+            directory
+            for value in source.values()
+            for directory in _input_file_dirs(value)
+        ]
+    path = Path(source)
+    return [path if path.is_dir() else path.parent]
+
+
 class AimsPAXSettings(ProjectBaseModel):
     """Pydantic settings for aimsPAX project."""
     INITIAL_DATASET_GENERATION: IDGSettings | None = Field(
@@ -887,4 +917,44 @@ class AimsPAXSettings(ProjectBaseModel):
                     setattr(sub_model, field_name, output_dir / path)
                 getattr(sub_model, field_name).mkdir(parents=True, exist_ok=True)
 
+        return self
+
+    @model_validator(mode="after")
+    def validate_calc_dir_isolated(self) -> "AimsPAXSettings":
+        """
+        calc_dir holds the per-job calculation folders that aims-PAX creates
+        and deletes. Refuse to start if it would contain the working
+        directory, any output directory or any input file directory.
+        """
+        if self.CLUSTER is None:
+            return self
+
+        protected: dict[str, Path] = {
+            "the current working directory": Path.cwd(),
+            "MISC.output_dir": self.MISC.output_dir,
+            "MISC.dataset_dir": self.MISC.dataset_dir,
+            "MISC.log_dir": self.MISC.log_dir,
+        }
+        for name in ("path_to_control", "path_to_geometry"):
+            for i, directory in enumerate(
+                _input_file_dirs(getattr(self.MISC, name))
+            ):
+                protected[f"MISC.{name}" + (f"[{i}]" if i else "")] = directory
+        parsl_options = getattr(self.CLUSTER, "parsl_options", None)
+        if parsl_options is not None:
+            for name in ParslSettings._relative_dirs:
+                protected[f"CLUSTER.parsl_options.{name}"] = getattr(
+                    parsl_options, name
+                )
+
+        conflict = _calc_dir_conflict(self.CLUSTER.calc_dir, protected)
+        if conflict is not None:
+            label, path = conflict
+            raise ValueError(
+                f"CLUSTER.calc_dir ({self.CLUSTER.calc_dir.resolve()}) "
+                f"contains {label} ({path}). aims-PAX creates and deletes "
+                "calculation folders inside calc_dir, so it must be a "
+                "dedicated subdirectory that holds none of your inputs, "
+                "outputs or logs. Use for example calc_dir: calc"
+            )
         return self
