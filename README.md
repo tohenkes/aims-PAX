@@ -309,6 +309,8 @@ THESE ARE NOT ACTIVELY USED IN *aims-PAX* BUT ARE WORKING
 
 Settings for PARSL. Two backend types are available: `local` (thread pool, for local runs and teacher models) and `slurm` (HPC cluster).
 
+> **Note:** `calc_dir` is a scratch area. aims-PAX creates and deletes calculation folders inside it, so give it its own subdirectory (e.g. `calc`). Setting it to the working directory (or a parent of it, or any directory holding your input files, `data` or `logs`) is rejected when the settings are loaded.
+
 ##### `type: local`
 
 Use this for running on a local machine, e.g. when using a teacher model instead of DFT.
@@ -318,7 +320,7 @@ Use this for running on a local machine, e.g. when using a teacher model instead
 | type        | `str`          | —                    | `'local'` selects the local thread-pool executor.                              |
 | max_workers | `int`          | `4`                  | Number of parallel worker threads (reference jobs run concurrently).           |
 | launch_str  | `str` or `None`| `None`               | Command to run FHI-aims locally. Required only when DFT is used (not needed for teacher models). |
-| calc_dir    | `str`          | `./aims_ase_calcs`   | Directory for calculation outputs.                                             |
+| calc_dir    | `str`          | `./aims_ase_calcs`   | Dedicated directory for the per-job calculation folders, e.g. `calc`. It must not be, or contain, the working directory or any of your input, `data`, `logs` or other output directories; aims-PAX refuses to start otherwise. |
 | clean_dirs  | `bool`         | `True`               | Whether to remove calculation directories after completion.                    |
 
 ##### `type: slurm`
@@ -340,7 +342,7 @@ Use this for HPC clusters with Slurm.
 | \*slurm_str                                     | `str` (multiline) | —            | SLURM job script header specifying job resources and options.                                                                                                                                                                                                                                                 |
 | \*worker_str                                    | `str` (multiline) | —            | Shell commands to configure the environment for each worker process e.g. loading modules, activating conda environment. IMPORTANT: On most systems it's necessary to set the following environment variable so that multiple jobs don't interfere with each other: `export WORK_QUEUE_DISABLE_SHARED_PORT=1`. |
 | \*launch_str                                    | `str`             | —            | Command to run FHI aims e.g. `"srun path/to/aims/aims.XXX.scalapack.mpi.x >> aims.out"`                                                                                                                                                                                                                       |
-| \*calc_dir                                      | `str`             | —            | Path to the directory used for calculation outputs.                                                                                                                                                                                                                                                           |
+| \*calc_dir                                      | `str`             | —            | Dedicated directory for the per-job calculation folders, e.g. `calc`. It must not be, or contain, the working directory or any of your input, `data`, `logs` or other output directories; aims-PAX refuses to start otherwise. |
 | clean_dirs                                      | `bool`            | `True`       | Whether to remove calculation directories after DFT computations.                                                                                                                                                                                                                                             |
 | tasks_per_node                                  | `int`             | `1`          | Number of MPI tasks per node for each DFT job.                                                                                                                                                                                                                                                                |
 | cores_per_job                                   | `int` or `None`   | `None`       | CPU cores to request per DFT job. If `None`, not explicitly set.                                                                                                                                                                                                                                              |

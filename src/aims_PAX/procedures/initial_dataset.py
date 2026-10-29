@@ -687,14 +687,6 @@ class InitialDatasetPARSL(InitialDatasetProcedure):
     def run(self):
         parsl.load(self.config)
         super().run()
-        if self.clean_dirs:
-            try:
-                shutil.rmtree(self.calc_dir)
-            except Exception as e:
-                logging.error(
-                    f"Error while cleaning directories: {e}. "
-                    "Please check the directories manually."
-                )
 
     def _setup_calcs(
         self,

@@ -6,6 +6,7 @@ from aims_PAX.procedures.initial_dataset import (
     InitialDatasetPARSLTeacher,
 )
 from aims_PAX.tools.utilities.input_utils import read_input_files
+from aims_PAX.tools.utilities.parsl_utils import shutdown_parsl_on_exit
 
 
 def main():
@@ -34,44 +35,45 @@ def main():
         )
     )
 
-    idg = aimsPAX_settings.INITIAL_DATASET_GENERATION
-    if idg.initial_sampling.lower() == "aimd":
-        initial_ds = InitialDatasetAIMD(
-            model_settings=model_settings,
-            aimsPAX_settings=aimsPAX_settings,
-            path_to_control=path_to_control,
-            path_to_geometry=path_to_geometry,
-        )
-    elif idg.initial_sampling.lower() == "foundational":
-        if aimsPAX_settings.CLUSTER is None:
-            raise ValueError(
-                "Foundational initial dataset generation requires CLUSTER "
-                "settings. Please add a CLUSTER section to aimsPAX.yaml."
-            )
-        if idg.use_teacher_reference:
-            initial_ds = InitialDatasetPARSLTeacher(
+    with shutdown_parsl_on_exit():
+        idg = aimsPAX_settings.INITIAL_DATASET_GENERATION
+        if idg.initial_sampling.lower() == "aimd":
+            initial_ds = InitialDatasetAIMD(
                 model_settings=model_settings,
                 aimsPAX_settings=aimsPAX_settings,
                 path_to_control=path_to_control,
                 path_to_geometry=path_to_geometry,
             )
+        elif idg.initial_sampling.lower() == "foundational":
+            if aimsPAX_settings.CLUSTER is None:
+                raise ValueError(
+                    "Foundational initial dataset generation requires CLUSTER "
+                    "settings. Please add a CLUSTER section to aimsPAX.yaml."
+                )
+            if idg.use_teacher_reference:
+                initial_ds = InitialDatasetPARSLTeacher(
+                    model_settings=model_settings,
+                    aimsPAX_settings=aimsPAX_settings,
+                    path_to_control=path_to_control,
+                    path_to_geometry=path_to_geometry,
+                )
+            else:
+                initial_ds = InitialDatasetPARSL(
+                    model_settings=model_settings,
+                    aimsPAX_settings=aimsPAX_settings,
+                    path_to_control=path_to_control,
+                    path_to_geometry=path_to_geometry,
+                )
         else:
-            initial_ds = InitialDatasetPARSL(
-                model_settings=model_settings,
-                aimsPAX_settings=aimsPAX_settings,
-                path_to_control=path_to_control,
-                path_to_geometry=path_to_geometry,
+            raise ValueError(
+                f"Unknown initial_sampling: {idg.initial_sampling!r}. "
+                "Expected 'aimd' or 'foundational'."
             )
-    else:
-        raise ValueError(
-            f"Unknown initial_sampling: {idg.initial_sampling!r}. "
-            "Expected 'aimd' or 'foundational'."
-        )
 
-    if not initial_ds.check_initial_ds_done():
-        initial_ds.run()
-    if idg.converge_initial:
-        initial_ds.converge()
+        if not initial_ds.check_initial_ds_done():
+            initial_ds.run()
+        if idg.converge_initial:
+            initial_ds.converge()
 
 
 if __name__ == "__main__":

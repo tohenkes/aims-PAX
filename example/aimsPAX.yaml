@@ -81,7 +81,7 @@ CLUSTER:
     export WORK_QUEUE_DISABLE_SHARED_PORT=1
 
   launch_str: srun path/to/aims.x >> aims.out
-  calc_dir: "path/to/working/dir/calc"
+  calc_dir: "path/to/working/dir/calc"  # dedicated subdirectory; never the working dir or a parent of it (aims-PAX refuses to start)
   # cores_per_job: 32    # Optional. Reserves N cores per reference job in WorkQueue
   #                      # scheduler, enabling multiple concurrent jobs per node.
   #                      # E.g. cores_per_job: 32 on a 128-core node allows 4

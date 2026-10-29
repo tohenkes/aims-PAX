@@ -472,3 +472,29 @@ def test_integration_parsl_local_sample_points(
 
     assert len(result) == 1
     assert result[0].info["REF_energy"] == pytest.approx(-10.5)
+
+
+# ===========================================================================
+# §4e — run() must never delete calc_dir itself
+# ===========================================================================
+
+
+def test_run_does_not_delete_calc_dir(tmp_path):
+    calc_dir = tmp_path / "calc"
+    calc_dir.mkdir()
+    (calc_dir / "keep_me.txt").write_text("user data")
+    instance = InitialDatasetPARSL.__new__(InitialDatasetPARSL)
+    instance.config = object()
+    instance.clean_dirs = True
+    instance.calc_dir = calc_dir
+
+    with (
+        patch("aims_PAX.procedures.initial_dataset.parsl") as mock_parsl,
+        patch(
+            "aims_PAX.procedures.initial_dataset.InitialDatasetProcedure.run"
+        ),
+    ):
+        instance.run()
+
+    mock_parsl.load.assert_called_once_with(instance.config)
+    assert (calc_dir / "keep_me.txt").exists()

@@ -47,7 +47,7 @@ Under `parsl_options`, one can specify how many resources are used for DFT. Each
 
 As the DFT jobs run independently through Slurm, we must specify all necessary settings under `slurm_str` and `worker_str` to run a stand-alone job. In the former, all the Slurm-relevant variables have to be mentioned, such as partitions, etc., and in the latter the environment where you installed *aims-PAX* has to be sourced, and modules as well as environment variables have to be set. These can differ across different HPC environments.
 
-Finally, under `launch_str` you must write the exact commands that are used to run FHI aims, and under `calc_dir` a path has to be given where the DFT calculations will be performed (it does not have to exist; it will be created if not). By default, after DFT is done, the subdirectory for a given calculation is removed (set `clean_dirs` to `False` here to change this).
+Finally, under `launch_str` you must write the exact commands that are used to run FHI aims, and under `calc_dir` a path has to be given where the DFT calculations will be performed (it does not have to exist; it will be created if not). By default, after DFT is done, the subdirectory for a given calculation is removed (set `clean_dirs` to `False` here to change this). `calc_dir` must be a dedicated subdirectory (e.g. `calc`): it must not be the working directory or any of its parents, nor contain your input files, `data`, `logs` or other output directories. *aims-PAX* creates and deletes folders inside `calc_dir`, and refuses to start if the setting would put your own files at risk.
 
 ### Active Learning Settings
 
