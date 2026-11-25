@@ -11,6 +11,8 @@ from so3krates_torch.calculator.so3 import (
     MultiHeadSO3LRCalculator,
 )
 from aims_PAX.settings import ModelSettings, AimsPAXSettings
+from aims_PAX.settings.project import PME_SETTING_NAMES
+from aims_PAX.tools.model_tools.so3lr_loading import make_so3lr_calculator
 from aims_PAX.tools.uncertainty import (
     HandleUncertainty,
     MolForceUncertainty,
@@ -1639,7 +1641,34 @@ class ALCalculatorMLFF:
                     default_dtype=self.config.dtype,
                     enable_cueq=self.config.enable_cueq,
                 )
-            elif model_type in ["so3lr", "so3krates"]:
+            elif model_type == "so3lr":
+                if model_path is None:
+                    raise ValueError(
+                        "Foundational so3lr model needs a `model_path` "
+                        "(bundled keyword or file path)."
+                    )
+                self.mlff_calc = make_so3lr_calculator(
+                    model_path,
+                    device=self.config.device,
+                    dtype=self.config.dtype,
+                    theory_level=foundational_model_settings.get(
+                        "theory_level"
+                    ),
+                    compute_stress=self.config.compute_stress,
+                    r_max_lr=foundational_model_settings.get("r_max_lr"),
+                    dispersion_energy_cutoff_lr_damping=(
+                        foundational_model_settings.get(
+                            "dispersion_lr_damping"
+                        )
+                    ),
+                    key_specification=self.config.key_specification,
+                    **{
+                        name: foundational_model_settings[name]
+                        for name in PME_SETTING_NAMES
+                        if foundational_model_settings.get(name) is not None
+                    },
+                )
+            elif model_type == "so3krates":
                 self.mlff_calc = TorchkratesCalculator(
                     model_paths=model_path,
                     compute_stress=self.config.compute_stress,

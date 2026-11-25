@@ -496,3 +496,64 @@ def test_max_initial_epochs_default(tmp_path):
         species_dir=tmp_path,
     )
     assert s.max_initial_epochs == sys.maxsize
+
+
+# ===========================================================================
+# §2.11 — SO3LR foundational model selection (bundled keyword or path)
+# ===========================================================================
+
+
+def test_fm_settings_default_is_v1():
+    s = So3lrFMSettings()
+    assert s.model == "v1"
+    assert s.theory_level is None
+
+
+def test_fm_settings_tauri_keyword():
+    s = So3lrFMSettings(model="tauri-s-2606", theory_level=3)
+    assert s.model == "tauri-s-2606"
+    assert s.theory_level == 3
+
+
+def test_fm_settings_unknown_model():
+    with pytest.raises(ValidationError, match="tauri-s-2606"):
+        So3lrFMSettings(model="tauri-xl")
+
+
+def test_fm_settings_existing_path(tmp_path):
+    path = tmp_path / "my.model"
+    path.write_bytes(b"")
+    assert So3lrFMSettings(model=str(path)).model == str(path)
+
+
+def test_fm_settings_pme_defaults_none():
+    s = So3lrFMSettings()
+    for name in (
+        "use_pme",
+        "pme_smearing",
+        "pme_mesh_spacing",
+        "use_pme_dispersion",
+        "pme_dispersion_smearing",
+        "pme_dispersion_mesh_spacing",
+        "pme_mesh_rule",
+    ):
+        assert getattr(s, name) is None
+
+
+def test_fm_settings_pme_values():
+    s = So3lrFMSettings(use_pme=True, pme_mesh_rule="torchpme")
+    assert s.use_pme is True
+    assert s.pme_mesh_rule == "torchpme"
+    with pytest.raises(ValidationError):
+        So3lrFMSettings(pme_mesh_rule="nonsense")
+
+
+def test_idg_settings_so3lr_tauri(tmp_path):
+    s = IDGSettings(
+        **make_base(
+            tmp_path,
+            foundational_model="so3lr",
+            foundational_model_settings={"model": "tauri-m-2602"},
+        )
+    )
+    assert s.foundational_model_settings.model == "tauri-m-2602"

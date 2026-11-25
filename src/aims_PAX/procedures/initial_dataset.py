@@ -5,7 +5,7 @@ from pathlib import Path
 from .preparation import PrepareInitialDatasetProcedure
 from mace import tools
 from mace.calculators import mace_mp
-from so3krates_torch.calculator.so3 import SO3LRCalculator
+from aims_PAX.tools.model_tools.so3lr_loading import make_so3lr_calculator
 from aims_PAX.tools.utilities.data_handling import (
     create_dataloader,
     update_datasets,
@@ -712,18 +712,18 @@ class InitialDatasetPARSL(InitialDatasetProcedure):
                 dispersion_cutoff=dispersion_cutoff,
             )
         elif model_choice == "so3lr":
-            r_max_lr = foundational_model_settings.r_max_lr
-            dispersion_lr_damping = (
-                foundational_model_settings.dispersion_lr_damping
-            )
-            return SO3LRCalculator(
-                model="v1",
-                r_max_lr=r_max_lr,
-                dispersion_energy_cutoff_lr_damping=dispersion_lr_damping,
-                compute_stress=self.compute_stress,
+            return make_so3lr_calculator(
+                foundational_model_settings.model,
                 device=self.device,
-                default_dtype=self.dtype,
+                dtype=self.dtype,
+                theory_level=foundational_model_settings.theory_level,
+                compute_stress=self.compute_stress,
+                r_max_lr=foundational_model_settings.r_max_lr,
+                dispersion_energy_cutoff_lr_damping=(
+                    foundational_model_settings.dispersion_lr_damping
+                ),
                 key_specification=self.key_specification,
+                **foundational_model_settings.pme_overrides(),
             )
         else:
             raise ValueError(

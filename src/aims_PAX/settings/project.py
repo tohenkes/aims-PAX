@@ -67,6 +67,69 @@ class So3lrFMSettings(FMSettings):
         default=None,
         description="Damping parameter for dispersion interaction in `SO3LR`. Needed if `r_max_lr` is not `None`!",
     )
+    model: str = Field(
+        default="v1",
+        description="`SO3LR` model to use: a bundled keyword (`v1`, "
+                    "`tauri-{s,m,l}-{2602,2606}`, `v2-{s,m,l}`) or the path "
+                    "to a model file (`.pt` with a sibling "
+                    "`_settings.yaml`, or a pickled model).",
+    )
+    theory_level: int | None = Field(
+        default=None,
+        description="Theory level that is kept from a multi-theory-level "
+                    "model (e.g. `SO3LR-tauri`). `None` uses the default "
+                    "level of that model.",
+    )
+    use_pme: bool | None = Field(
+        default=None,
+        description="Particle mesh Ewald for electrostatics. `None` keeps "
+                    "the value of the model.",
+    )
+    pme_smearing: float | None = Field(default=None)
+    pme_mesh_spacing: float | None = Field(default=None)
+    use_pme_dispersion: bool | None = Field(
+        default=None,
+        description="Particle mesh Ewald for dispersion. `None` keeps the "
+                    "value of the model.",
+    )
+    pme_dispersion_smearing: float | None = Field(default=None)
+    pme_dispersion_mesh_spacing: float | None = Field(default=None)
+    pme_mesh_rule: Literal["jax", "torchpme"] | None = Field(default=None)
+
+    @field_validator("model")
+    @classmethod
+    def validate_model(cls, v: str) -> str:
+        # imported here: so3lr_loading imports aims_PAX.settings
+        from aims_PAX.tools.model_tools.so3lr_loading import (
+            BUNDLED_SO3LR_MODELS,
+        )
+
+        if v not in BUNDLED_SO3LR_MODELS and not Path(v).exists():
+            raise ValueError(
+                f"`model` {v!r} is neither a bundled SO3LR model "
+                f"({', '.join(sorted(BUNDLED_SO3LR_MODELS))}) nor an "
+                "existing path."
+            )
+        return v
+
+    def pme_overrides(self) -> dict[str, Any]:
+        """The PME settings that are not `None`."""
+        return {
+            name: getattr(self, name)
+            for name in PME_SETTING_NAMES
+            if getattr(self, name) is not None
+        }
+
+
+PME_SETTING_NAMES = (
+    "use_pme",
+    "pme_smearing",
+    "pme_mesh_spacing",
+    "use_pme_dispersion",
+    "pme_dispersion_smearing",
+    "pme_dispersion_mesh_spacing",
+    "pme_mesh_rule",
+)
 
 
 MODEL_MAP = {

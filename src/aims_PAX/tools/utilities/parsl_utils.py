@@ -464,7 +464,29 @@ def _build_teacher_calculator(
             device=device,
             default_dtype=default_dtype,
         )
-    elif model_type in ["so3lr", "so3krates"]:
+    elif model_type == "so3lr":
+        from aims_PAX.settings.project import PME_SETTING_NAMES
+        from aims_PAX.tools.model_tools.so3lr_loading import (
+            make_so3lr_calculator,
+        )
+
+        return make_so3lr_calculator(
+            model_path,
+            device=device,
+            dtype=default_dtype,
+            theory_level=model_settings.get("theory_level", None),
+            compute_stress=compute_stress,
+            r_max_lr=model_settings.get("r_max_lr", None),
+            dispersion_energy_cutoff_lr_damping=model_settings.get(
+                "dispersion_lr_damping", None
+            ),
+            **{
+                name: model_settings[name]
+                for name in PME_SETTING_NAMES
+                if model_settings.get(name) is not None
+            },
+        )
+    elif model_type == "so3krates":
         from so3krates_torch.calculator.so3 import TorchkratesCalculator
 
         return TorchkratesCalculator(
