@@ -10,6 +10,7 @@ import yaml
 from pydantic import ValidationError
 
 from aims_PAX.settings import AimsPAXSettings, ModelSettings
+from tests.helpers import mace_cfg, so3lr_cfg
 
 
 def test_settings(data_dir, monkeypatch):
@@ -430,3 +431,127 @@ def test_calc_dir_check_skipped_without_cluster(tmp_path, monkeypatch):
     monkeypatch.chdir(tmp_path)
     s = AimsPAXSettings.model_validate(_settings_data())
     assert s.CLUSTER is None
+
+
+# -- SO3LR-tauri architecture options ---------------------------------------
+
+
+def test_unknown_so3lr_architecture_key_rejected():
+    with pytest.raises(ValidationError, match="use_rms_nrom"):
+        ModelSettings.model_validate(so3lr_cfg(use_rms_nrom=True))
+
+
+def test_unknown_so3krates_architecture_key_rejected():
+    cfg = so3lr_cfg(use_rms_nrom=True)
+    cfg["ARCHITECTURE"]["model_choice"] = "so3krates"
+    with pytest.raises(ValidationError, match="use_rms_nrom"):
+        ModelSettings.model_validate(cfg)
+
+
+def test_mace_extra_keys_still_ignored():
+    ModelSettings.model_validate(mace_cfg(some_old_key=1))  # no error
+
+
+def test_tauri_defaults_match_so3krates_torch():
+    s = ModelSettings.model_validate(so3lr_cfg()).ARCHITECTURE
+    assert s.use_rms_norm is False
+    assert s.qk_norm is False
+    assert s.use_residual_scalars is False
+    assert s.final_layer_bias is True
+    assert s.nhl_repulsion_bool is False
+    assert s.c6_ratios_bool is False
+    assert s.use_simple_hirshfeld is False
+    assert s.legacy_dispersion_bool is True
+    assert s.use_pme is False
+    assert s.pme_smearing is None
+    assert s.pme_mesh_spacing is None
+    assert s.use_pme_dispersion is False
+    assert s.pme_dispersion_smearing is None
+    assert s.pme_dispersion_mesh_spacing is None
+    assert s.pme_mesh_rule == "jax"
+
+
+def test_so3krates_has_core_tauri_flags():
+    cfg = so3lr_cfg(use_rms_norm=True, final_layer_bias=False)
+    cfg["ARCHITECTURE"]["model_choice"] = "so3krates"
+    s = ModelSettings.model_validate(cfg).ARCHITECTURE
+    assert s.use_rms_norm is True
+    assert s.final_layer_bias is False
+
+
+@pytest.mark.parametrize(
+    "flag",
+    ["c6_ratios_bool", "use_simple_hirshfeld", "use_pme_dispersion"],
+)
+def test_dispersion_flags_need_dispersion(flag):
+    with pytest.raises(ValidationError, match=flag):
+        ModelSettings.model_validate(
+            so3lr_cfg(**{flag: True, "dispersion_energy_bool": False})
+        )
+
+
+def test_use_pme_needs_electrostatics():
+    with pytest.raises(ValidationError, match="use_pme"):
+        ModelSettings.model_validate(
+            so3lr_cfg(use_pme=True, electrostatic_energy_bool=False)
+        )
+
+
+def test_dispersion_flags_valid_with_dispersion():
+    s = ModelSettings.model_validate(
+        so3lr_cfg(
+            c6_ratios_bool=True,
+            use_simple_hirshfeld=True,
+            use_pme_dispersion=True,
+            use_pme=True,
+        )
+    ).ARCHITECTURE
+    assert s.c6_ratios_bool and s.use_pme and s.use_pme_dispersion
+
+
+def test_nhl_and_zbl_together_only_warn(caplog):
+    with caplog.at_level("WARNING"):
+        s = ModelSettings.model_validate(
+            so3lr_cfg(nhl_repulsion_bool=True, zbl_repulsion_bool=True)
+        ).ARCHITECTURE
+    assert s.nhl_repulsion_bool and s.zbl_repulsion_bool
+    assert "NHL" in caplog.text
+
+
+def test_invalid_pme_mesh_rule_rejected():
+    with pytest.raises(ValidationError, match="pme_mesh_rule"):
+        ModelSettings.model_validate(so3lr_cfg(pme_mesh_rule="other"))
+
+
+def test_training_tauri_defaults():
+    t = ModelSettings.model_validate(so3lr_cfg()).TRAINING
+    assert t.pretrained_theory_level is None
+    assert t.freeze_c6_ratios is True
+
+
+def test_pretrained_theory_level_must_be_non_negative():
+    cfg = so3lr_cfg()
+    cfg["TRAINING"] = {"pretrained_theory_level": -1}
+    with pytest.raises(ValidationError, match="pretrained_theory_level"):
+        ModelSettings.model_validate(cfg)
+    cfg["TRAINING"] = {"pretrained_theory_level": 0}
+    s = ModelSettings.model_validate(cfg)
+    assert s.TRAINING.pretrained_theory_level == 0
+
+
+def test_num_theory_levels_not_a_setting():
+    cfg = so3lr_cfg()
+    cfg["TRAINING"] = {"num_theory_levels": 2}
+    s = ModelSettings.model_validate(cfg)
+    assert not hasattr(s.TRAINING, "num_theory_levels")
+
+
+def test_example_configs_still_validate():
+    example = Path(__file__).parent.parent / "example"
+    checked = 0
+    for p in example.rglob("*.yaml"):
+        data = yaml.safe_load(p.read_text())
+        if isinstance(data, dict) and "ARCHITECTURE" in data:
+            ModelSettings.model_validate(data)
+            checked += 1
+    assert checked >= 2

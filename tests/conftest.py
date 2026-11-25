@@ -82,3 +82,32 @@ def clean_dir(debug_mode):
 @pytest.fixture(scope="session")
 def debug_mode():
     return True
+
+
+@pytest.fixture
+def z_table():
+    from mace.tools import AtomicNumberTable
+
+    return AtomicNumberTable([1, 8])
+
+
+@pytest.fixture
+def so3lr_model_settings():
+    """Factory: ``ModelSettings`` for a small SO3LR model.
+
+    Long-range terms are off by default; keyword arguments override the
+    ``ARCHITECTURE`` entries.
+    """
+    from aims_PAX.settings import ModelSettings
+    from tests.helpers import so3lr_cfg
+
+    def build(ARCHITECTURE=None):
+        arch = {
+            "zbl_repulsion_bool": True,
+            "electrostatic_energy_bool": False,
+            "dispersion_energy_bool": False,
+            **(ARCHITECTURE or {}),
+        }
+        return ModelSettings.model_validate(so3lr_cfg(**arch))
+
+    return build

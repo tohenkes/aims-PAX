@@ -190,3 +190,33 @@ def test_setup_so3lr_output_shapes():
         break
     assert output["energy"].shape == (1,)
     assert output["forces"].shape[1] == 3
+
+
+# -- SO3LR-tauri architecture options ---------------------------------------
+
+
+def test_tauri_flags_reach_model(so3lr_model_settings, z_table):
+    s = so3lr_model_settings(
+        ARCHITECTURE={
+            "use_rms_norm": True,
+            "qk_norm": True,
+            "use_residual_scalars": True,
+            "final_layer_bias": False,
+            "nhl_repulsion_bool": True,
+            "dispersion_energy_bool": True,
+            "r_max_lr": 6.0,
+            "c6_ratios_bool": True,
+            "use_simple_hirshfeld": True,
+            "legacy_dispersion_bool": False,
+        }
+    )
+    m = setup_so3lr(s, z_table, {1: 0.0, 8: 0.0})
+    assert m.use_rms_norm and m.qk_norm and m.use_residual_scalars
+    assert m.nhl_repulsion_bool and hasattr(m, "c6_ratios_output_block")
+    assert m.legacy_dispersion_bool is False
+
+
+def test_defaults_unchanged(so3lr_model_settings, z_table):
+    m = setup_so3lr(so3lr_model_settings(), z_table, {1: 0.0, 8: 0.0})
+    assert not hasattr(m, "c6_ratios_output_block")
+    assert hasattr(m, "zbl_repulsion")

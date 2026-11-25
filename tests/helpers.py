@@ -136,3 +136,46 @@ MD_CASES = [
     ("npt_mtk", MTKNPT, NPT_MTK),
     ("npt_isomtk", IsotropicMTKNPT, NPT_ISOMTK),
 ]
+
+
+_SMALL_SO3 = {
+    "num_features": 8,
+    "num_layers": 1,
+    "degrees": [1],
+    "num_heads": 1,
+    "energy_regression_dim": 8,
+}
+
+
+def so3lr_cfg(**architecture):
+    """Raw ``model.yaml`` dict for a small SO3LR model.
+
+    Keyword arguments are merged into ``ARCHITECTURE``.
+    """
+    return {
+        "GENERAL": {"name_exp": "test"},
+        "ARCHITECTURE": {
+            "model_choice": "so3lr",
+            **_SMALL_SO3,
+            **architecture,
+        },
+        "MISC": {"device": "cpu"},
+    }
+
+
+def mace_cfg(**architecture):
+    """Raw ``model.yaml`` dict for a small MACE model.
+
+    Keyword arguments are merged into ``ARCHITECTURE``.
+    """
+    return {
+        "GENERAL": {"name_exp": "test"},
+        "ARCHITECTURE": {
+            "model_choice": "mace",
+            "num_channels": 8,
+            "num_interactions": 1,
+            "max_L": 0,
+            **architecture,
+        },
+        "MISC": {"device": "cpu"},
+    }
