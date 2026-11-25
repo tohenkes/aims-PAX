@@ -28,6 +28,7 @@ from aims_PAX.tools.model_tools.setup_so3 import (
 from aims_PAX.tools.model_tools.training_tools import setup_model_training
 from aims_PAX.tools.model_tools.so3lr_loading import (
     load_so3lr,
+    resolve_long_range_value,
     so3lr_architecture_dict,
 )
 import ase.data
@@ -570,6 +571,13 @@ def _num_heads_in_weights(weights: dict) -> int:
     return weights["atomic_energy_output_block.final_layer_weights"].shape[0]
 
 
+def _has_long_range_terms(model: torch.nn.Module) -> bool:
+    return bool(
+        getattr(model, "electrostatic_energy_bool", False)
+        or getattr(model, "dispersion_energy_bool", False)
+    )
+
+
 def _sync_architecture_with_pretrained(
     model: torch.nn.Module,
     architecture,
@@ -578,20 +586,30 @@ def _sync_architecture_with_pretrained(
 ) -> None:
     """Write the pretrained model's architecture into ``architecture``.
 
-    A differing value the user set explicitly is overwritten with a
-    warning, except for ``_USER_WINS_ON_PRETRAINED``: those are written to
-    the model. A model value of ``None`` never replaces a setting.
+    Every value in ``model_architecture`` replaces the setting; a
+    differing value the user set explicitly is replaced with a warning.
+
+    ``_USER_WINS_ON_PRETRAINED`` end up with the same value on the model
+    and in ``architecture``: the setting if the user set it or the model
+    stores ``None``, else the model's value. If that is ``None`` and the
+    model has long-range terms, ``resolve_long_range_value`` supplies the
+    ``SO3LRCalculator`` default.
     """
     for key in _USER_WINS_ON_PRETRAINED:
         model_value = model_architecture.pop(key, None)
-        if key in user_set:
-            setattr(model, key, getattr(architecture, key))
+        if key in user_set or model_value is None:
+            value = getattr(architecture, key)
+        else:
+            value = model_value
+        if value is None and _has_long_range_terms(model):
+            value = resolve_long_range_value(model, key, None)
+        if value != model_value:
             logging.info(
-                f"Set {key}={getattr(architecture, key)} on the pretrained "
-                f"model (model value: {model_value})."
+                f"Set {key}={value} on the pretrained model (model value: "
+                f"{model_value})."
             )
-        elif model_value is not None:
-            setattr(architecture, key, model_value)
+        setattr(model, key, value)
+        setattr(architecture, key, value)
 
     for key, model_value in model_architecture.items():
         user_value = getattr(architecture, key)

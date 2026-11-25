@@ -1246,12 +1246,11 @@ class ALEnsemble:
             dtype=dtype_mapping[self.config.dtype],
             convert_to_cueq=self.config.enable_cueq_train,
         )
-        if (
-            self.config.use_pretrained_model
-            and self.config.model_choice == "so3lr"
-        ):
-            # the models come from a pretrained one; their architecture
-            # wins over model.yaml (as in setup_pretrained)
+        if self.config.model_choice == "so3lr":
+            # the models may come from a pretrained one even when
+            # TRAINING.pretrained_model is unset (e.g. a previous run's
+            # model_dir); their architecture wins over model.yaml (as in
+            # setup_pretrained). A no-op for models built from model.yaml.
             for model in self.ensemble.values():
                 sync_architecture_with_model(model, self.config.model_settings)
             refresh_architecture_attrs(self.config, self.config.model_settings)

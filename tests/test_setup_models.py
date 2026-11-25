@@ -637,3 +637,189 @@ def test_al_ensemble_uses_pretrained_r_max(
     al_ensemble._setup_ensemble()
     assert target.r_max == 4.5 and target.r_max_lr == 1000.0
     assert s.ARCHITECTURE.r_max == 4.5
+
+
+# -- v1 stores no long-range values: settings and model must still agree ------
+
+
+def _training_forward(model, model_settings):
+    """One training-mode forward pass of a two-head model on two waters,
+    with graphs built through aims-PAX's data path from
+    ``model_settings.ARCHITECTURE``."""
+    from so3krates_torch.tools import torch_geometric
+
+    from aims_PAX.tools.utilities.data_handling import create_model_dataset
+
+    architecture = model_settings.ARCHITECTURE
+    torch.set_default_dtype(
+        getattr(torch, model_settings.GENERAL.default_dtype)
+    )
+    dataset = create_model_dataset(
+        data=[_two_waters(distance_oo=3.0)] * 2,
+        seed=42,
+        z_table=AtomicNumberTable(_ALL_ELEMENTS),
+        r_max=architecture.r_max,
+        r_max_lr=architecture.r_max_lr,
+        key_specification=create_keyspec(),
+        all_heads=["head_0", "head_1"],
+        head_name="head_0",
+    )
+    batch = next(
+        iter(torch_geometric.dataloader.DataLoader(dataset, batch_size=2))
+    )
+    return model(batch.to_dict(), training=True)
+
+
+@pytest.mark.parametrize(
+    "long_range", [{}, {"r_max_lr": 12.0}], ids=["default", "r_max_lr"]
+)
+def test_v1_pretrained_long_range_defaults(pretrained_settings, long_range):
+    s = pretrained_settings(
+        pretrained_model="v1", num_multihead_heads=2, **long_range
+    )
+    m = setup_pretrained(s, None, {})
+    architecture = s.ARCHITECTURE
+    assert m.r_max_lr == architecture.r_max_lr == 12.0
+    assert (
+        m.dispersion_energy_cutoff_lr_damping
+        == architecture.dispersion_energy_cutoff_lr_damping
+        == 2.0
+    )
+    out = _training_forward(m, s)
+    assert torch.isfinite(out["energy"]).all()
+
+
+def test_v1_pretrained_user_damping_wins(pretrained_settings):
+    s = pretrained_settings(
+        pretrained_model="v1",
+        num_multihead_heads=2,
+        dispersion_energy_cutoff_lr_damping=1.5,
+    )
+    m = setup_pretrained(s, None, {})
+    assert m.dispersion_energy_cutoff_lr_damping == 1.5
+    assert s.ARCHITECTURE.dispersion_energy_cutoff_lr_damping == 1.5
+    assert m.r_max_lr == s.ARCHITECTURE.r_max_lr == 12.0
+
+
+# -- AL-only: the loaded models' architecture wins, pretrained_model or not ---
+
+
+def _al_ensemble(tmp_path, model_settings, target):
+    from aims_PAX.procedures.preparation import ALEnsemble
+
+    apply_model_settings(target, model_settings)
+    target.model_dir = tmp_path / "model"
+    target.checkpoints_dir = tmp_path / "checkpoints"
+    target.restart = False
+    target.mol_idxs = None
+    al_ensemble = ALEnsemble.__new__(ALEnsemble)
+    al_ensemble.config = target
+    return al_ensemble
+
+
+def _save_model(tmp_path, model):
+    model_dir = tmp_path / "model"
+    model_dir.mkdir(exist_ok=True)
+    torch.save(model, model_dir / "test-42.model")
+
+
+def test_al_ensemble_syncs_without_pretrained_model(
+    tmp_path, pretrained_settings, target
+):
+    """A previous run's tauri-derived model in model_dir, model.yaml
+    without TRAINING.pretrained_model."""
+    _save_model(
+        tmp_path,
+        setup_pretrained(
+            pretrained_settings(
+                pretrained_model="tauri-s-2606", num_multihead_heads=2
+            ),
+            None,
+            {},
+        ),
+    )
+    s = pretrained_settings(num_multihead_heads=2, r_max=5.0)
+    al_ensemble = _al_ensemble(tmp_path, s, target)
+    assert target.use_pretrained_model is False
+    assert target.r_max == 5.0 and target.r_max_lr is None
+
+    al_ensemble._setup_ensemble()
+    (model,) = al_ensemble.ensemble.values()
+    assert target.r_max == s.ARCHITECTURE.r_max == model.r_max == 4.5
+    assert target.r_max_lr == s.ARCHITECTURE.r_max_lr == model.r_max_lr
+    assert model.r_max_lr == 1000.0
+
+
+def test_al_ensemble_long_range_fallback_without_pretrained_model(
+    tmp_path, pretrained_settings, target
+):
+    """A v1-derived model that stores no long-range values gets the
+    SO3LRCalculator defaults, on the model and in the settings."""
+    model = setup_pretrained(
+        pretrained_settings(pretrained_model="v1", num_multihead_heads=2),
+        None,
+        {},
+    )
+    model.r_max_lr = None
+    model.dispersion_energy_cutoff_lr_damping = None
+    _save_model(tmp_path, model)
+    s = pretrained_settings(num_multihead_heads=2)
+    al_ensemble = _al_ensemble(tmp_path, s, target)
+
+    al_ensemble._setup_ensemble()
+    (model,) = al_ensemble.ensemble.values()
+    assert target.r_max_lr == model.r_max_lr == 12.0
+    assert target.dispersion_energy_cutoff_lr_damping == 2.0
+    assert model.dispersion_energy_cutoff_lr_damping == 2.0
+
+
+def _assert_al_sync_noop(tmp_path, model, build_settings, target, caplog):
+    _save_model(tmp_path, model)
+    s = build_settings()
+    al_ensemble = _al_ensemble(tmp_path, s, target)
+    architecture_before = s.ARCHITECTURE.model_dump()
+    graph_before = {key: getattr(target, key) for key in _GRAPH_KEYS}
+
+    with caplog.at_level(logging.WARNING):
+        al_ensemble._setup_ensemble()
+    assert s.ARCHITECTURE.model_dump() == architecture_before
+    assert {key: getattr(target, key) for key in _GRAPH_KEYS} == graph_before
+    assert not [r for r in caplog.records if r.levelno >= logging.WARNING]
+
+
+@pytest.mark.parametrize(
+    "long_range",
+    [
+        {},
+        {
+            "electrostatic_energy_bool": True,
+            "dispersion_energy_bool": True,
+            "r_max_lr": 9.0,
+        },
+    ],
+    ids=["short_range", "long_range"],
+)
+def test_al_ensemble_sync_noop_for_from_scratch_so3lr(
+    tmp_path, so3lr_model_settings, target, caplog, long_range
+):
+    def build_settings():
+        return so3lr_model_settings(ARCHITECTURE=long_range)
+
+    model = setup_so3lr(
+        build_settings(),
+        AtomicNumberTable(_ALL_ELEMENTS),
+        {z: 0.0 for z in _ALL_ELEMENTS},
+    )
+    _assert_al_sync_noop(tmp_path, model, build_settings, target, caplog)
+
+
+def test_al_ensemble_sync_noop_for_mace(tmp_path, target, caplog):
+    from tests.helpers import mace_cfg
+
+    def build_settings():
+        return ModelSettings.model_validate(mace_cfg())
+
+    model = setup_mace(
+        build_settings(), AtomicNumberTable([1, 8]), {1: -13.6, 8: -2040.0}
+    )
+    _assert_al_sync_noop(tmp_path, model, build_settings, target, caplog)

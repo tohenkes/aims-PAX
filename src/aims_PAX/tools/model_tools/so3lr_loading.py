@@ -178,7 +178,7 @@ def load_so3lr(
         torch.set_default_dtype(previous_dtype)
 
 
-def _resolve_long_range_value(
+def resolve_long_range_value(
     model: SO3LR, name: str, value: Optional[float]
 ) -> float:
     """``value``, else the model's stored ``name``, else the default of
@@ -223,8 +223,8 @@ def make_so3lr_calculator(
         theory_level=theory_level,
         **architecture_overrides,
     )
-    r_max_lr = _resolve_long_range_value(model, "r_max_lr", r_max_lr)
-    damping = _resolve_long_range_value(
+    r_max_lr = resolve_long_range_value(model, "r_max_lr", r_max_lr)
+    damping = resolve_long_range_value(
         model,
         "dispersion_energy_cutoff_lr_damping",
         dispersion_energy_cutoff_lr_damping,
