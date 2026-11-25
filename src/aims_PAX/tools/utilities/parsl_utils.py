@@ -101,7 +101,9 @@ def prepare_parsl(
     }
 
 
-def create_parsl_config(cluster_settings: ClusterSettings, output_dir: Path = Path(".")) -> Config:
+def create_parsl_config(
+    cluster_settings: ClusterSettings, output_dir: Path = Path(".")
+) -> Config:
     """
     Reads in CLUSTER settings as a Pydantic model (provided in the yaml file).
     The information is then used to create a PARSL configuration object.
@@ -381,9 +383,13 @@ def recalc_dft_parsl(
         command = ase_aims_command
 
     os.environ["ASE_AIMS_COMMAND"] = command
-    os.environ["PARSL_RESOURCE_SPECIFICATION"] = str(kwargs.get("resource_specification", ""))
+    os.environ["PARSL_RESOURCE_SPECIFICATION"] = str(
+        kwargs.get("resource_specification", "")
+    )
 
-    for var in ["UCX_NUM_EPS",]:
+    for var in [
+        "UCX_NUM_EPS",
+    ]:
         os.environ.pop(var, None)
 
     calc = Aims(
@@ -448,9 +454,7 @@ def _build_teacher_calculator(
             device=device,
             damping=model_settings.get("damping", "bj"),
             dispersion_xc=model_settings.get("dispersion_xc", "pbe"),
-            dispersion_cutoff=model_settings.get(
-                "dispersion_cutoff", 12.0
-            ),
+            dispersion_cutoff=model_settings.get("dispersion_cutoff", 12.0),
         )
     elif model_type == "mace":
         from mace.calculators import MACECalculator
@@ -469,7 +473,7 @@ def _build_teacher_calculator(
             device=device,
             default_dtype=default_dtype,
             r_max_lr=model_settings.get("r_max_lr", None),
-            dispersion_lr_damping=model_settings.get(
+            dispersion_energy_cutoff_lr_damping=model_settings.get(
                 "dispersion_lr_damping", None
             ),
         )

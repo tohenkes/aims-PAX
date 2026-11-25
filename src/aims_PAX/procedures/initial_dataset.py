@@ -76,7 +76,7 @@ class InitialDatasetProcedure(PrepareInitialDatasetProcedure):
         Returns:
             list: List of ASE Atoms objects.
         """
-        
+
         if self.distinct_model_sets:
             start_idx = (
                 len(self.atoms)
@@ -91,7 +91,7 @@ class InitialDatasetProcedure(PrepareInitialDatasetProcedure):
         else:
             start_idx = 0
             end_idx = len(self.sampled_points)
-            
+
         return self.sampled_points[start_idx:end_idx]
 
     def _train(self) -> bool:
@@ -122,7 +122,7 @@ class InitialDatasetProcedure(PrepareInitialDatasetProcedure):
                 r_max=self.r_max,
                 r_max_lr=self.r_max_lr,
                 all_heads=self.all_heads,
-                key_specification=self.key_specification
+                key_specification=self.key_specification,
             )
 
             batch_size = (
@@ -131,24 +131,21 @@ class InitialDatasetProcedure(PrepareInitialDatasetProcedure):
                 < self.set_batch_size
                 else self.set_batch_size
             )
-                
-                
+
             smallest_valid_set = 0
-            for valid_set in self.ensemble_model_sets[tag][
-                "valid"].values():
+            for valid_set in self.ensemble_model_sets[tag]["valid"].values():
                 if (
                     smallest_valid_set == 0
                     or len(valid_set) < smallest_valid_set
                 ):
                     smallest_valid_set = len(valid_set)
-                        
+
             valid_batch_size = (
                 1
-                if smallest_valid_set
-                < self.set_valid_batch_size
+                if smallest_valid_set < self.set_valid_batch_size
                 else self.set_valid_batch_size
             )
-                
+
             (
                 self.ensemble_model_sets[tag]["train_loader"],
                 self.ensemble_model_sets[tag]["valid_loader"],
@@ -158,7 +155,7 @@ class InitialDatasetProcedure(PrepareInitialDatasetProcedure):
                 batch_size,
                 valid_batch_size,
             )
-                
+
             update_model_auxiliaries(
                 model=model,
                 model_choice=self.model_choice,
@@ -167,9 +164,7 @@ class InitialDatasetProcedure(PrepareInitialDatasetProcedure):
                 scaling=self.scaling,
                 update_atomic_energies=self.update_atomic_energies,
                 z_table=self.z_table,
-                atomic_energies_dict=self.ensemble_atomic_energies_dict[
-                    tag
-                ],
+                atomic_energies_dict=self.ensemble_atomic_energies_dict[tag],
                 update_avg_num_neighbors=self.update_avg_num_neighbors,
                 dtype=self.dtype,
                 device=self.device,
@@ -185,9 +180,7 @@ class InitialDatasetProcedure(PrepareInitialDatasetProcedure):
                 logging.info(f"  Head '{head}': {len(valid_set)}")
 
         logging.info("Training.")
-        ensemble_valid_losses = {
-            tag: np.inf for tag in self.ensemble.keys()
-        }
+        ensemble_valid_losses = {tag: np.inf for tag in self.ensemble.keys()}
         for _ in range(self.intermediate_epochs_idg):
             # each member gets trained individually
             for tag, model in self.ensemble.items():
@@ -198,9 +191,7 @@ class InitialDatasetProcedure(PrepareInitialDatasetProcedure):
                 )
                 train_epoch(
                     model=model,
-                    train_loader=self.ensemble_model_sets[tag][
-                        "train_loader"
-                    ],
+                    train_loader=self.ensemble_model_sets[tag]["train_loader"],
                     loss_fn=self.training_setups[tag]["loss_fn"],
                     optimizer=self.training_setups[tag]["optimizer"],
                     lr_scheduler=self.training_setups[tag]["lr_scheduler"],
@@ -209,25 +200,18 @@ class InitialDatasetProcedure(PrepareInitialDatasetProcedure):
                     valid_loss=ensemble_valid_losses[tag],
                     logger=logger,
                     device=self.training_setups[tag]["device"],
-                    max_grad_norm=self.training_setups[tag][
-                        "max_grad_norm"
-                    ],
+                    max_grad_norm=self.training_setups[tag]["max_grad_norm"],
                     output_args=self.training_setups[tag]["output_args"],
                     ema=self.training_setups[tag]["ema"],
                 )
             # the validation errors are averages over the ensemble members
             if self.epoch % self.valid_skip == 0:
-                (
-                    ensemble_valid_losses,
-                    valid_loss,
-                    metrics,
-                    _
-                ) = validate_epoch(
+                ensemble_valid_losses, valid_loss, metrics, _ = validate_epoch(
                     ensemble=self.ensemble,
                     training_setups=self.training_setups,
                     valid_loaders=self.ensemble_model_sets[tag][
                         "valid_loader"
-                        ],
+                    ],
                     logger=logger,
                     log_errors=self.model_settings.MISC.error_table,
                     epoch=self.epoch,
@@ -331,9 +315,7 @@ class InitialDatasetProcedure(PrepareInitialDatasetProcedure):
                 data. Defaults to output_dir/analysis/initial_losses.npz.
         """
         if save_path is None:
-            save_path = (
-                self.output_dir / "analysis" / "initial_losses.npz"
-            )
+            save_path = self.output_dir / "analysis" / "initial_losses.npz"
         self.collect_losses["epoch"].append(self.epoch)
         self.collect_losses["avg_losses"].append(valid_loss)
         self.collect_losses["ensemble_losses"].append(ensemble_valid_losses)
@@ -349,10 +331,7 @@ class InitialDatasetProcedure(PrepareInitialDatasetProcedure):
 
         # initializing md and FHI aims
         for idx, atoms in self.trajectories.items():
-            dyn = self.setup_md(
-                atoms,
-                md_settings=self.md_settings[idx]
-            )
+            dyn = self.setup_md(atoms, md_settings=self.md_settings[idx])
             self.md_drivers[idx] = dyn
 
         if self.save_trajectories:
@@ -369,13 +348,8 @@ class InitialDatasetProcedure(PrepareInitialDatasetProcedure):
                     interval=self.save_trajectories_interval,
                 )
 
-        logging.info(
-            f'Using following settings for MDs:'
-        )
-        log_yaml_block(
-            "MD_SETTINGS",
-            self.md_settings
-        )
+        logging.info(f"Using following settings for MDs:")
+        log_yaml_block("MD_SETTINGS", self.md_settings)
 
         self._setup_calcs()
 
@@ -388,8 +362,7 @@ class InitialDatasetProcedure(PrepareInitialDatasetProcedure):
         ):
 
             self._sample_and_train()
-        
-            
+
         if self.converge_initial:
             logging.info("Converging initial dataset models.")
             self.converge()
@@ -400,7 +373,7 @@ class InitialDatasetProcedure(PrepareInitialDatasetProcedure):
             model_dir=self.model_settings.GENERAL.model_dir,
             current_epoch=self.epoch,
             model_settings=self.model_settings.ARCHITECTURE,
-            model_choice=self.model_choice
+            model_choice=self.model_choice,
         )
 
         if self.create_restart:
@@ -515,14 +488,14 @@ class InitialDatasetPARSL(InitialDatasetProcedure):
         self.clean_dirs = parsl_setup_dict["clean_dirs"]
         self.launch_str = parsl_setup_dict["launch_str"]
         self.calc_idx = parsl_setup_dict["calc_idx"]
-            
+
         self.parsl_func_input = {
             "ase_aims_command": self.launch_str,
             "properties": self.properties,
         }
-            
+
         if self.cluster_settings.executor == "mpi":
-            
+
             num_nodes = self.cluster_settings.parsl_options.nodes_per_block
             rank_per_nodes = self.cluster_settings.tasks_per_node
 
@@ -638,7 +611,9 @@ class InitialDatasetPARSL(InitialDatasetProcedure):
         """
         self._md_w_foundational()
         recalculated_points = []
-        logging.info("Recalculating energies and forces with reference method.")
+        logging.info(
+            "Recalculating energies and forces with reference method."
+        )
         job_results = {idx: {} for idx in self.sampled_points.keys()}
         calc_launched = 0
         # loop over different systems
@@ -705,9 +680,9 @@ class InitialDatasetPARSL(InitialDatasetProcedure):
     def _setup_foundational(
         self,
         model_choice: str,
-        foundational_model_settings: MaceFMSettings | So3lrFMSettings
+        foundational_model_settings: MaceFMSettings | So3lrFMSettings,
     ):
-        if model_choice == 'mace-mp':
+        if model_choice == "mace-mp":
             mace_model = foundational_model_settings.mace_model
             dispersion = foundational_model_settings.dispersion
             damping = foundational_model_settings.damping
@@ -715,7 +690,9 @@ class InitialDatasetPARSL(InitialDatasetProcedure):
             dispersion_cutoff = foundational_model_settings.dispersion_cutoff
             if dispersion:
                 try:
-                    from torch_dftd.torch_dftd3_calculator import TorchDFTD3Calculator
+                    from torch_dftd.torch_dftd3_calculator import (
+                        TorchDFTD3Calculator,
+                    )
                 except ImportError as exc:
                     raise RuntimeError(
                         "Please install torch-dftd to use dispersion "
@@ -734,16 +711,19 @@ class InitialDatasetPARSL(InitialDatasetProcedure):
                 dispersion_xc=dispersion_xc,
                 dispersion_cutoff=dispersion_cutoff,
             )
-        elif model_choice == 'so3lr':
+        elif model_choice == "so3lr":
             r_max_lr = foundational_model_settings.r_max_lr
-            dispersion_lr_damping = foundational_model_settings.dispersion_lr_damping
+            dispersion_lr_damping = (
+                foundational_model_settings.dispersion_lr_damping
+            )
             return SO3LRCalculator(
+                model="v1",
                 r_max_lr=r_max_lr,
                 dispersion_energy_cutoff_lr_damping=dispersion_lr_damping,
                 compute_stress=self.compute_stress,
                 device=self.device,
                 default_dtype=self.dtype,
-                key_specification=self.key_specification
+                key_specification=self.key_specification,
             )
         else:
             raise ValueError(
@@ -816,7 +796,9 @@ class InitialDatasetPARSLTeacher(InitialDatasetPARSL):
         )
 
         idg_settings = aimsPAX_settings.INITIAL_DATASET_GENERATION
-        self.teacher_reference_settings = idg_settings.teacher_reference_settings
+        self.teacher_reference_settings = (
+            idg_settings.teacher_reference_settings
+        )
         logging.info(
             "Using teacher model for reference calculations "
             f"(type: {self.teacher_reference_settings['model_type']})."
@@ -852,7 +834,9 @@ class InitialDatasetPARSLTeacher(InitialDatasetPARSL):
 
         kwargs = {}
         if self.workqueue_resource_spec is not None:
-            kwargs["parsl_resource_specification"] = self.workqueue_resource_spec
+            kwargs["parsl_resource_specification"] = (
+                self.workqueue_resource_spec
+            )
         return recalc_teacher_model_parsl(
             positions=atoms.get_positions(),
             species=atoms.get_chemical_symbols(),

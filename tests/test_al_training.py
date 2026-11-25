@@ -1,5 +1,8 @@
+import ase.io
 import numpy as np
 import pytest
+import torch
+from mace.tools import AtomicNumberTable
 from types import SimpleNamespace
 from unittest.mock import MagicMock, patch
 
@@ -8,6 +11,13 @@ from aims_PAX.procedures.al_managers import (
     TrainingOrchestrator,
     TrainingSession,
 )
+from aims_PAX.settings import ModelSettings
+from aims_PAX.tools.model_tools.setup_so3 import setup_multihead_so3lr
+from aims_PAX.tools.utilities.utilities import (
+    compute_average_E0s,
+    create_keyspec,
+)
+from tests.helpers import _TRAIN_XYZ, make_loader
 
 # ===========================================================================
 # Stub helpers
@@ -256,3 +266,71 @@ def test_converge_best_trains_only_best_member():
     mgr.converge()
     # 2-member ensemble reduced to 1 → 3 train calls, not 6
     assert mgr.orchestrator.train_single_epoch.call_count == 3
+
+
+# ===========================================================================
+# §N — multi-head to single-head convergence
+# ===========================================================================
+
+
+@pytest.fixture
+def si_batch():
+    atoms_list = ase.io.read(_TRAIN_XYZ, index=":2")
+    z_table = AtomicNumberTable([14])
+    loader = make_loader(
+        atoms_list, create_keyspec(), z_table, r_max=4.5, batch_size=2
+    )
+    return next(iter(loader)), z_table, atoms_list
+
+
+@pytest.fixture
+def mh_al_manager(si_batch):
+    _, z_table, atoms_list = si_batch
+    energies = [a.info["REF_energy"] for a in atoms_list]
+    zs = [a.get_atomic_numbers() for a in atoms_list]
+    atomic_energies_dict = compute_average_E0s(energies, zs, z_table)
+    settings = ModelSettings(
+        **{
+            "GENERAL": {"name_exp": "test", "seed": 42},
+            "ARCHITECTURE": {
+                "model_choice": "so3lr",
+                "num_features": 8,
+                "num_layers": 1,
+                "degrees": [1],
+                "num_heads": 1,
+                "energy_regression_dim": 8,
+                "zbl_repulsion_bool": False,
+                "electrostatic_energy_bool": False,
+                "dispersion_energy_bool": False,
+                "use_multihead_model": True,
+                "num_multihead_heads": 3,
+            },
+            "MISC": {"device": "cpu"},
+        }
+    )
+    mh = setup_multihead_so3lr(settings, z_table, atomic_energies_dict)
+    mgr = ALTrainingManager.__new__(ALTrainingManager)
+    mgr.config = SimpleNamespace(
+        use_multihead_model=True,
+        all_heads=["h0", "h1", "h2"],
+        device="cpu",
+        dtype="float32",
+    )
+    mgr.ensemble_manager = SimpleNamespace(
+        ensemble={"tag": mh}, z_table=z_table
+    )
+    mgr.best_member = "tag_2"
+    return mgr
+
+
+def test_mh_to_sh_convergence_keeps_best_head(si_batch, mh_al_manager):
+    batch = si_batch[0]
+    mh = next(iter(mh_al_manager.ensemble_manager.ensemble.values()))
+    mh.select_heads = False
+    e_mh = mh(batch.to_dict())["energy"].detach()  # (heads, graphs)
+    mh_al_manager._setup_mh_to_sh_convergence()
+    sh = next(iter(mh_al_manager.ensemble_manager.ensemble.values()))
+    assert type(sh).__name__ == "SO3LR"
+    e_sh = sh(batch.to_dict())["energy"].detach()
+    torch.testing.assert_close(e_sh, e_mh[2], rtol=1e-5, atol=1e-6)
+    assert mh_al_manager.config.use_multihead_model is False

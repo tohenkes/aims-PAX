@@ -13,14 +13,17 @@ from mace.cli.convert_e3nn_cueq import run as convert_e3nn_cueq
 from mace.cli.convert_cueq_e3nn import run as convert_cueq_e3nn
 from mace.tools import AtomicNumberTable
 from so3krates_torch.modules.models import So3krates, SO3LR
-from so3krates_torch.tools.multihead_utils import reduce_mh_model_to_sh
 from so3krates_torch.tools.finetune import setup_finetuning
 
 from aims_PAX.settings import ModelSettings
 from aims_PAX.settings.model import BaseArchitectureSettings
 from aims_PAX.settings.project import MDSettings
 from aims_PAX.tools.model_tools.setup_MACE import setup_mace
-from aims_PAX.tools.model_tools.setup_so3 import setup_so3krates, setup_so3lr, setup_multihead_so3lr
+from aims_PAX.tools.model_tools.setup_so3 import (
+    setup_so3krates,
+    setup_so3lr,
+    setup_multihead_so3lr,
+)
 from aims_PAX.tools.model_tools.training_tools import setup_model_training
 import ase.data
 from ase.io import read
@@ -31,11 +34,8 @@ from threading import Thread
 import pandas as pd
 import yaml
 from copy import deepcopy
-from mace.data.utils import (
-    KeySpecification
-)
+from mace.data.utils import KeySpecification
 from ase.io import write
-
 
 # Many functions are taken from or inspired by the MACE code:
 # https://github.com/ACEsuit/mace
@@ -53,45 +53,23 @@ Pbc = tuple  # (3,)
 DEFAULT_CONFIG_TYPE = "Default"
 DEFAULT_CONFIG_TYPE_WEIGHTS = {DEFAULT_CONFIG_TYPE: 1.0}
 
-#TODO: Refactor all model setup to a separate file
-
-def mh_to_sh_model(
-    mh_model_state_dict,
-    settings: dict,
-    z_table: tools.AtomicNumberTable,
-    atomic_energies_dict: dict,
-    avg_num_neighbors: float,
-    head_idx: int,
-    model_choice: str = "so3lr",
-    device: str = "cpu",
-    dtype: str = "float32"
-):
-    settings["num_elements"] = len(z_table)
-    settings["avg_num_neighbors"] = avg_num_neighbors
-    settings["atomic_type_shifts"] = atomic_energies_dict
-    
-    sh_model = reduce_mh_model_to_sh(
-        mh_model_state_dict,
-        settings,
-        head_idx,
-        model_choice,
-        device,
-        dtype
-    )
-    return sh_model
+# TODO: Refactor all model setup to a separate file
 
 
 def get_free_vols(lines):
     active = False
     freevol = []
     for line in lines:
-       if not active:
-          if "Performing Hirshfeld analysis of fragment charges and moments" in line:
+        if not active:
+            if (
+                "Performing Hirshfeld analysis of fragment charges and moments"
+                in line
+            ):
                 active = True
-       else:
-          if "Free atom volume" in line:
-             fav = float(re.findall("\-?\d+(?:\.\d+)", line)[0])
-             freevol.append(fav)
+        else:
+            if "Free atom volume" in line:
+                fav = float(re.findall("\-?\d+(?:\.\d+)", line)[0])
+                freevol.append(fav)
     return freevol
 
 
@@ -100,13 +78,14 @@ def get_hirshfeld_charges(lines):
     charges = []
     for line in lines:
         if not active:
-            if "Performing Hirshfeld analysis of fragment charges and moments" in line:
+            if (
+                "Performing Hirshfeld analysis of fragment charges and moments"
+                in line
+            ):
                 active = True
         else:
             if "Hirshfeld charge" in line:
-                charges.append(
-                    float(re.findall(r"\-?\d+(?:\.\d+)", line)[0])
-                )
+                charges.append(float(re.findall(r"\-?\d+(?:\.\d+)", line)[0]))
     return charges
 
 
@@ -125,11 +104,26 @@ def apply_model_settings(
         "model_dir": model_settings.GENERAL.model_dir,
         "dtype": model_settings.GENERAL.default_dtype,
         "r_max": model_settings.ARCHITECTURE.r_max,
-        "r_max_lr": model_settings.ARCHITECTURE.r_max_lr if model_choice == "so3lr" else None,
-        "dispersion_energy_cutoff_lr_damping": (model_settings.ARCHITECTURE.dispersion_energy_cutoff_lr_damping
-                                                if model_choice == "so3lr" else None),
-        "atomic_energies_dict": None if model_choice != "mace" else model_settings.ARCHITECTURE.atomic_energies,
-        "scaling": None if model_choice != "mace" else model_settings.ARCHITECTURE.scaling,
+        "r_max_lr": (
+            model_settings.ARCHITECTURE.r_max_lr
+            if model_choice == "so3lr"
+            else None
+        ),
+        "dispersion_energy_cutoff_lr_damping": (
+            model_settings.ARCHITECTURE.dispersion_energy_cutoff_lr_damping
+            if model_choice == "so3lr"
+            else None
+        ),
+        "atomic_energies_dict": (
+            None
+            if model_choice != "mace"
+            else model_settings.ARCHITECTURE.atomic_energies
+        ),
+        "scaling": (
+            None
+            if model_choice != "mace"
+            else model_settings.ARCHITECTURE.scaling
+        ),
         "set_batch_size": model_settings.TRAINING.batch_size,
         "set_valid_batch_size": model_settings.TRAINING.valid_batch_size,
         "update_avg_num_neighbors": model_settings.TRAINING.update_avg_num_neighbors,
@@ -139,8 +133,16 @@ def apply_model_settings(
         "properties": ["energy", "forces"],
         "enable_cueq": model_settings.MISC.enable_cueq,
         "enable_cueq_train": model_settings.MISC.enable_cueq_train,
-        "use_multihead_model": False if model_choice != "so3lr" else model_settings.ARCHITECTURE.use_multihead_model,
-        "num_multihead_heads": 0 if model_choice != "so3lr" else model_settings.ARCHITECTURE.num_multihead_heads,
+        "use_multihead_model": (
+            False
+            if model_choice != "so3lr"
+            else model_settings.ARCHITECTURE.use_multihead_model
+        ),
+        "num_multihead_heads": (
+            0
+            if model_choice != "so3lr"
+            else model_settings.ARCHITECTURE.num_multihead_heads
+        ),
     }
 
     if model_settings.MISC.compute_stress:
@@ -155,10 +157,9 @@ def apply_model_settings(
     torch.set_default_dtype(getattr(torch, target.dtype))
 
     # Multihead attributes
-    target.use_pretrained_model = (
-            isinstance(model_settings.TRAINING.pretrained_model, str) or
-            isinstance(model_settings.TRAINING.pretrained_weights, str)
-        )
+    target.use_pretrained_model = isinstance(
+        model_settings.TRAINING.pretrained_model, str
+    ) or isinstance(model_settings.TRAINING.pretrained_weights, str)
     if target.use_pretrained_model and target.update_avg_num_neighbors:
         logging.warning(
             "Using a pretrained model/weights with "
@@ -167,15 +168,13 @@ def apply_model_settings(
         )
     if target.use_multihead_model and target.num_multihead_heads is not None:
         target.all_heads = [
-            f"head_{i}" for i in range(target.num_multihead_heads) 
+            f"head_{i}" for i in range(target.num_multihead_heads)
         ]
     else:
         target.all_heads = None
 
 
-def is_multi_trajectory_md(
-    md_settings: MDSettings
-) -> bool:
+def is_multi_trajectory_md(md_settings: MDSettings) -> bool:
     """Check if MD settings use multi-trajectory format."""
     if not md_settings:
         return False
@@ -184,12 +183,16 @@ def is_multi_trajectory_md(
 
 
 def normalize_md_settings(
-    md_settings: MDSettings,
-    num_trajectories: int
+    md_settings: MDSettings, num_trajectories: int
 ) -> tuple[dict, bool]:
     """Normalize MD settings to multi-trajectory format."""
-    return ({i: md_settings.get_for_index(i).model_dump() for i in range(num_trajectories)},
-            is_multi_trajectory_md(md_settings))
+    return (
+        {
+            i: md_settings.get_for_index(i).model_dump()
+            for i in range(num_trajectories)
+        },
+        is_multi_trajectory_md(md_settings),
+    )
 
 
 def create_keyspec(
@@ -202,7 +205,7 @@ def create_keyspec(
     charges_key: str = "REF_charges",
     hirshfeld_ratios_key: str = "REF_hirshfeld_ratios",
     total_charge_key: str = "total_charge",
-    total_spin_key: str = "total_spin"
+    total_spin_key: str = "total_spin",
 ) -> KeySpecification:
 
     arrays_keys = {
@@ -210,7 +213,7 @@ def create_keyspec(
         "charges": charges_key,
         "hirshfeld_ratios": hirshfeld_ratios_key,
     }
-    
+
     info_keys = {
         "energy": energy_key,
         "stress": stress_key,
@@ -218,13 +221,10 @@ def create_keyspec(
         "polarizability": polarizability_key,
         "head": head_key,
         "total_charge": total_charge_key,
-        "total_spin": total_spin_key
+        "total_spin": total_spin_key,
     }
-    
-    return KeySpecification(
-        info_keys=info_keys,
-        arrays_keys=arrays_keys
-    )
+
+    return KeySpecification(info_keys=info_keys, arrays_keys=arrays_keys)
 
 
 def compute_average_E0s(
@@ -258,11 +258,8 @@ def compute_average_E0s(
 
 
 def ensemble_from_folder(
-        path_to_models: str,
-        device: str,
-        dtype,
-        convert_to_cueq: bool = False
-            ) -> list:
+    path_to_models: str, device: str, dtype, convert_to_cueq: bool = False
+) -> list:
     """
     Load an ensemble of models from a folder.
     (Can't handle other file formats than .pt at the moment.)
@@ -288,12 +285,10 @@ def ensemble_from_folder(
                 model = torch.load(
                     complete_path, map_location=device, weights_only=False
                 ).to(dtype)
-                
+
                 if convert_to_cueq:
                     model = convert_e3nn_cueq(
-                        input_model=model,
-                        device=device,
-                        return_model=True
+                        input_model=model, device=device, return_model=True
                     )
 
                 filename_without_suffix = os.path.splitext(filename)[0]
@@ -373,7 +368,7 @@ def get_ensemble_training_setups(
     Returns:
         dict: Dictionary of training setups for each model in the ensemble.
     """
-    
+
     model_choice = model_settings.GENERAL.model_choice.lower()
     training_setups = {}
     for tag, model in ensemble.items():
@@ -460,7 +455,7 @@ def setup_ensemble_dicts(
         model_settings.GENERAL.seed = seed
         tag = model_settings.GENERAL.name_exp + "-" + str(seed)
         seeds_tags_dict[tag] = seed
-        
+
         model_choice = model_settings.GENERAL.model_choice.lower()
         if model_choice == "mace":
             ensemble[tag] = setup_mace(
@@ -477,7 +472,9 @@ def setup_ensemble_dicts(
         elif model_choice == "so3lr":
             # TODO: Move the check to where it belongs
             if model_settings.ARCHITECTURE.use_multihead_model:
-                assert model_settings.ARCHITECTURE.num_multihead_heads is not None, (
+                assert (
+                    model_settings.ARCHITECTURE.num_multihead_heads is not None
+                ), (
                     "num_multihead_heads must be specified when using "
                     "a multihead SO3LR model."
                 )
@@ -490,16 +487,18 @@ def setup_ensemble_dicts(
                     model_settings=model_settings,
                     z_table=z_table,
                     atomic_energies_dict=ensemble_atomic_energies_dict[tag],
-                    num_elements=num_elements
+                    num_elements=num_elements,
                 )
                 if pretrained_model is not None:
                     ensemble[tag] = pretrained_model
-                    
+
                 else:
                     ensemble[tag] = setup_multihead_so3lr(
                         settings=model_settings,
                         z_table=z_table,
-                        atomic_energies_dict=ensemble_atomic_energies_dict[tag],
+                        atomic_energies_dict=ensemble_atomic_energies_dict[
+                            tag
+                        ],
                     )
             else:
                 ensemble[tag] = setup_so3lr(
@@ -514,72 +513,69 @@ def setup_pretrained(
     model_settings: ModelSettings,
     z_table: tools.AtomicNumberTable,
     atomic_energies_dict: dict,
-    num_elements: int = 118
+    num_elements: int = 118,
 ):
     pretrained_model = model_settings.TRAINING.pretrained_model
     pretrained_weights = model_settings.TRAINING.pretrained_weights
     num_output_heads = model_settings.ARCHITECTURE.num_multihead_heads
     device = model_settings.MISC.device
     dtype = model_settings.GENERAL.default_dtype
-    
+
     if not pretrained_model and not pretrained_weights:
         return None
-    
+
     if pretrained_model or pretrained_weights:
-        assert model_settings.ARCHITECTURE.use_multihead_model, (
-            "Pretrained model or weights can only be used with multihead SO3LR."
-        )
+        assert (
+            model_settings.ARCHITECTURE.use_multihead_model
+        ), "Pretrained model or weights can only be used with multihead SO3LR."
         logging.info("Using pretrained model or weights for multihead SO3LR.")
-        #TODO: Find a better way to do this. Extract settings from model (weights)?
+        # TODO: Find a better way to do this. Extract settings from model (weights)?
         logging.warning(
             "Make sure that the architecture settings corresponding "
             "to the pretrained model have been set correctly in the config file."
             " Otherwise, non-matching hyperparameters will be saved!"
         )
-        
+
     model = None
     if pretrained_model:
         model = torch.load(
-            pretrained_model,
-            map_location=device,
-            weights_only=False
+            pretrained_model, map_location=device, weights_only=False
         )
         model.device = device
         model.atomic_energy_output_block.device = device
         model.to(dtype_mapping[dtype])
         model.select_heads = True
-        
+
         assert num_output_heads == model.num_output_heads, (
             "Number of output heads in the pretrained model does not match "
             "the number of output heads specified in the settings."
         )
     elif pretrained_weights:
         weights = torch.load(
-            pretrained_weights,
-            map_location=device,
-            weights_only=True
+            pretrained_weights, map_location=device, weights_only=True
         )
-        
-        assert num_output_heads == weights[
-            "atomic_energy_output_block.num_output_heads"
-        ], (
+
+        assert (
+            num_output_heads
+            == weights["atomic_energy_output_block.num_output_heads"]
+        ), (
             "Number of output heads in the pretrained weights does not match "
             "the number of output heads specified in the settings."
         )
-        
+
         model = setup_multihead_so3lr(
             settings=model_settings,
             z_table=z_table,
             atomic_energies_dict=atomic_energies_dict,
         )
-        
+
         model.load_state_dict(weights)
-    
+
     if model_settings.TRAINING.perform_finetuning:
         model = apply_finetuning_settings(
             model=model,
             model_settings=model_settings,
-            num_elements=num_elements
+            num_elements=num_elements,
         )
 
     if model_settings.GENERAL.model_choice == "so3lr":
@@ -593,9 +589,9 @@ def setup_pretrained(
 def apply_finetuning_settings(
     model: torch.nn.Module,
     model_settings: ModelSettings,
-    num_elements: int = 118
+    num_elements: int = 118,
 ) -> torch.nn.Module:
-    
+
     logging.info("Applying fine-tuning settings to pretrained model.")
 
     finetune_choice = model_settings.TRAINING.finetuning_choice
@@ -610,12 +606,12 @@ def apply_finetuning_settings(
     lora_rank = model_settings.TRAINING.lora_rank
     lora_alpha = model_settings.TRAINING.lora_alpha
     lora_freeze_A = model_settings.TRAINING.lora_freeze_A
-    
-    dora_scaling_to_one = True # TODO: remove dora
-    
+
+    dora_scaling_to_one = True  # TODO: remove dora
+
     convert_to_multihead = model_settings.TRAINING.convert_to_multihead
     seed = model_settings.GENERAL.seed
-    
+
     return setup_finetuning(
         model=model,
         finetune_choice=finetune_choice,
@@ -633,11 +629,16 @@ def apply_finetuning_settings(
         lora_freeze_A=lora_freeze_A,
         dora_scaling_to_one=dora_scaling_to_one,
         convert_to_multihead=convert_to_multihead,
-        architecture_settings=model_settings.ARCHITECTURE.model_dump(),
+        architecture_settings={
+            **model_settings.ARCHITECTURE.model_dump(),
+            "num_output_heads": (
+                model_settings.ARCHITECTURE.num_multihead_heads
+            ),
+        },
         seed=seed,
-        log=True
+        log=True,
     )
-    
+
 
 def get_atomic_energies_from_ensemble(
     ensemble: dict,
@@ -667,8 +668,7 @@ def get_atomic_energies_from_ensemble(
             if energy_shifts_so3.requires_grad:
                 energy_shifts_so3 = energy_shifts_so3.detach()
             ensemble_atomic_energies[tag] = np.array(
-                energy_shifts_so3.cpu(),
-                dtype=dtype
+                energy_shifts_so3.cpu(), dtype=dtype
             )
         ensemble_atomic_energies_dict[tag] = {}
         for i, atomic_energy in enumerate(ensemble_atomic_energies[tag]):
@@ -686,7 +686,7 @@ def get_atomic_energies_from_pt(
     z: np.ndarray,
     seeds_tags_dict: dict,
     dtype: str,
-    model_choice: str
+    model_choice: str,
 ) -> tuple:
     """
     Loads the atomic energies (energy shifts) from an existing model
@@ -714,7 +714,7 @@ def get_atomic_energies_from_pt(
         check_pt = torch.load(
             path_to_checkpoints / (tag + f"_epoch-{last_epoch}.pt")
         )
-        
+
         if model_choice == "mace":
             atomic_energies_array = check_pt["model"][
                 "atomic_energies_fn.atomic_energies"
@@ -723,7 +723,7 @@ def get_atomic_energies_from_pt(
             atomic_energies_array = check_pt["model"][
                 "atomic_energy_output_block.energy_shifts"
             ]
-            
+
         ensemble_atomic_energies[tag] = np.array(
             atomic_energies_array.cpu(), dtype=dtype
         )
@@ -742,7 +742,9 @@ def to_numpy(t: torch.Tensor) -> np.ndarray:
     return t.cpu().detach().numpy()
 
 
-def compute_avg_num_neighbors(data_loader: torch.utils.data.DataLoader) -> float:
+def compute_avg_num_neighbors(
+    data_loader: torch.utils.data.DataLoader,
+) -> float:
     num_neighbors = []
     for batch in data_loader:
         _, receivers = batch.edge_index
@@ -792,7 +794,7 @@ def update_model_auxiliaries(
     assert atomic_energies_dict is not None
 
     average_neighbors = compute_avg_num_neighbors(train_loader)
-    
+
     energies_train = torch.stack(
         [point.energy.reshape(1) for point in model_sets["train"]]
     )
@@ -807,7 +809,7 @@ def update_model_auxiliaries(
         energies_train, zs_train, z_table
     )
     atomic_energies_dict.update(new_atomic_energies_dict)
-    
+
     if model_choice == "mace":
         if update_atomic_energies:
             update_energy_shifts_mace(
@@ -819,20 +821,20 @@ def update_model_auxiliaries(
         mean, std = modules.scaling_classes[scaling](
             train_loader, atomic_energies_list
         )
-        mean, std = torch.from_numpy(mean).to(device), torch.from_numpy(std).to(
-            device
-        )
+        mean, std = torch.from_numpy(mean).to(device), torch.from_numpy(
+            std
+        ).to(device)
         if update_avg_num_neighbors:
             update_avg_num_neighbors_mace(
                 model,
                 average_neighbors,
             )
-        
+
     elif model_choice in ["so3krates", "so3lr"]:
         if update_avg_num_neighbors:
             update_avg_num_neighbors_so3(
                 model,
-                average_neighbors, 
+                average_neighbors,
             )
         if update_atomic_energies:
             update_energy_shifts_so3(
@@ -935,13 +937,13 @@ def save_checkpoint(
 
 def save_models(
     ensemble: dict,
-    training_setups: dict, 
+    training_setups: dict,
     model_dir: Path,
     current_epoch: int,
-    model_settings:  BaseArchitectureSettings,
+    model_settings: BaseArchitectureSettings,
     model_choice: str,
     save_state_dict: bool = True,
-    convert_cueq_to_e3nn: bool = False
+    convert_cueq_to_e3nn: bool = False,
 ):
     for tag, model in ensemble.items():
         training_setup = training_setups[tag]
@@ -951,12 +953,12 @@ def save_models(
             if training_setup["ema"] is not None
             else nullcontext()
         )
-        
+
         if convert_cueq_to_e3nn:
             model = convert_cueq_e3nn(
                 input_model=model,
                 device=training_setup["device"],
-                return_model=True
+                return_model=True,
             )
 
         with param_context:
@@ -977,21 +979,26 @@ def save_models(
             epoch=current_epoch,
             keep_last=False,
         )
-        
+
         # save hyperparams
         settings = model_settings.model_dump()
-        for k in ("model", "atomic_energies", "use_multihead_model", "num_multihead_heads"):
+        for k in (
+            "model",
+            "atomic_energies",
+            "use_multihead_model",
+            "num_multihead_heads",
+        ):
             settings.pop(k, None)
         if model_choice == "mace":
-            settings["avg_num_neighbors"] = model.interactions[0].avg_num_neighbors
+            settings["avg_num_neighbors"] = model.interactions[
+                0
+            ].avg_num_neighbors
         else:
             settings["avg_num_neighbors"] = model.avg_num_neighbors
-        
+
         settings = {"ARCHITECTURE": settings}
-        
-        with open(
-            Path(model_dir) / (tag + "_hyperparams.yaml"), "w"
-        ) as file:
+
+        with open(Path(model_dir) / (tag + "_hyperparams.yaml"), "w") as file:
             yaml.dump(settings, file)
 
 
@@ -1054,7 +1061,7 @@ def atoms_full_copy(atoms: ase.Atoms) -> ase.Atoms:
     Returns:
         ase.Atoms: Copied ASE Atoms object with all properties.
     """
-    
+
     atoms_copy = ase.Atoms(
         symbols=deepcopy(atoms.get_chemical_symbols()),
         positions=np.copy(atoms.get_positions()),
@@ -1129,9 +1136,9 @@ def save_ensemble(
 
 
 def log_ensemble(
-        seeds_tags_dict: dict[str, Any],
-        trajectory: ase.Atoms,
-        filename: str="md.extxyz"
+    seeds_tags_dict: dict[str, Any],
+    trajectory: ase.Atoms,
+    filename: str = "md.extxyz",
 ):
     atoms = trajectory.copy()
     # get all the info together
@@ -1200,6 +1207,7 @@ class GPUMonitor(Thread):
 
     def run(self):
         import GPUtil  # optional monitoring dependency
+
         while not self.stopped:
             # Get GPU utilization data
             gpus = GPUtil.getGPUs()
@@ -1251,9 +1259,7 @@ def setup_logger(
     # Add filter for rank and to suppress noisy third-party messages
     logger.addFilter(
         lambda record: rank == 0
-        and not any(
-            msg in record.getMessage() for msg in _NOISY_MESSAGES
-        )
+        and not any(msg in record.getMessage() for msg in _NOISY_MESSAGES)
     )
 
     # Create console handler
@@ -1395,6 +1401,4 @@ def get_seeds(seed: int, ensemble_size: int) -> np.ndarray:
     """
     np.random.seed(seed)
     random.seed(seed)
-    return np.random.randint(
-        0, 1000, size=ensemble_size
-    )
+    return np.random.randint(0, 1000, size=ensemble_size)

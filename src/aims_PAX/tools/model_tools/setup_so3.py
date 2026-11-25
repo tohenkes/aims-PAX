@@ -12,7 +12,7 @@ def create_base_so3_settings(
     settings: ModelSettings,
     z_table: tools.AtomicNumberTable,
     atomic_energies_dict: dict,
-    avg_num_neighbors: Optional[np.ndarray] = 1.0
+    avg_num_neighbors: Optional[np.ndarray] = 1.0,
 ):
     """Create settings for so3krates or so3lr model"""
     tools.set_default_dtype(settings.GENERAL.default_dtype)
@@ -20,13 +20,15 @@ def create_base_so3_settings(
 
     model_config = settings.ARCHITECTURE.model_dump()
     model_config.pop("model_choice")
-    model_config.update({
-        "num_elements": len(z_table),
-        "avg_num_neighbors": avg_num_neighbors,
-        "atomic_type_shifts": atomic_energies_dict,
-        "device": torch.device(settings.MISC.device),
-        "dtype": settings.GENERAL.default_dtype,
-    })
+    model_config.update(
+        {
+            "num_elements": len(z_table),
+            "avg_num_neighbors": avg_num_neighbors,
+            "atomic_type_shifts": atomic_energies_dict,
+            "device": torch.device(settings.MISC.device),
+            "dtype": settings.GENERAL.default_dtype,
+        }
+    )
     return model_config
 
 
@@ -34,7 +36,7 @@ def setup_so3krates(
     settings: ModelSettings,
     atomic_energies_dict: dict,
     z_table: Optional[tools.AtomicNumberTable] = None,
-    avg_num_neighbors: Optional[np.ndarray] = 1.0
+    avg_num_neighbors: Optional[np.ndarray] = 1.0,
 ) -> So3krates:
     """
     Setup the So3krates model according to the settings and return it.
@@ -52,21 +54,19 @@ def setup_so3krates(
         z_table = AtomicNumberTable([int(z) for z in range(1, 119)])
 
     model_config = create_base_so3_settings(
-        settings,
-        z_table,
-        atomic_energies_dict,
-        avg_num_neighbors
+        settings, z_table, atomic_energies_dict, avg_num_neighbors
     )
 
     model = So3krates(**model_config).to(settings.MISC.device)
 
     return model
 
+
 def setup_so3lr(
     settings: ModelSettings,
     z_table: tools.AtomicNumberTable,
     atomic_energies_dict: dict,
-    avg_num_neighbors: Optional[np.ndarray] = 1.0
+    avg_num_neighbors: Optional[np.ndarray] = 1.0,
 ) -> SO3LR:
     """
     Setup the SO3LR model according to the settings and return it.
@@ -82,10 +82,7 @@ def setup_so3lr(
     """
 
     model_config = create_base_so3_settings(
-        settings,
-        z_table,
-        atomic_energies_dict,
-        avg_num_neighbors
+        settings, z_table, atomic_energies_dict, avg_num_neighbors
     )
     model_config.pop("use_multihead_model", None)
     model_config.pop("num_multihead_heads", None)
@@ -93,11 +90,12 @@ def setup_so3lr(
     model = SO3LR(**model_config).to(settings.MISC.device)
     return model
 
+
 def setup_multihead_so3lr(
     settings: ModelSettings,
     z_table: tools.AtomicNumberTable,
     atomic_energies_dict: dict,
-    avg_num_neighbors: Optional[np.ndarray] = 1.0
+    avg_num_neighbors: Optional[np.ndarray] = 1.0,
 ) -> MultiHeadSO3LR:
     """
     Setup the MultiHeadSO3LR model according to the settings and return it.
@@ -111,17 +109,16 @@ def setup_multihead_so3lr(
     Returns:
         MultiHeadSO3LR: MultiHeadSO3LR model
     """
-    
+
     model_config = create_base_so3_settings(
-        settings,
-        z_table,
-        atomic_energies_dict,
-        avg_num_neighbors
+        settings, z_table, atomic_energies_dict, avg_num_neighbors
     )
-    model_config[
-        "num_output_heads"
-    ] = settings.ARCHITECTURE.num_multihead_heads
-    
+    model_config.pop("use_multihead_model", None)
+    model_config.pop("num_multihead_heads", None)
+    model_config["num_output_heads"] = (
+        settings.ARCHITECTURE.num_multihead_heads
+    )
+
     model = MultiHeadSO3LR(**model_config).to(settings.MISC.device)
     model.select_heads = True
     return model
