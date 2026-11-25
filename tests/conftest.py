@@ -15,6 +15,18 @@ from pymatgen.core import Molecule
 from aims_PAX.settings import AimsPAXSettings
 
 
+@pytest.fixture(autouse=True)
+def _restore_torch_default_dtype():
+    """Code under test sets the global torch default dtype (e.g.
+    ``apply_model_settings``); restore it so it cannot leak into the
+    next test."""
+    import torch
+
+    previous_dtype = torch.get_default_dtype()
+    yield
+    torch.set_default_dtype(previous_dtype)
+
+
 @pytest.fixture(scope="session")
 def data_dir():
     return Path(__file__).parent / "test_data"
