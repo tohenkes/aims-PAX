@@ -94,6 +94,37 @@ def get_hirshfeld_charges(lines):
     return charges
 
 
+def _graph_architecture_attrs(model_settings: ModelSettings) -> dict:
+    """The ``ARCHITECTURE`` values ``apply_model_settings`` copies to its
+    target that are used to build graphs and calculators."""
+    architecture = model_settings.ARCHITECTURE
+    is_so3lr = model_settings.GENERAL.model_choice.lower() == "so3lr"
+    return {
+        "r_max": architecture.r_max,
+        "r_max_lr": architecture.r_max_lr if is_so3lr else None,
+        "dispersion_energy_cutoff_lr_damping": (
+            architecture.dispersion_energy_cutoff_lr_damping
+            if is_so3lr
+            else None
+        ),
+    }
+
+
+def refresh_architecture_attrs(target, model_settings: ModelSettings) -> None:
+    """Re-copy the graph-building ``ARCHITECTURE`` values to ``target``.
+
+    ``setup_pretrained`` / ``sync_architecture_with_model`` replace
+    ``ARCHITECTURE`` values with the pretrained model's after
+    ``apply_model_settings`` has run; call this right after the ensemble
+    is set up. A no-op when ``ARCHITECTURE`` did not change.
+    """
+    for key, value in _graph_architecture_attrs(model_settings).items():
+        old = getattr(target, key, None)
+        if old != value:
+            logging.info(f"Using {key}={value} of the model (was {old}).")
+        setattr(target, key, value)
+
+
 def apply_model_settings(
     target,
     model_settings: ModelSettings,
@@ -108,17 +139,7 @@ def apply_model_settings(
         "checkpoints_dir": model_settings.GENERAL.checkpoints_dir,
         "model_dir": model_settings.GENERAL.model_dir,
         "dtype": model_settings.GENERAL.default_dtype,
-        "r_max": model_settings.ARCHITECTURE.r_max,
-        "r_max_lr": (
-            model_settings.ARCHITECTURE.r_max_lr
-            if model_choice == "so3lr"
-            else None
-        ),
-        "dispersion_energy_cutoff_lr_damping": (
-            model_settings.ARCHITECTURE.dispersion_energy_cutoff_lr_damping
-            if model_choice == "so3lr"
-            else None
-        ),
+        **_graph_architecture_attrs(model_settings),
         "atomic_energies_dict": (
             None
             if model_choice != "mace"
@@ -583,6 +604,34 @@ def _sync_architecture_with_pretrained(
         setattr(architecture, key, model_value)
 
 
+def _multihead_architecture_dict(model: MultiHeadSO3LR) -> dict[str, Any]:
+    """``so3lr_architecture_dict`` without ``final_layer_bias``: the
+    multi-head energy heads always have a bias, so the model does not
+    tell what the setting describes."""
+    architecture = so3lr_architecture_dict(model)
+    architecture.pop("final_layer_bias", None)
+    return architecture
+
+
+def sync_architecture_with_model(
+    model: torch.nn.Module, model_settings: ModelSettings
+) -> None:
+    """Sync ``model_settings.ARCHITECTURE`` with an already set-up SO3LR
+    model (e.g. one active learning loads from disk), like
+    ``setup_pretrained`` does."""
+    architecture = model_settings.ARCHITECTURE
+    if isinstance(model, MultiHeadSO3LR):
+        model_architecture = _multihead_architecture_dict(model)
+    else:
+        model_architecture = so3lr_architecture_dict(model)
+    _sync_architecture_with_pretrained(
+        model,
+        architecture,
+        model_architecture,
+        set(architecture.model_fields_set),
+    )
+
+
 def setup_pretrained(
     model_settings: ModelSettings,
     z_table: tools.AtomicNumberTable,
@@ -642,7 +691,7 @@ def setup_pretrained(
                 "match the number of output heads specified in the "
                 "settings."
             )
-            model_architecture = so3lr_architecture_dict(model)
+            model_architecture = _multihead_architecture_dict(model)
         else:
             # read before conversion: the new heads always have a bias
             model_architecture = so3lr_architecture_dict(model)
@@ -672,7 +721,7 @@ def setup_pretrained(
             atomic_energies_dict=atomic_energies_dict,
         )
         model.load_state_dict(weights)
-        model_architecture = so3lr_architecture_dict(model)
+        model_architecture = _multihead_architecture_dict(model)
 
     model.select_heads = True
     _sync_architecture_with_pretrained(

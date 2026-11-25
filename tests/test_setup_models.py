@@ -3,6 +3,7 @@ from pathlib import Path
 from unittest.mock import patch
 
 import ase.io
+import numpy as np
 import pytest
 import torch
 from mace.tools import AtomicNumberTable
@@ -17,6 +18,7 @@ from aims_PAX.tools.utilities.utilities import (
     apply_model_settings,
     compute_average_E0s,
     create_keyspec,
+    refresh_architecture_attrs,
     setup_pretrained,
 )
 
@@ -480,3 +482,158 @@ def test_finetuning_passes_c6_and_no_conversion(pretrained_settings):
     kwargs = fake.call_args.kwargs
     assert kwargs["freeze_c6_ratios"] is False
     assert kwargs["convert_to_multihead"] is False
+
+
+# -- procedures build graphs with the pretrained model's cutoffs --------------
+
+_GRAPH_KEYS = ("r_max", "r_max_lr", "dispersion_energy_cutoff_lr_damping")
+_ALL_ELEMENTS = list(range(1, 119))
+
+
+def _idg_stub(model_settings):
+    """PrepareInitialDatasetProcedure with only what ``_setup_ensemble``
+    needs (no geometry, control file or PARSL)."""
+    from aims_PAX.procedures.preparation import (
+        PrepareInitialDatasetProcedure,
+    )
+
+    obj = PrepareInitialDatasetProcedure.__new__(
+        PrepareInitialDatasetProcedure
+    )
+    apply_model_settings(obj, model_settings)
+    obj.seeds_tags_dict = {"test-42": 42}
+    obj.z_table = AtomicNumberTable(_ALL_ELEMENTS)
+    obj.ensemble_atomic_energies_dict = {
+        "test-42": {z: 0.0 for z in _ALL_ELEMENTS}
+    }
+    return obj
+
+
+def _two_waters(distance_oo):
+    """Two water molecules whose O atoms are ``distance_oo`` apart."""
+    from ase.build import molecule
+
+    a, b = molecule("H2O"), molecule("H2O")
+    b.positions += [distance_oo, 0.0, 0.0]
+    atoms = a + b
+    atoms.info["REF_energy"] = 0.0
+    atoms.arrays["REF_forces"] = np.zeros((len(atoms), 3))
+    return atoms
+
+
+def _edge_lengths(atoms, r_max, r_max_lr):
+    from aims_PAX.tools.utilities.data_handling import create_model_dataset
+
+    (data,) = create_model_dataset(
+        data=[atoms],
+        seed=42,
+        z_table=AtomicNumberTable(_ALL_ELEMENTS),
+        r_max=r_max,
+        r_max_lr=r_max_lr,
+        key_specification=create_keyspec(),
+    )
+    senders, receivers = data.edge_index
+    return (data.positions[receivers] - data.positions[senders]).norm(dim=1)
+
+
+def test_idg_procedure_uses_pretrained_r_max(pretrained_settings):
+    s = pretrained_settings(
+        pretrained_model="tauri-s-2606", num_multihead_heads=2, r_max=5.0
+    )
+    idg = _idg_stub(s)
+    assert idg.r_max == 5.0 and idg.r_max_lr is None
+    idg._setup_ensemble()
+    assert idg.r_max == 4.5
+    assert idg.r_max_lr == 1000.0
+    assert idg.dispersion_energy_cutoff_lr_damping == 2.0
+
+
+def test_idg_procedure_keeps_user_r_max_lr(pretrained_settings):
+    s = pretrained_settings(
+        pretrained_model="tauri-s-2606",
+        num_multihead_heads=2,
+        r_max=5.0,
+        r_max_lr=12.0,
+    )
+    idg = _idg_stub(s)
+    idg._setup_ensemble()
+    assert idg.r_max == 4.5 and idg.r_max_lr == 12.0
+    assert idg.ensemble["test-42"].r_max_lr == 12.0
+
+
+def test_idg_procedure_graph_uses_pretrained_cutoff(pretrained_settings):
+    s = pretrained_settings(
+        pretrained_model="tauri-s-2606",
+        num_multihead_heads=2,
+        r_max=5.0,
+        r_max_lr=12.0,
+    )
+    idg = _idg_stub(s)
+    idg._setup_ensemble()
+    atoms = _two_waters(distance_oo=4.75)
+    lengths = _edge_lengths(atoms, idg.r_max, idg.r_max_lr)
+    lengths_user = _edge_lengths(atoms, 5.0, idg.r_max_lr)
+    # the O-O pair (4.75 A) is an edge at 5.0 but not at the model's 4.5
+    assert lengths.max() < 4.5
+    assert len(lengths) < len(lengths_user)
+    assert ((lengths_user > 4.5) & (lengths_user < 5.0)).any()
+
+
+def test_idg_procedure_without_pretrained_unchanged(so3lr_model_settings):
+    s = so3lr_model_settings(ARCHITECTURE={"r_max": 5.0, "r_max_lr": 9.0})
+    idg = _idg_stub(s)
+    before = {key: getattr(idg, key) for key in _GRAPH_KEYS}
+    architecture_before = s.ARCHITECTURE.model_dump()
+    idg._setup_ensemble()
+    assert {key: getattr(idg, key) for key in _GRAPH_KEYS} == before
+    assert s.ARCHITECTURE.model_dump() == architecture_before
+
+
+def test_refresh_is_noop_for_mace(target):
+    from tests.helpers import mace_cfg
+
+    s = ModelSettings.model_validate(mace_cfg(r_max=5.5))
+    apply_model_settings(target, s)
+    before = {key: getattr(target, key) for key in _GRAPH_KEYS}
+    refresh_architecture_attrs(target, s)
+    assert {key: getattr(target, key) for key in _GRAPH_KEYS} == before
+    assert before == {
+        "r_max": 5.5,
+        "r_max_lr": None,
+        "dispersion_energy_cutoff_lr_damping": None,
+    }
+
+
+def test_al_ensemble_uses_pretrained_r_max(
+    tmp_path, pretrained_settings, target
+):
+    """An AL-only run reads model.yaml afresh (user r_max 5.0); the
+    models it loads come from the pretrained tauri model (r_max 4.5)."""
+    from aims_PAX.procedures.preparation import ALEnsemble
+
+    model_dir = tmp_path / "model"
+    model_dir.mkdir()
+    idg_model = setup_pretrained(
+        pretrained_settings(
+            pretrained_model="tauri-s-2606", num_multihead_heads=2
+        ),
+        None,
+        {},
+    )
+    torch.save(idg_model, model_dir / "test-42.model")
+
+    s = pretrained_settings(
+        pretrained_model="tauri-s-2606", num_multihead_heads=2, r_max=5.0
+    )
+    apply_model_settings(target, s)
+    target.model_dir = model_dir
+    target.checkpoints_dir = tmp_path / "checkpoints"
+    target.restart = False
+    target.mol_idxs = None
+    al_ensemble = ALEnsemble.__new__(ALEnsemble)
+    al_ensemble.config = target
+    assert target.r_max == 5.0
+
+    al_ensemble._setup_ensemble()
+    assert target.r_max == 4.5 and target.r_max_lr == 1000.0
+    assert s.ARCHITECTURE.r_max == 4.5

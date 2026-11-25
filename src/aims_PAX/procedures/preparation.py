@@ -39,6 +39,8 @@ from aims_PAX.tools.utilities.utilities import (
     normalize_md_settings,
     apply_model_settings,
     apply_finetuning_settings,
+    refresh_architecture_attrs,
+    sync_architecture_with_model,
     ModifyMD,
     log_ensemble,
 )
@@ -182,13 +184,7 @@ class PrepareInitialDatasetProcedure:
         # and keys the seeds_tags_dict connects the seeds to the tags of each
         # ensemble member the training_setups dictionary contains the training
         # setups (optimizer, scheduler etc.) for each ensemble member
-        self.ensemble = setup_ensemble_dicts(
-            seeds_tags_dict=self.seeds_tags_dict,
-            model_settings=self.model_settings,
-            z_table=self.z_table,
-            ensemble_atomic_energies_dict=self.ensemble_atomic_energies_dict,
-            device=self.device,
-        )
+        self._setup_ensemble()
         self.training_setups = get_ensemble_training_setups(
             ensemble=self.ensemble,
             model_settings=self.model_settings,
@@ -260,6 +256,21 @@ class PrepareInitialDatasetProcedure:
         self.ensemble_seeds = np.random.randint(
             0, 1000, size=self.ensemble_size
         )
+
+    def _setup_ensemble(self):
+        """
+        Builds the ensemble. A pretrained model replaces ARCHITECTURE
+        values (see setup_pretrained), so the graph-building attributes
+        are re-read before any dataset is built.
+        """
+        self.ensemble = setup_ensemble_dicts(
+            seeds_tags_dict=self.seeds_tags_dict,
+            model_settings=self.model_settings,
+            z_table=self.z_table,
+            ensemble_atomic_energies_dict=self.ensemble_atomic_energies_dict,
+            device=self.device,
+        )
+        refresh_architecture_attrs(self, self.model_settings)
 
     def _handle_model_settings(self, model_settings: ModelSettings) -> None:
         """
@@ -1233,6 +1244,15 @@ class ALEnsemble:
             dtype=dtype_mapping[self.config.dtype],
             convert_to_cueq=self.config.enable_cueq_train,
         )
+        if (
+            self.config.use_pretrained_model
+            and self.config.model_choice == "so3lr"
+        ):
+            # the models come from a pretrained one; their architecture
+            # wins over model.yaml (as in setup_pretrained)
+            for model in self.ensemble.values():
+                sync_architecture_with_model(model, self.config.model_settings)
+            refresh_architecture_attrs(self.config, self.config.model_settings)
         if self.config.model_settings.TRAINING.perform_finetuning:
             for tag, model in self.ensemble.items():
                 self.ensemble[tag] = apply_finetuning_settings(
