@@ -292,3 +292,80 @@ def test_al_foundational_lr_damping(tmp_path, restore_default_dtype):
     )
     ALCalculatorMLFF._setup_mlff_calculator(stub)
     assert stub.mlff_calc.models[0].dispersion_energy_cutoff_lr_damping == 1.5
+
+
+def _validated_al_fm_settings(foundational_model_settings):
+    """``foundational_model_settings`` as aimsPAX.yaml gives it, after
+    ``ALSettings`` validation."""
+    from aims_PAX.settings.project import ALSettings
+
+    return ALSettings.model_validate(
+        {
+            "use_teacher_reference": True,
+            "teacher_reference_settings": {
+                "model_type": "so3lr",
+                "model_path": "v1",
+            },
+            "max_MD_steps": 10,
+            "num_trajectories": 1,
+            "use_foundational": True,
+            "foundational_model_settings": foundational_model_settings,
+        }
+    ).foundational_model_settings
+
+
+def test_al_settings_keep_foundational_keys():
+    raw = {
+        "model_type": "so3lr",
+        "model_path": "tauri-s-2606",
+        "theory_level": 5,
+    }
+    assert _validated_al_fm_settings(raw) == raw
+
+
+def test_al_foundational_tauri_from_settings(tmp_path, restore_default_dtype):
+    stub = _al_stub(
+        tmp_path,
+        _validated_al_fm_settings(
+            {
+                "model_type": "so3lr",
+                "model_path": "tauri-s-2606",
+                "theory_level": 5,
+            }
+        ),
+    )
+    ALCalculatorMLFF._setup_mlff_calculator(stub)
+    _assert_finite_water(stub.mlff_calc)
+
+
+def test_al_foundational_forwards_pme(
+    tmp_path, restore_default_dtype, monkeypatch
+):
+    # PME needs torchpme, which is optional; check what is passed on
+    import aims_PAX.procedures.preparation as preparation
+
+    captured = {}
+
+    def fake_make_so3lr_calculator(spec, **kwargs):
+        captured.update(spec=spec, **kwargs)
+
+    monkeypatch.setattr(
+        preparation, "make_so3lr_calculator", fake_make_so3lr_calculator
+    )
+    stub = _al_stub(
+        tmp_path,
+        _validated_al_fm_settings(
+            {
+                "model_type": "so3lr",
+                "model_path": "v1",
+                "use_pme": True,
+                "pme_smearing": 1.5,
+                "use_pme_dispersion": None,
+            }
+        ),
+    )
+    ALCalculatorMLFF._setup_mlff_calculator(stub)
+    assert captured["spec"] == "v1"
+    assert captured["use_pme"] is True
+    assert captured["pme_smearing"] == 1.5
+    assert "use_pme_dispersion" not in captured

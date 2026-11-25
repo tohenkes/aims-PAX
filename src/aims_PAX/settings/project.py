@@ -434,7 +434,14 @@ class ALSettings(ProjectBaseModel):
         ),
     )
     use_foundational: bool = False
-    foundational_model_settings: FMSettings | None = None
+    foundational_model_settings: Dict[str, Any] | None = Field(
+        default=None,
+        description="Model that propagates the MD when "
+        "use_foundational=True: `model_type` (`mace-mp`, `mace`, "
+        "`so3lr`, `so3krates`; default `mace-mp`), `model_path`, and the "
+        "options of that model type (e.g. `mace_model`, `theory_level`, "
+        "`r_max_lr`, `dispersion_lr_damping`, `use_pme`).",
+    )
 
     use_teacher_reference: bool = False
     teacher_reference_settings: Dict[str, Any] | None = Field(

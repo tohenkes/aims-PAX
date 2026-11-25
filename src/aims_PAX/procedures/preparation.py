@@ -1616,8 +1616,9 @@ class ALCalculatorMLFF:
 
         if self.config.use_foundational:
             logging.info("Using foundational model for MD.")
+            # a plain dict (ALSettings.foundational_model_settings)
             foundational_model_settings = (
-                self.config.foundational_model_settings
+                self.config.foundational_model_settings or {}
             )
             model_type = foundational_model_settings.get(
                 "model_type", "mace-mp"
@@ -1625,7 +1626,9 @@ class ALCalculatorMLFF:
             model_path = foundational_model_settings.get("model_path", None)
             # for propagation
             if model_type == "mace-mp":
-                mace_model = foundational_model_settings["mace_model"]
+                mace_model = foundational_model_settings.get(
+                    "mace_model", "small"
+                )
                 self.mlff_calc = mace_mp(
                     model=mace_model,
                     dispersion=False,
