@@ -130,9 +130,10 @@ def test_theory_level_on_v1_rejected():
         load_so3lr("v1", "cpu", "float32", theory_level=0)
 
 
-def test_tauri_license_notice(caplog):
+@pytest.mark.parametrize("spec", ["tauri-s-2606", "v2-s"])
+def test_tauri_license_notice(caplog, spec):
     with caplog.at_level(logging.INFO):
-        load_so3lr("tauri-s-2606", "cpu", "float32")
+        load_so3lr(spec, "cpu", "float32")
     notices = [r for r in caplog.records if "CC BY-NC 4.0" in r.getMessage()]
     assert len(notices) == 1 and notices[0].levelname == "INFO"
 

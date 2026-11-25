@@ -111,6 +111,27 @@ def _graph_architecture_attrs(model_settings: ModelSettings) -> dict:
     }
 
 
+def log_effective_architecture(
+    model_settings: ModelSettings, architecture_before: dict
+) -> None:
+    """Log ``ARCHITECTURE`` again if setting up the models replaced any
+    of its values (``architecture_before``, a ``model_dump()``); the
+    startup log shows the values of model.yaml."""
+    architecture = model_settings.ARCHITECTURE.model_dump()
+    replaced = sorted(
+        key
+        for key, value in architecture.items()
+        if architecture_before.get(key) != value
+    )
+    if not replaced:
+        return
+    logging.info(
+        "The model replaced ARCHITECTURE values "
+        f"({', '.join(replaced)}); effective ARCHITECTURE:"
+    )
+    log_yaml_block("ARCHITECTURE", architecture)
+
+
 def refresh_architecture_attrs(target, model_settings: ModelSettings) -> None:
     """Re-copy the graph-building ``ARCHITECTURE`` values to ``target``.
 
@@ -711,8 +732,11 @@ def setup_pretrained(
             )
             model_architecture = _multihead_architecture_dict(model)
         else:
-            # read before conversion: the new heads always have a bias
+            # read before conversion; the new heads always have a bias,
+            # so final_layer_bias is dropped as in
+            # _multihead_architecture_dict (AL-only runs agree)
             model_architecture = so3lr_architecture_dict(model)
+            model_architecture.pop("final_layer_bias", None)
             logging.info(
                 f"Converting the pretrained model to {num_output_heads} "
                 "energy output heads (backbone kept)."
@@ -721,6 +745,12 @@ def setup_pretrained(
                 model, num_output_heads, seed=model_settings.GENERAL.seed
             )
     else:
+        if model_settings.TRAINING.pretrained_theory_level is not None:
+            logging.warning(
+                "TRAINING.pretrained_theory_level is ignored with "
+                "TRAINING.pretrained_weights; it only applies to "
+                "TRAINING.pretrained_model."
+            )
         logging.warning(
             "Make sure that the architecture settings corresponding to the "
             "pretrained weights have been set correctly in the config "

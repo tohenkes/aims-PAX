@@ -157,7 +157,8 @@ def load_so3lr(
             model.to(getattr(torch, dtype))
             model.dtype = getattr(torch, dtype)
         elif kind == "bundled":
-            if spec.startswith("tauri-"):
+            # also the v2-* aliases: they load tauri weights
+            if _PRETRAINED_SO3LR_MODELS[spec][0] == "tauri":
                 logging.info(
                     f"The weights of {spec!r} are licensed under "
                     "CC BY-NC 4.0 (non-commercial use only)."

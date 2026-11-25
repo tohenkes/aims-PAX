@@ -41,6 +41,7 @@ from aims_PAX.tools.utilities.utilities import (
     normalize_md_settings,
     apply_model_settings,
     apply_finetuning_settings,
+    log_effective_architecture,
     refresh_architecture_attrs,
     sync_architecture_with_model,
     ModifyMD,
@@ -265,6 +266,7 @@ class PrepareInitialDatasetProcedure:
         values (see setup_pretrained), so the graph-building attributes
         are re-read before any dataset is built.
         """
+        architecture_before = self.model_settings.ARCHITECTURE.model_dump()
         self.ensemble = setup_ensemble_dicts(
             seeds_tags_dict=self.seeds_tags_dict,
             model_settings=self.model_settings,
@@ -273,6 +275,7 @@ class PrepareInitialDatasetProcedure:
             device=self.device,
         )
         refresh_architecture_attrs(self, self.model_settings)
+        log_effective_architecture(self.model_settings, architecture_before)
 
     def _handle_model_settings(self, model_settings: ModelSettings) -> None:
         """
@@ -1251,9 +1254,12 @@ class ALEnsemble:
             # TRAINING.pretrained_model is unset (e.g. a previous run's
             # model_dir); their architecture wins over model.yaml (as in
             # setup_pretrained). A no-op for models built from model.yaml.
+            model_settings = self.config.model_settings
+            architecture_before = model_settings.ARCHITECTURE.model_dump()
             for model in self.ensemble.values():
-                sync_architecture_with_model(model, self.config.model_settings)
-            refresh_architecture_attrs(self.config, self.config.model_settings)
+                sync_architecture_with_model(model, model_settings)
+            refresh_architecture_attrs(self.config, model_settings)
+            log_effective_architecture(model_settings, architecture_before)
         if self.config.model_settings.TRAINING.perform_finetuning:
             for tag, model in self.ensemble.items():
                 self.ensemble[tag] = apply_finetuning_settings(

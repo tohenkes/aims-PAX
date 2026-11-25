@@ -297,7 +297,9 @@ def test_pretrained_sync_silent_for_unset_keys(pretrained_settings, caplog):
     # defaults differ from tauri (e.g. use_rms_norm), but were not set
     assert "differs from the pretrained model" not in caplog.text
     assert s.ARCHITECTURE.use_rms_norm is True
-    assert s.ARCHITECTURE.final_layer_bias is False
+    # tauri's single energy head has no bias, but the new heads do; the
+    # setting is left as it is (see test_final_layer_bias_idg_matches_al)
+    assert s.ARCHITECTURE.final_layer_bias is True
     # r_max_lr not set by the user: the model's own value is kept
     assert m.r_max_lr == 1000.0 and s.ARCHITECTURE.r_max_lr == 1000.0
 
@@ -780,11 +782,12 @@ def _assert_al_sync_noop(tmp_path, model, build_settings, target, caplog):
     architecture_before = s.ARCHITECTURE.model_dump()
     graph_before = {key: getattr(target, key) for key in _GRAPH_KEYS}
 
-    with caplog.at_level(logging.WARNING):
+    with caplog.at_level(logging.INFO):
         al_ensemble._setup_ensemble()
     assert s.ARCHITECTURE.model_dump() == architecture_before
     assert {key: getattr(target, key) for key in _GRAPH_KEYS} == graph_before
     assert not [r for r in caplog.records if r.levelno >= logging.WARNING]
+    assert "effective ARCHITECTURE" not in caplog.text
 
 
 @pytest.mark.parametrize(
@@ -823,3 +826,94 @@ def test_al_ensemble_sync_noop_for_mace(tmp_path, target, caplog):
         build_settings(), AtomicNumberTable([1, 8]), {1: -13.6, 8: -2040.0}
     )
     _assert_al_sync_noop(tmp_path, model, build_settings, target, caplog)
+
+
+def test_final_layer_bias_idg_matches_al(
+    tmp_path, pretrained_settings, target
+):
+    """tauri's energy head has no bias, the converted heads have one; IDG
+    and a later AL-only run record the same final_layer_bias."""
+    idg_settings = pretrained_settings(
+        pretrained_model="tauri-s-2606", num_multihead_heads=2
+    )
+    _save_model(tmp_path, setup_pretrained(idg_settings, None, {}))
+    al_settings = pretrained_settings(num_multihead_heads=2)
+    _al_ensemble(tmp_path, al_settings, target)._setup_ensemble()
+    assert (
+        idg_settings.ARCHITECTURE.final_layer_bias
+        == al_settings.ARCHITECTURE.final_layer_bias
+        is True
+    )
+
+
+def test_pretrained_weights_warn_about_theory_level(tmp_path, z_table, caplog):
+    from tests.helpers import so3lr_cfg
+
+    _, mh = _small_multihead(2, z_table)
+    path = tmp_path / "weights.pt"
+    torch.save(mh.state_dict(), path)
+    cfg = so3lr_cfg(
+        zbl_repulsion_bool=False,
+        electrostatic_energy_bool=False,
+        dispersion_energy_bool=False,
+        use_multihead_model=True,
+        num_multihead_heads=2,
+    )
+    cfg["TRAINING"] = {
+        "pretrained_weights": str(path),
+        "pretrained_theory_level": 5,
+    }
+    s = ModelSettings.model_validate(cfg)
+    with caplog.at_level(logging.WARNING):
+        setup_pretrained(s, z_table, {1: 0.0, 8: 0.0})
+    assert "pretrained_theory_level is ignored" in caplog.text
+
+
+# -- the effective ARCHITECTURE is logged when the model replaced values ------
+
+
+def test_idg_logs_effective_architecture(pretrained_settings, caplog):
+    s = pretrained_settings(
+        pretrained_model="tauri-s-2606", num_multihead_heads=2, r_max=5.0
+    )
+    idg = _idg_stub(s)
+    with caplog.at_level(logging.INFO):
+        idg._setup_ensemble()
+    (notice,) = [
+        r for r in caplog.records if "effective ARCHITECTURE" in r.message
+    ]
+    assert "r_max," in notice.message and "use_rms_norm" in notice.message
+    assert "    r_max: 4.5" in caplog.text
+
+
+def test_idg_from_scratch_logs_no_effective_architecture(
+    so3lr_model_settings, caplog
+):
+    idg = _idg_stub(so3lr_model_settings(ARCHITECTURE={"r_max": 5.0}))
+    with caplog.at_level(logging.INFO):
+        idg._setup_ensemble()
+    assert "effective ARCHITECTURE" not in caplog.text
+
+
+def test_al_logs_effective_architecture(
+    tmp_path, pretrained_settings, target, caplog
+):
+    _save_model(
+        tmp_path,
+        setup_pretrained(
+            pretrained_settings(
+                pretrained_model="tauri-s-2606", num_multihead_heads=2
+            ),
+            None,
+            {},
+        ),
+    )
+    s = pretrained_settings(num_multihead_heads=2, r_max=5.0)
+    al_ensemble = _al_ensemble(tmp_path, s, target)
+    with caplog.at_level(logging.INFO):
+        al_ensemble._setup_ensemble()
+    (notice,) = [
+        r for r in caplog.records if "effective ARCHITECTURE" in r.message
+    ]
+    assert "r_max," in notice.message
+    assert "    r_max: 4.5" in caplog.text
