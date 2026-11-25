@@ -8,6 +8,7 @@ a single DFT level, so this module is the only place that deals with
 theory levels: whatever it returns has exactly one.
 """
 
+import inspect
 import logging
 from pathlib import Path
 from typing import Any, Literal, Optional
@@ -15,6 +16,7 @@ from typing import Any, Literal, Optional
 import torch
 from so3krates_torch.calculator.so3 import (
     _PRETRAINED_SO3LR_MODELS,
+    SO3LRCalculator,
     TorchkratesCalculator,
     # Private upstream helpers; imported only here so that a change in
     # so3krates-torch has to be fixed in one place.
@@ -176,6 +178,24 @@ def load_so3lr(
         torch.set_default_dtype(previous_dtype)
 
 
+def _resolve_long_range_value(
+    model: SO3LR, name: str, value: Optional[float]
+) -> float:
+    """``value``, else the model's stored ``name``, else the default of
+    ``SO3LRCalculator`` (read from its signature)."""
+    if value is not None:
+        return value
+    stored = getattr(model, name, None)
+    if stored is not None:
+        return stored
+    default = inspect.signature(SO3LRCalculator.__init__).parameters[name]
+    logging.info(
+        f"The model stores no {name}; using the SO3LRCalculator default "
+        f"{name}={default.default}."
+    )
+    return default.default
+
+
 def make_so3lr_calculator(
     spec: str,
     *,
@@ -190,9 +210,11 @@ def make_so3lr_calculator(
 ) -> TorchkratesCalculator:
     """ASE calculator around ``load_so3lr(spec, ...)``.
 
-    ``r_max_lr`` and ``dispersion_energy_cutoff_lr_damping`` keep the
-    model's own value when ``None``. The calculator builds the long-range
-    neighbor list itself, so it always gets an ``r_max_lr``.
+    ``r_max_lr`` and ``dispersion_energy_cutoff_lr_damping`` are each
+    resolved as: the argument if not ``None``, else the value stored in
+    the model, else the default of ``SO3LRCalculator`` (v1 stores
+    neither). The calculator builds the long-range neighbor list itself,
+    so it always needs an ``r_max_lr``.
     """
     model = load_so3lr(
         spec,
@@ -201,22 +223,20 @@ def make_so3lr_calculator(
         theory_level=theory_level,
         **architecture_overrides,
     )
-    if r_max_lr is not None:
-        model.r_max_lr = r_max_lr
-    if model.r_max_lr is None:
-        raise ValueError(
-            f"{spec!r} stores no r_max_lr; pass r_max_lr for the "
-            "long-range neighbor list."
-        )
+    r_max_lr = _resolve_long_range_value(model, "r_max_lr", r_max_lr)
+    damping = _resolve_long_range_value(
+        model,
+        "dispersion_energy_cutoff_lr_damping",
+        dispersion_energy_cutoff_lr_damping,
+    )
+    model.r_max_lr = r_max_lr
     return TorchkratesCalculator(
         models=[model],
         device=device,
         default_dtype=dtype,
         compute_stress=compute_stress,
-        r_max_lr=model.r_max_lr,
-        dispersion_energy_cutoff_lr_damping=(
-            dispersion_energy_cutoff_lr_damping
-        ),
+        r_max_lr=r_max_lr,
+        dispersion_energy_cutoff_lr_damping=damping,
         key_specification=key_specification,
     )
 

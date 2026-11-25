@@ -308,6 +308,26 @@ def test_make_calculator_defaults_to_model_r_max_lr():
     assert e == pytest.approx(e_ref, abs=1e-4)
 
 
-def test_make_calculator_needs_r_max_lr_when_model_has_none():
-    with pytest.raises(ValueError, match="r_max_lr"):
-        make_so3lr_calculator("v1", device="cpu", dtype="float32")
+def test_make_calculator_v1_falls_back_to_upstream_defaults(caplog):
+    with caplog.at_level(logging.INFO):
+        ours = make_so3lr_calculator("v1", device="cpu", dtype="float32")
+    assert "r_max_lr=12.0" in caplog.text
+    assert "dispersion_energy_cutoff_lr_damping=2.0" in caplog.text
+    assert ours.models[0].r_max_lr == 12.0
+    assert ours.models[0].dispersion_energy_cutoff_lr_damping == 2.0
+    ref = SO3LRCalculator(model="v1")
+    e, f = _energy(ours, WATER)
+    e_ref, f_ref = _energy(ref, WATER)
+    assert np.isfinite(e)
+    assert e == pytest.approx(e_ref, abs=1e-5)
+    np.testing.assert_allclose(f, f_ref, atol=1e-5)
+
+
+def test_make_calculator_tauri_keeps_stored_r_max_lr(caplog):
+    with caplog.at_level(logging.INFO):
+        calc = make_so3lr_calculator(
+            "tauri-s-2606", device="cpu", dtype="float32", theory_level=5
+        )
+    assert calc.models[0].r_max_lr == 1000.0
+    assert calc.r_max_lr == 1000.0
+    assert "stores no" not in caplog.text
