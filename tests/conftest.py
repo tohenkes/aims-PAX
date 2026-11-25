@@ -111,3 +111,62 @@ def so3lr_model_settings():
         return ModelSettings.model_validate(so3lr_cfg(**arch))
 
     return build
+
+
+@pytest.fixture
+def pretrained_settings():
+    """Factory: ``ModelSettings`` for a multi-head SO3LR started from a
+    pretrained model.
+
+    Each keyword argument goes to the settings section that has a field
+    of that name (``TRAINING``, ``ARCHITECTURE`` or ``GENERAL``), so only
+    the passed keys count as set by the user. The global default dtype
+    is restored afterwards.
+    """
+    import torch
+
+    from aims_PAX.settings import ModelSettings
+    from aims_PAX.settings.model import (
+        GeneralSettings,
+        SO3LRArchitectureSettings,
+        TrainingSettings,
+    )
+
+    previous_dtype = torch.get_default_dtype()
+
+    def build(**kwargs):
+        sections = {
+            "GENERAL": {"name_exp": "test"},
+            "ARCHITECTURE": {
+                "model_choice": "so3lr",
+                "use_multihead_model": True,
+            },
+            "TRAINING": {},
+            "MISC": {"device": "cpu"},
+        }
+        for key, value in kwargs.items():
+            if key in TrainingSettings.model_fields:
+                sections["TRAINING"][key] = value
+            elif key in SO3LRArchitectureSettings.model_fields:
+                sections["ARCHITECTURE"][key] = value
+            elif key in GeneralSettings.model_fields:
+                sections["GENERAL"][key] = value
+            else:
+                raise KeyError(f"unknown settings key {key!r}")
+        return ModelSettings.model_validate(sections)
+
+    yield build
+    torch.set_default_dtype(previous_dtype)
+
+
+@pytest.fixture
+def target():
+    """Empty object for ``apply_model_settings``; restores the global
+    default dtype it sets."""
+    from types import SimpleNamespace
+
+    import torch
+
+    previous_dtype = torch.get_default_dtype()
+    yield SimpleNamespace()
+    torch.set_default_dtype(previous_dtype)

@@ -12,8 +12,9 @@ from mace import tools, modules
 from mace.cli.convert_e3nn_cueq import run as convert_e3nn_cueq
 from mace.cli.convert_cueq_e3nn import run as convert_cueq_e3nn
 from mace.tools import AtomicNumberTable
-from so3krates_torch.modules.models import So3krates, SO3LR
+from so3krates_torch.modules.models import So3krates, SO3LR, MultiHeadSO3LR
 from so3krates_torch.tools.finetune import setup_finetuning
+from so3krates_torch.tools.multihead_utils import to_multihead_model
 
 from aims_PAX.settings import ModelSettings
 from aims_PAX.settings.model import BaseArchitectureSettings
@@ -25,6 +26,10 @@ from aims_PAX.tools.model_tools.setup_so3 import (
     setup_multihead_so3lr,
 )
 from aims_PAX.tools.model_tools.training_tools import setup_model_training
+from aims_PAX.tools.model_tools.so3lr_loading import (
+    load_so3lr,
+    so3lr_architecture_dict,
+)
 import ase.data
 from ase.io import read
 from ase import units
@@ -160,7 +165,19 @@ def apply_model_settings(
     target.use_pretrained_model = isinstance(
         model_settings.TRAINING.pretrained_model, str
     ) or isinstance(model_settings.TRAINING.pretrained_weights, str)
-    if target.use_pretrained_model and target.update_avg_num_neighbors:
+    if (
+        target.use_pretrained_model
+        and "update_avg_num_neighbors"
+        not in model_settings.TRAINING.model_fields_set
+    ):
+        # keeps the pretrained model's predictions unchanged before training
+        target.update_avg_num_neighbors = False
+        logging.info(
+            "Using a pretrained model/weights: update_avg_num_neighbors "
+            "defaults to False (set TRAINING.update_avg_num_neighbors to "
+            "override)."
+        )
+    elif target.use_pretrained_model and target.update_avg_num_neighbors:
         logging.warning(
             "Using a pretrained model/weights with "
             "update_avg_num_neighbors=True is not recommended."
@@ -509,79 +526,164 @@ def setup_ensemble_dicts(
     return ensemble
 
 
+# ARCHITECTURE keys that only steer how a pretrained model is evaluated:
+# a value set by the user is written to the model instead of being
+# replaced by the model's.
+_USER_WINS_ON_PRETRAINED = ("r_max_lr", "dispersion_energy_cutoff_lr_damping")
+
+
+def _explicit_pme_overrides(architecture) -> dict[str, Any]:
+    """The ``use_pme*`` / ``pme_*`` settings the user set explicitly."""
+    return {
+        key: getattr(architecture, key)
+        for key in architecture.model_fields_set
+        if key.startswith(("use_pme", "pme_"))
+    }
+
+
+def _num_heads_in_weights(weights: dict) -> int:
+    key = "atomic_energy_output_block.num_output_heads"
+    if key in weights:
+        return int(weights[key])
+    # so3krates-torch >= 0.4 stores no head count; one weight row per head
+    return weights["atomic_energy_output_block.final_layer_weights"].shape[0]
+
+
+def _sync_architecture_with_pretrained(
+    model: torch.nn.Module,
+    architecture,
+    model_architecture: dict[str, Any],
+    user_set: set[str],
+) -> None:
+    """Write the pretrained model's architecture into ``architecture``.
+
+    A differing value the user set explicitly is overwritten with a
+    warning, except for ``_USER_WINS_ON_PRETRAINED``: those are written to
+    the model. A model value of ``None`` never replaces a setting.
+    """
+    for key in _USER_WINS_ON_PRETRAINED:
+        model_value = model_architecture.pop(key, None)
+        if key in user_set:
+            setattr(model, key, getattr(architecture, key))
+            logging.info(
+                f"Set {key}={getattr(architecture, key)} on the pretrained "
+                f"model (model value: {model_value})."
+            )
+        elif model_value is not None:
+            setattr(architecture, key, model_value)
+
+    for key, model_value in model_architecture.items():
+        user_value = getattr(architecture, key)
+        if key in user_set and user_value != model_value:
+            logging.warning(
+                f"ARCHITECTURE.{key}={user_value!r} differs from the "
+                f"pretrained model ({key}={model_value!r}); using the "
+                "pretrained model's value."
+            )
+        setattr(architecture, key, model_value)
+
+
 def setup_pretrained(
     model_settings: ModelSettings,
     z_table: tools.AtomicNumberTable,
     atomic_energies_dict: dict,
     num_elements: int = 118,
 ):
+    """Multi-head SO3LR built from ``TRAINING.pretrained_model`` or
+    ``TRAINING.pretrained_weights``, or ``None`` if neither is set.
+
+    ``pretrained_model`` is anything ``load_so3lr`` accepts (bundled
+    keyword, ``.pt`` + ``_settings.yaml``, pickled model). A single-head
+    SO3LR gets ``ARCHITECTURE.num_multihead_heads`` fresh energy heads;
+    a pickled ``MultiHeadSO3LR`` must already have that many.
+    ``pretrained_weights`` is a state dict for the multi-head model that
+    ``ARCHITECTURE`` describes.
+
+    ``model_settings.ARCHITECTURE`` is updated to the model's
+    architecture (see ``_sync_architecture_with_pretrained``).
+    """
     pretrained_model = model_settings.TRAINING.pretrained_model
     pretrained_weights = model_settings.TRAINING.pretrained_weights
-    num_output_heads = model_settings.ARCHITECTURE.num_multihead_heads
+    architecture = model_settings.ARCHITECTURE
+    num_output_heads = architecture.num_multihead_heads
     device = model_settings.MISC.device
     dtype = model_settings.GENERAL.default_dtype
 
     if not pretrained_model and not pretrained_weights:
         return None
 
-    if pretrained_model or pretrained_weights:
-        assert (
-            model_settings.ARCHITECTURE.use_multihead_model
-        ), "Pretrained model or weights can only be used with multihead SO3LR."
-        logging.info("Using pretrained model or weights for multihead SO3LR.")
-        # TODO: Find a better way to do this. Extract settings from model (weights)?
+    assert (
+        architecture.use_multihead_model
+    ), "Pretrained model or weights can only be used with multihead SO3LR."
+    logging.info("Using pretrained model or weights for multihead SO3LR.")
+    if "convert_to_multihead" in model_settings.TRAINING.model_fields_set:
         logging.warning(
-            "Make sure that the architecture settings corresponding "
-            "to the pretrained model have been set correctly in the config file."
-            " Otherwise, non-matching hyperparameters will be saved!"
+            "TRAINING.convert_to_multihead is deprecated and ignored: a "
+            "pretrained single-head SO3LR is always converted to "
+            "ARCHITECTURE.num_multihead_heads heads."
         )
 
-    model = None
+    user_set = set(architecture.model_fields_set)
     if pretrained_model:
-        model = torch.load(
-            pretrained_model, map_location=device, weights_only=False
+        model = load_so3lr(
+            pretrained_model,
+            device,
+            dtype,
+            theory_level=model_settings.TRAINING.pretrained_theory_level,
+            **_explicit_pme_overrides(architecture),
         )
-        model.device = device
-        model.atomic_energy_output_block.device = device
-        model.to(dtype_mapping[dtype])
-        model.select_heads = True
-
-        assert num_output_heads == model.num_output_heads, (
-            "Number of output heads in the pretrained model does not match "
-            "the number of output heads specified in the settings."
+        if isinstance(model, MultiHeadSO3LR):
+            # pickled multi-head model (aims-PAX's original pretrained path)
+            model.device = device
+            model.atomic_energy_output_block.device = device
+            model.to(dtype_mapping[dtype])
+            assert num_output_heads == model.num_output_heads, (
+                "Number of output heads in the pretrained model does not "
+                "match the number of output heads specified in the "
+                "settings."
+            )
+            model_architecture = so3lr_architecture_dict(model)
+        else:
+            # read before conversion: the new heads always have a bias
+            model_architecture = so3lr_architecture_dict(model)
+            logging.info(
+                f"Converting the pretrained model to {num_output_heads} "
+                "energy output heads (backbone kept)."
+            )
+            model = to_multihead_model(
+                model, num_output_heads, seed=model_settings.GENERAL.seed
+            )
+    else:
+        logging.warning(
+            "Make sure that the architecture settings corresponding to the "
+            "pretrained weights have been set correctly in the config "
+            "file. Otherwise, non-matching hyperparameters will be saved!"
         )
-    elif pretrained_weights:
         weights = torch.load(
             pretrained_weights, map_location=device, weights_only=True
         )
-
-        assert (
-            num_output_heads
-            == weights["atomic_energy_output_block.num_output_heads"]
-        ), (
+        assert num_output_heads == _num_heads_in_weights(weights), (
             "Number of output heads in the pretrained weights does not match "
             "the number of output heads specified in the settings."
         )
-
         model = setup_multihead_so3lr(
             settings=model_settings,
             z_table=z_table,
             atomic_energies_dict=atomic_energies_dict,
         )
-
         model.load_state_dict(weights)
+        model_architecture = so3lr_architecture_dict(model)
+
+    model.select_heads = True
+    _sync_architecture_with_pretrained(
+        model, architecture, model_architecture, user_set
+    )
 
     if model_settings.TRAINING.perform_finetuning:
         model = apply_finetuning_settings(
             model=model,
             model_settings=model_settings,
             num_elements=num_elements,
-        )
-
-    if model_settings.GENERAL.model_choice == "so3lr":
-        model.r_max_lr = model_settings.ARCHITECTURE.r_max_lr
-        logging.info(
-            f"Set r_max_lr to {model.r_max_lr} for pretrained SO3LR model."
         )
     return model
 
@@ -607,9 +709,10 @@ def apply_finetuning_settings(
     lora_alpha = model_settings.TRAINING.lora_alpha
     lora_freeze_A = model_settings.TRAINING.lora_freeze_A
 
+    freeze_c6_ratios = model_settings.TRAINING.freeze_c6_ratios
+
     dora_scaling_to_one = True  # TODO: remove dora
 
-    convert_to_multihead = model_settings.TRAINING.convert_to_multihead
     seed = model_settings.GENERAL.seed
 
     return setup_finetuning(
@@ -623,12 +726,14 @@ def apply_finetuning_settings(
         freeze_partial_charges=freeze_partial_charges,
         freeze_shifts=freeze_shifts,
         freeze_scales=freeze_scales,
+        freeze_c6_ratios=freeze_c6_ratios,
         convert_to_lora=convert_to_lora,
         lora_rank=lora_rank,
         lora_alpha=lora_alpha,
         lora_freeze_A=lora_freeze_A,
         dora_scaling_to_one=dora_scaling_to_one,
-        convert_to_multihead=convert_to_multihead,
+        # setup_pretrained already returns a multi-head model
+        convert_to_multihead=False,
         architecture_settings={
             **model_settings.ARCHITECTURE.model_dump(),
             "num_output_heads": (

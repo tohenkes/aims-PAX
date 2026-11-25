@@ -334,3 +334,115 @@ def test_mh_to_sh_convergence_keeps_best_head(si_batch, mh_al_manager):
     e_sh = sh(batch.to_dict())["energy"].detach()
     torch.testing.assert_close(e_sh, e_mh[2], rtol=1e-5, atol=1e-6)
     assert mh_al_manager.config.use_multihead_model is False
+
+
+# ===========================================================================
+# §P — training a pretrained (tauri) multi-head model
+# ===========================================================================
+
+
+def _tiny_water_dataset(n=6, seed=0):
+    """Rattled water molecules labelled with EMT (labels only need to be
+    finite)."""
+    from ase.build import molecule
+    from ase.calculators.emt import EMT
+
+    rng = np.random.default_rng(seed)
+    atoms_list = []
+    for _ in range(n):
+        atoms = molecule("H2O")
+        atoms.positions += rng.normal(scale=0.05, size=atoms.positions.shape)
+        atoms.calc = EMT()
+        atoms.info["REF_energy"] = atoms.get_potential_energy()
+        atoms.arrays["REF_forces"] = atoms.get_forces()
+        atoms.calc = None
+        atoms_list.append(atoms)
+    return atoms_list
+
+
+@pytest.mark.slow
+def test_tauri_pretrained_multihead_trains(pretrained_settings, tmp_path):
+    import so3krates_torch.tools.torch_geometric as so3_torch_geometric
+    from mace.tools.utils import MetricsLogger
+
+    from aims_PAX.tools.model_tools.train_epoch import train_epoch
+    from aims_PAX.tools.model_tools.training_tools import (
+        setup_model_training,
+    )
+    from aims_PAX.tools.utilities.data_handling import create_model_dataset
+    from aims_PAX.tools.utilities.utilities import (
+        setup_pretrained,
+        update_model_auxiliaries,
+    )
+
+    heads = ["head_0", "head_1"]
+    s = pretrained_settings(
+        pretrained_model="tauri-s-2606",
+        num_multihead_heads=2,
+        r_max_lr=12.0,
+        checkpoints_dir=str(tmp_path / "checkpoints"),
+    )
+    # aims-PAX builds SO3LR models over all 118 elements
+    z_table = AtomicNumberTable(list(range(1, 119)))
+    atomic_energies_dict = {z: 0.0 for z in z_table.zs}
+    model = setup_pretrained(s, z_table, atomic_energies_dict)
+
+    atoms_list = _tiny_water_dataset()
+    train_set = []
+    for i, head in enumerate(heads):
+        train_set += create_model_dataset(
+            data=atoms_list[i::2],
+            seed=42,
+            z_table=z_table,
+            r_max=s.ARCHITECTURE.r_max,
+            r_max_lr=s.ARCHITECTURE.r_max_lr,
+            key_specification=create_keyspec(),
+            all_heads=heads,
+            head_name=head,
+        )
+    train_loader = so3_torch_geometric.dataloader.DataLoader(
+        dataset=train_set, batch_size=2, shuffle=False, drop_last=False
+    )
+    update_model_auxiliaries(
+        model=model,
+        model_choice="so3lr",
+        model_sets={"train": train_set, "train_loader": train_loader},
+        scaling=None,
+        atomic_energies_list=list(atomic_energies_dict.values()),
+        update_avg_num_neighbors=False,
+        update_atomic_energies=True,
+        atomic_energies_dict=atomic_energies_dict,
+        z_table=z_table,
+        dtype=s.GENERAL.default_dtype,
+    )
+    assert model.atomic_energy_output_block.energy_shifts.shape == (118,)
+
+    setup = setup_model_training(
+        settings=s,
+        model=model,
+        model_choice="so3lr",
+        tag="test",
+        checkpoints_dir=tmp_path / "checkpoints",
+    )
+    logger = MetricsLogger(directory=tmp_path / "logs", tag="test")
+    losses = []
+    for epoch in range(2):
+        losses.append(
+            train_epoch(
+                model=model,
+                loss_fn=setup["loss_fn"],
+                train_loader=train_loader,
+                optimizer=setup["optimizer"],
+                lr_scheduler=setup["lr_scheduler"],
+                epoch=epoch,
+                start_epoch=0,
+                valid_loss=0.0,
+                logger=logger,
+                output_args=setup["output_args"],
+                device=torch.device("cpu"),
+                ema=setup["ema"],
+                max_grad_norm=setup["max_grad_norm"],
+            )
+        )
+    assert all(np.isfinite(loss) for loss in losses)
+    assert model.atomic_energy_output_block.energy_shifts.shape == (118,)
