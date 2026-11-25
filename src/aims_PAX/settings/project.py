@@ -70,27 +70,27 @@ class So3lrFMSettings(FMSettings):
     model: str = Field(
         default="v1",
         description="`SO3LR` model to use: a bundled keyword (`v1`, "
-                    "`tauri-{s,m,l}-{2602,2606}`, `v2-{s,m,l}`) or the path "
-                    "to a model file (`.pt` with a sibling "
-                    "`_settings.yaml`, or a pickled model).",
+        "`tauri-{s,m,l}-{2602,2606}`, `v2-{s,m,l}`) or the path "
+        "to a model file (`.pt` with a sibling "
+        "`_settings.yaml`, or a pickled model).",
     )
     theory_level: int | None = Field(
         default=None,
         description="Theory level that is kept from a multi-theory-level "
-                    "model (e.g. `SO3LR-tauri`). `None` uses the default "
-                    "level of that model.",
+        "model (e.g. `SO3LR-tauri`). `None` uses the default "
+        "level of that model.",
     )
     use_pme: bool | None = Field(
         default=None,
         description="Particle mesh Ewald for electrostatics. `None` keeps "
-                    "the value of the model.",
+        "the value of the model.",
     )
     pme_smearing: float | None = Field(default=None)
     pme_mesh_spacing: float | None = Field(default=None)
     use_pme_dispersion: bool | None = Field(
         default=None,
         description="Particle mesh Ewald for dispersion. `None` keeps the "
-                    "value of the model.",
+        "value of the model.",
     )
     pme_dispersion_smearing: float | None = Field(default=None)
     pme_dispersion_mesh_spacing: float | None = Field(default=None)
