@@ -389,7 +389,7 @@ Currently these settings are used for *ab initio* and MLFF MD.
 
 #### MISC:
 
-The source of the geometries can be either a single path, a folder (where all `ASE` readable files will be loaded, indexed `0, 1, ...` in sorted file-name order) or a dictionary of paths like:
+The source of the geometries can be either a single path, a folder (where all `ASE` readable files will be loaded; each directory entry gets the index of its position in the sorted list of entries, so entries that cannot be read leave gaps; the log shows which file each system index came from) or a dictionary of paths like:
 ```
   path_to_geometry:
     0: "path/geo1.in"
@@ -404,7 +404,7 @@ Similarly, the source of the control files can be either a single path or a dict
 
 **Systems.** A *system* is one combination of a geometry, a `control.in` and MD settings. Every source given per index (a geometry dictionary or folder, a control dictionary, an `MD` dictionary) defines the systems, and all of them have to use the same indices; a single path or a single set of MD settings is used for every system. Without any per-index source there is one system. The initial dataset generation runs one trajectory per system. During active learning, trajectory `i` runs the `(i mod n)`-th of the `n` systems (in ascending index order), so choose `num_trajectories` as a multiple of `n` to sample all systems equally (it is raised to `n` if it is smaller). Each trajectory uses the DFT and MD settings of its system.
 
-The total charge and total spin *S* of a system are read from its `control.in`: the charge from `charge` (default `0`), *S* = `fixed_spin_moment`/2 (`fixed_spin_moment` is N<sub>up</sub> − N<sub>down</sub>) and *S* = 0 for `spin none` (or no `spin` keyword). They are stored with every structure of that system under `total_charge_key` and `total_spin_key`, and SO3LR/so3krates models with `use_charge_embed`/`use_spin_embed` use them. With a teacher model as reference (`use_teacher_reference`, `all_teacher`) the control files are not read.
+The total charge and total spin *S* of a system are read from its `control.in`: the charge from `charge` (default `0`), *S* = `fixed_spin_moment`/2 (`fixed_spin_moment` is N<sub>up</sub> − N<sub>down</sub>) and *S* = 0 for `spin none` (or no `spin` keyword). They are stored with every structure of that system under `total_charge_key` and `total_spin_key`, and SO3LR/so3krates models with `use_charge_embed`/`use_spin_embed` use them. `total_spin` is *S*, not the multiplicity; MACE models built by *aims-PAX* ignore it. Dataset structures without a total charge (e.g. written by an older *aims-PAX* version or provided via `initial_train_dataset`) get the charge/spin of the system if there is exactly one; with several systems they are left as they are (SO3LR/so3krates then treat them as charge 0 and spin 0) and a warning is logged. With a teacher model as reference (`use_teacher_reference`, `all_teacher`) the control files are not read.
 
 For example, one structure in two spin states:
 ```yaml
@@ -414,7 +414,12 @@ MISC:
     0: control_singlet.in   # spin none
     1: control_triplet.in   # spin collinear + fixed_spin_moment 2
 ```
-For spin states, fix the spin in each `control.in`: `spin collinear` together with `fixed_spin_moment` (N<sub>up</sub> − N<sub>down</sub>), or `spin none` for a closed shell. Per-atom `initial_moment` entries in `geometry.in` are **not** forwarded to the DFT calculation. A model can only learn systems of the same composition that differ in charge or spin if it embeds that quantity. MACE does not, so *aims-PAX* refuses to start in that case, as it does for SO3LR/so3krates with `use_charge_embed: false` or `use_spin_embed: false`. It also refuses to start when only one of two same-composition systems fixes its spin. Two same-composition systems that both use `spin collinear` without `fixed_spin_moment` have no defined spin and are treated as the same system by the model.
+For spin states, fix the spin in each `control.in`: `spin collinear` together with `fixed_spin_moment` (N<sub>up</sub> − N<sub>down</sub>), or `spin none` for a closed shell. Per-atom `initial_moment` entries in `geometry.in` are **not** forwarded to the DFT calculation. A model can only learn systems of the same composition that differ in charge or spin if it embeds that quantity. MACE does not, so *aims-PAX* refuses to start in that case, as it does for SO3LR/so3krates with `use_charge_embed: false` or `use_spin_embed: false`. It also refuses to start when only one of two same-composition systems fixes its spin, e.g. one with `spin none` and one with `spin collinear` without `fixed_spin_moment`: set `fixed_spin_moment` in the latter. Two same-composition systems that both use `spin collinear` without `fixed_spin_moment` have no defined spin and are treated as the same system by the model.
+
+**Changes in per-system handling.** Compared to earlier versions:
+- All per-index sources must define exactly the same indices. For example, `path_to_geometry: {0: ...}` with `path_to_control: {0: ..., 1: ...}` used to be accepted and is now rejected.
+- An `MD` dictionary defines systems. With a single geometry and `MD` entries `0`-`3`, the initial dataset generation now runs 4 trajectories (one per system) instead of 1; a warning is logged when the `MD` dictionary is the only per-index source.
+- Initial dataset generation checkpoints written by earlier versions for a single geometry with a control dictionary or an `MD` dictionary cannot be restarted; *aims-PAX* stops with an error naming the checkpoint's trajectories and the configured systems.
 
 **Note:** Ideally you don't want to train your model on different levels of theory or DFT settings. Using different control files is intended for systems that need different settings of the same level of theory, e.g. periodic and non-periodic systems simultaneously (a k grid only for the periodic one) or different charge or spin states.
 
