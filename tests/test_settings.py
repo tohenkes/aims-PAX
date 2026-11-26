@@ -555,3 +555,38 @@ def test_example_configs_still_validate():
             ModelSettings.model_validate(data)
             checked += 1
     assert checked >= 2
+
+
+# ── per-system indices must agree between geometry, control and MD ───────────
+
+
+def test_control_dict_with_extra_index_rejected(tmp_path, monkeypatch):
+    monkeypatch.chdir(tmp_path)
+    control, geometry = _make_inputs(tmp_path / "inputs")
+    data = _settings_data(
+        _local_cluster(calc_dir=str(tmp_path / "calc")),
+        _misc(
+            output_dir=str(tmp_path / "out"),
+            path_to_control={0: str(control), 1: str(control)},
+            path_to_geometry={0: str(geometry)},
+        ),
+    )
+    with pytest.raises(ValidationError, match="indices"):
+        AimsPAXSettings.model_validate(data)
+
+
+def test_md_dict_must_match_control_dict(tmp_path, monkeypatch):
+    monkeypatch.chdir(tmp_path)
+    control, geometry = _make_inputs(tmp_path / "inputs")
+    data = _settings_data(
+        _local_cluster(calc_dir=str(tmp_path / "calc")),
+        _misc(
+            output_dir=str(tmp_path / "out"),
+            path_to_control={0: str(control), 1: str(control)},
+            path_to_geometry=str(geometry),
+        ),
+    )
+    md = {"stat_ensemble": "NVT", "thermostat": "Langevin", "timestep": 1.0}
+    data["MD"] = {i: {**md, "temperature": 300} for i in range(3)}
+    with pytest.raises(ValidationError, match="MD"):
+        AimsPAXSettings.model_validate(data)

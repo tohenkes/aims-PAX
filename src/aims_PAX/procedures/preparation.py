@@ -1,3 +1,4 @@
+import copy
 import os
 import random
 from pathlib import Path
@@ -38,7 +39,6 @@ from aims_PAX.tools.utilities.utilities import (
     save_checkpoint,
     create_keyspec,
     log_yaml_block,
-    normalize_md_settings,
     apply_model_settings,
     apply_finetuning_settings,
     log_effective_architecture,
@@ -47,8 +47,18 @@ from aims_PAX.tools.utilities.utilities import (
     ModifyMD,
     log_ensemble,
 )
-from pyfhiaims import AimsControl
 from aims_PAX.tools.utilities.input_utils import read_geometry
+from aims_PAX.tools.utilities.systems import (
+    SystemSpec,
+    annotate_charge_spin,
+    backfill_charge_spin,
+    charge_and_spin,
+    check_systems_for_model,
+    load_aims_settings,
+    log_systems,
+    resolve_systems,
+    system_for_trajectory,
+)
 from aims_PAX.tools.utilities.mbd_nl_labels import (
     freeze_unlabelled_ratio_heads,
     frozen_ratio_heads,
@@ -126,10 +136,7 @@ class PrepareInitialDatasetProcedure:
         log_yaml_block(self.model_choice.upper(), model_settings.model_dump())
 
         self._handle_settings(aimsPAX_settings)
-        if not self.use_teacher_reference:
-            self._handle_aims_settings(path_to_control)
-        else:
-            self.aims_settings = {}
+        self._setup_systems(path_to_geometry, path_to_control)
         self._create_folders()
 
         if self.restart:
@@ -147,26 +154,16 @@ class PrepareInitialDatasetProcedure:
                     " not found."
                 )
                 raise
-            self.trajectories = self.init_ds_restart_dict["trajectories"]
-            self.atoms = list(self.trajectories.values())
             self.step = self.init_ds_restart_dict["step"]
         else:
-            self.trajectories = read_geometry(path_to_geometry, log=True)
-            self.atoms = list(self.trajectories.values())
             self.step = 0
-            # TODO: multiple trajectories per atoms
-            # TODO: make this compatible with the other methods in case the
-            # geometries are not different systems
-
+        self._setup_trajectories()
+        self.atoms = list(self.trajectories.values())
         self.num_trajectories = len(self.trajectories)
-        self.md_settings, _ = normalize_md_settings(
-            md_settings=self.md_settings_raw,
-            num_trajectories=self.num_trajectories,
-        )
 
         logging.info(
             "Running Initial Dataset Procedure with "
-            f"{len(self.trajectories)} geometries."
+            f"{len(self.trajectories)} systems."
         )
 
         if self.model_choice == "mace":
@@ -193,6 +190,7 @@ class PrepareInitialDatasetProcedure:
         # ensemble member the training_setups dictionary contains the training
         # setups (optimizer, scheduler etc.) for each ensemble member
         self._setup_ensemble()
+        self._check_systems_distinguishable()
         self.training_setups = get_ensemble_training_setups(
             ensemble=self.ensemble,
             model_settings=self.model_settings,
@@ -213,6 +211,12 @@ class PrepareInitialDatasetProcedure:
             self.ensemble_ase_sets = load_ensemble_sets_from_folder(
                 ensemble=self.ensemble,
                 path_to_folder=self.dataset_dir / "initial",
+            )
+            backfill_charge_spin(
+                self.ensemble_ase_sets,
+                self.charge_spin,
+                self.misc.total_charge_key,
+                self.misc.total_spin_key,
             )
             self.ensemble_model_sets = ase_to_model_ensemble_sets(
                 ensemble_ase_sets=self.ensemble_ase_sets,
@@ -396,38 +400,84 @@ class PrepareInitialDatasetProcedure:
                 parents=True, exist_ok=True
             )
 
-    def _handle_aims_settings(
-        self, control_source: Union[str, dict[int, str]], log: bool = False
-    ):
+    def _setup_systems(
+        self,
+        path_to_geometry: Union[str, Path, dict[int, str]],
+        path_to_control: Union[str, Path, dict[int, str], None],
+    ) -> None:
         """
-        Parses the AIMS control file to get the settings for the AIMS
-        calculator.
+        Resolves the systems (geometry, control.in and MD settings per
+        index) and their DFT settings and total charge/spin. With a teacher
+        model as reference the control files are not used.
+        """
+        self.systems = resolve_systems(
+            path_to_geometry,
+            None if self.use_teacher_reference else path_to_control,
+            self.md_settings_raw,
+        )
+        log_systems(self.systems)
+        self.md_settings = {i: s.md_settings for i, s in self.systems.items()}
+        self._handle_aims_settings(
+            {
+                i: s.control_path
+                for i, s in self.systems.items()
+                if s.control_path is not None
+            }
+        )
+        self.charge_spin = {
+            i: charge_and_spin(settings, self.systems[i].control_path)
+            for i, settings in self.aims_settings.items()
+        }
+
+    def _setup_trajectories(self) -> None:
+        """
+        Creates one trajectory per system (or restores them from the
+        restart checkpoint) and stores each system's total charge/spin in
+        its trajectory's atoms.
+        """
+        if self.restart:
+            trajectories = self.init_ds_restart_dict["trajectories"]
+            if set(trajectories) != set(self.systems):
+                raise ValueError(
+                    "The initial dataset restart checkpoint has trajectories "
+                    f"{sorted(trajectories)}, but the input files define "
+                    f"systems {sorted(self.systems)}."
+                )
+        else:
+            trajectories = {i: s.atoms.copy() for i, s in self.systems.items()}
+        for idx, (charge, spin) in self.charge_spin.items():
+            annotate_charge_spin(
+                trajectories[idx],
+                charge,
+                spin,
+                self.misc.total_charge_key,
+                self.misc.total_spin_key,
+            )
+        self.trajectories = trajectories
+
+    def _check_systems_distinguishable(self) -> None:
+        """Checks that the trained model can tell the systems apart."""
+        check_systems_for_model(
+            self.systems,
+            self.charge_spin,
+            self.model_choice,
+            self.model_settings.ARCHITECTURE,
+        )
+
+    def _handle_aims_settings(self, control_paths: dict[int, Path]):
+        """
+        Parses the control files to get the settings for the FHI-aims
+        calculator of each system.
 
         Args:
-            path_to_control (str): Path to the AIMS control file.
-            species_dir (str): Path to the species directory of AIMS.
+            control_paths (dict): Control file per system index.
         """
-
-        if isinstance(control_source, (str, Path)):
-            aims_control = AimsControl.from_file(control_source)
-            aims_settings = aims_control.parameters
-            if aims_control.outputs:
-                aims_settings["output"] = aims_control.outputs
-            aims_settings["compute_forces"] = True
-            aims_settings["species_dir"] = self.species_dir
-            self.aims_settings = {0: aims_settings}
-        elif isinstance(control_source, dict):
-            self.aims_settings = {}
-            for key, value in control_source.items():
-                aims_control = AimsControl.from_file(value)
-                aims_settings = aims_control.parameters
-                if aims_control.outputs:
-                    aims_settings["output"] = aims_control.outputs
-                aims_settings["compute_forces"] = True
-                aims_settings["species_dir"] = self.species_dir
-                if log:
-                    logging.info(f"Control file for geometry {key}: {value}.")
-                self.aims_settings[key] = aims_settings
+        self.aims_settings = {
+            i: load_aims_settings(
+                path, self.species_dir, postprocess_anyway=False
+            )
+            for i, path in control_paths.items()
+        }
 
     def setup_md(self, atoms: ase.Atoms, md_settings: dict):
         """
@@ -842,6 +892,11 @@ class ALConfiguration:
         self._setup_model_configuration()
         self._setup_aimsPAX_configuration()
 
+        # set by PrepareALProcedure: systems and, for those with a
+        # control file, their (total charge, total spin)
+        self.systems: dict[int, SystemSpec] = {}
+        self.charge_spin: dict[int, tuple[float, float | None]] = {}
+
     def _setup_model_configuration(self):
         """Setup model-specific configuration."""
 
@@ -998,6 +1053,7 @@ class ALStateManager:
         self.trajectories = {}
         self.MD_checkpoints = {}
         self.trajectory_status = {}
+        self.trajectory_system = {}  # trajectory index -> system index
         self.trajectory_MD_steps = {}
         self.trajectory_total_epochs = {}
         self.trajectory_intermediate_epochs = {}
@@ -1030,17 +1086,22 @@ class ALStateManager:
         if self.config.analysis:
             self._initialize_analysis_state()
 
-    def initialize_fresh_state(self, path_to_geometry: str):
+    def initialize_fresh_state(self):
         """Initialize state for a fresh run."""
-        atoms = read_geometry(path_to_geometry, log=True)
+        systems = self.config.systems
+        atoms = {k: systems[i].atoms for k, i in enumerate(sorted(systems))}
         logging.info(
-            "Running Active Learning Procedure with "
-            f"{len(atoms)} geometries."
+            f"Running Active Learning Procedure with {len(atoms)} systems."
         )
-        # Initialize trajectory data
+        # Initialize trajectory data. Trajectory i starts from
+        # atoms[i % len(atoms)], i.e. from system_for_trajectory(i, ...).
         self.trajectories = self._create_trajectories(
             atoms, self.config.num_trajectories
         )
+        if self.config.analysis:
+            # _create_trajectories may have raised num_trajectories
+            self._initialize_analysis_state()
+        self.assign_systems()
         num_traj = len(self.trajectories)
         self.MD_checkpoints = {
             i: self.trajectories[i].copy() for i in range(num_traj)
@@ -1057,6 +1118,32 @@ class ALStateManager:
             self.ensemble_reset_opt = {tag: False for tag in tags}
             self.ensemble_no_improvement = {tag: 0 for tag in tags}
             self.ensemble_best_valid = {tag: np.inf for tag in tags}
+
+    def assign_systems(self):
+        """
+        Maps each trajectory to its system (``self.trajectory_system``) and
+        stores the system's total charge/spin in the trajectory's atoms and
+        MD checkpoint (if any). Idempotent, so it also serves restarts.
+        """
+        system_ids = list(self.config.systems)
+        self.trajectory_system = {
+            idx: system_for_trajectory(idx, system_ids)
+            for idx in self.trajectories
+        }
+        checkpoints = self.MD_checkpoints or {}
+        for idx, system_idx in self.trajectory_system.items():
+            if system_idx not in self.config.charge_spin:
+                continue
+            charge, spin = self.config.charge_spin[system_idx]
+            for atoms in (self.trajectories[idx], checkpoints.get(idx)):
+                if atoms is not None:
+                    annotate_charge_spin(
+                        atoms,
+                        charge,
+                        spin,
+                        self.config.misc.total_charge_key,
+                        self.config.misc.total_spin_key,
+                    )
 
     def _create_trajectories(
         self, atoms: dict[int, ase.Atoms], num_trajectories: int
@@ -1318,6 +1405,12 @@ class ALEnsemble:
             ensemble=self.ensemble,
             path_to_folder=self.config.dataset_dir / dataset_subdir,
         )
+        backfill_charge_spin(
+            self.ensemble_ase_sets,
+            self.config.charge_spin,
+            self.config.misc.total_charge_key,
+            self.config.misc.total_spin_key,
+        )
 
         self.ensemble_model_sets = ase_to_model_ensemble_sets(
             ensemble_ase_sets=self.ensemble_ase_sets,
@@ -1381,20 +1474,26 @@ class ALEnsemble:
         train_out_dir.mkdir(parents=True, exist_ok=True)
         valid_out_dir.mkdir(parents=True, exist_ok=True)
 
-        self.ensemble_ase_sets = {}
-        for tag in tags:
-            train_atoms = ase.io.read(str(train_paths[tag]), index=":")
-            valid_atoms = ase.io.read(str(valid_paths[tag]), index=":")
-            ase.io.write(
-                str(train_out_dir / f"{tag}_train.extxyz"), train_atoms
-            )
-            ase.io.write(
-                str(valid_out_dir / f"{tag}_valid.extxyz"), valid_atoms
-            )
-            self.ensemble_ase_sets[tag] = {
-                "train": train_atoms,
-                "valid": valid_atoms,
+        self.ensemble_ase_sets = {
+            tag: {
+                "train": ase.io.read(str(train_paths[tag]), index=":"),
+                "valid": ase.io.read(str(valid_paths[tag]), index=":"),
             }
+            for tag in tags
+        }
+        backfill_charge_spin(
+            self.ensemble_ase_sets,
+            self.config.charge_spin,
+            self.config.misc.total_charge_key,
+            self.config.misc.total_spin_key,
+        )
+        for tag, sets in self.ensemble_ase_sets.items():
+            ase.io.write(
+                str(train_out_dir / f"{tag}_train.extxyz"), sets["train"]
+            )
+            ase.io.write(
+                str(valid_out_dir / f"{tag}_valid.extxyz"), sets["valid"]
+            )
 
         if self.config.all_heads is not None:
             first_tag = tags[0]
@@ -1685,7 +1784,9 @@ class ALCalculatorMLFF:
                             "dispersion_lr_damping"
                         )
                     ),
-                    key_specification=self.config.key_specification,
+                    key_specification=copy.deepcopy(
+                        self.config.key_specification
+                    ),
                     **{
                         name: foundational_model_settings[name]
                         for name in PME_SETTING_NAMES
@@ -1703,6 +1804,9 @@ class ALCalculatorMLFF:
                         foundational_model_settings.get(
                             "dispersion_lr_damping"
                         )
+                    ),
+                    key_specification=copy.deepcopy(
+                        self.config.key_specification
                     ),
                 )
             logging.info(
@@ -1736,6 +1840,9 @@ class ALCalculatorMLFF:
                         r_max_lr=self.config.r_max_lr,
                         dispersion_energy_cutoff_lr_damping=self.config.dispersion_energy_cutoff_lr_damping,
                         compute_stress=self.config.compute_stress,
+                        key_specification=copy.deepcopy(
+                            self.config.key_specification
+                        ),
                     )
                 else:
                     self.mlff_calc_ensemble = TorchkratesCalculator(
@@ -1745,6 +1852,9 @@ class ALCalculatorMLFF:
                         r_max_lr=self.config.r_max_lr,
                         dispersion_energy_cutoff_lr_damping=self.config.dispersion_energy_cutoff_lr_damping,
                         compute_stress=self.config.compute_stress,
+                        key_specification=copy.deepcopy(
+                            self.config.key_specification
+                        ),
                     )
 
         else:
@@ -1775,6 +1885,9 @@ class ALCalculatorMLFF:
                         r_max_lr=self.config.r_max_lr,
                         dispersion_energy_cutoff_lr_damping=self.config.dispersion_energy_cutoff_lr_damping,
                         compute_stress=self.config.compute_stress,
+                        key_specification=copy.deepcopy(
+                            self.config.key_specification
+                        ),
                     )
                 else:
                     self.mlff_calc = TorchkratesCalculator(
@@ -1784,6 +1897,9 @@ class ALCalculatorMLFF:
                         r_max_lr=self.config.r_max_lr,
                         dispersion_energy_cutoff_lr_damping=self.config.dispersion_energy_cutoff_lr_damping,
                         compute_stress=self.config.compute_stress,
+                        key_specification=copy.deepcopy(
+                            self.config.key_specification
+                        ),
                     )
 
 
@@ -1799,10 +1915,10 @@ class ALMD:
         self.state_manager = state_manager
         self.train_dataset_len = 0
 
-        self.md_settings, _ = normalize_md_settings(
-            md_settings=self.config.md_settings_raw,
-            num_trajectories=self.config.num_trajectories,
-        )
+        # per system; trajectories look theirs up via trajectory_system
+        self.md_settings = {
+            i: system.md_settings for i, system in config.systems.items()
+        }
         logging.info(f"Using following settings for MDs:")
         log_yaml_block("MD_SETTINGS", self.md_settings)
 
@@ -1821,7 +1937,9 @@ class ALMD:
         self.md_drivers = {
             trajectory_idx: self._setup_md_dynamics(
                 atoms=trajectories[trajectory_idx],
-                md_settings=self.md_settings[trajectory_idx],
+                md_settings=self.md_settings[
+                    self.state_manager.trajectory_system[trajectory_idx]
+                ],
                 idx=trajectory_idx,
             )
             for trajectory_idx in self.state_manager.trajectories.keys()
@@ -2051,6 +2169,10 @@ class ALRestart:
         self._initialize_restart_attributes()
 
         self._load_restart_checkpoint()
+        # the first run may have raised num_trajectories to the number of
+        # systems; the checkpoint's trajectories are authoritative
+        self.config.num_trajectories = len(self.state_manager.trajectories)
+        self.state_manager.assign_systems()
 
         self._broadcast_restart_state()
 
@@ -2250,6 +2372,7 @@ class PrepareALProcedure:
             f"Using following settings for {self.config.model_choice}:"
         )
         log_yaml_block(self.config.model_choice, model_settings.model_dump())
+        self._setup_systems()
         # Initialize all managers
         self.state_manager = ALStateManager(self.config)
         self.ensemble_manager = ALEnsemble(self.config)
@@ -2268,6 +2391,7 @@ class PrepareALProcedure:
         np.random.seed(self.config.seed)
         # Setup calculators and datasets
         self.ensemble_manager.setup_ensemble_and_datasets()
+        self._check_systems_distinguishable()
         self.mlff_manager.setup_ml_calculators()
 
         # Pass train_dataset_len to MD manager for modification
@@ -2279,9 +2403,7 @@ class PrepareALProcedure:
             self.restart_manager.handle_restart()
 
         else:
-            self.state_manager.initialize_fresh_state(
-                self.config.path_to_geometry
-            )
+            self.state_manager.initialize_fresh_state()
         # assign mlff to checkpoints
         for ckpt in self.state_manager.MD_checkpoints.values():
             ckpt.calc = self.mlff_manager.mlff_calc
@@ -2311,6 +2433,41 @@ class PrepareALProcedure:
 
         # TODO: Remove hardcode
         self.use_scheduler = False
+
+    def _setup_systems(self):
+        """
+        Resolves the systems (geometry, control.in and MD settings per
+        index) and the total charge/spin of those with a control file. With
+        a teacher model as reference the control files are not used.
+        """
+        config = self.config
+        config.systems = resolve_systems(
+            config.path_to_geometry,
+            None if config.use_teacher_reference else config.path_to_control,
+            config.md_settings_raw,
+        )
+        log_systems(config.systems)
+        config.charge_spin = {
+            i: charge_and_spin(
+                load_aims_settings(
+                    system.control_path,
+                    config.species_dir,
+                    postprocess_anyway=True,
+                ),
+                system.control_path,
+            )
+            for i, system in config.systems.items()
+            if system.control_path is not None
+        }
+
+    def _check_systems_distinguishable(self):
+        """Checks that the trained model can tell the systems apart."""
+        check_systems_for_model(
+            self.config.systems,
+            self.config.charge_spin,
+            self.config.model_choice,
+            self.config.model_settings.ARCHITECTURE,
+        )
 
     def _setup_logging(self):
         """Setup logging configuration."""

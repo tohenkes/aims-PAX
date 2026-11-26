@@ -369,3 +369,31 @@ def test_al_foundational_forwards_pme(
     assert captured["use_pme"] is True
     assert captured["pme_smearing"] == 1.5
     assert "use_pme_dispersion" not in captured
+
+
+def test_idg_foundational_calculator_gets_private_key_specification(
+    monkeypatch,
+):
+    # the calculator mutates its key spec on prediction; the IDG's own
+    # spec (used for training data) must stay untouched
+    import aims_PAX.procedures.initial_dataset as initial_dataset
+    from aims_PAX.tools.utilities.utilities import create_keyspec
+
+    captured = {}
+    monkeypatch.setattr(
+        initial_dataset,
+        "make_so3lr_calculator",
+        lambda spec, **kwargs: captured.update(kwargs),
+    )
+    stub = _idg_stub()
+    stub.key_specification = create_keyspec(
+        total_charge_key="q", total_spin_key="s"
+    )
+    InitialDatasetPARSL._setup_foundational(
+        stub, "so3lr", So3lrFMSettings(model="v1")
+    )
+    spec = captured["key_specification"]
+    assert spec is not stub.key_specification
+    assert spec.info_keys["total_charge"] == "q"
+    spec.update(arrays_keys={"charges": "Qs"})
+    assert stub.key_specification.arrays_keys["charges"] == "REF_charges"

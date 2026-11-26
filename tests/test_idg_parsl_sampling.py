@@ -5,6 +5,8 @@ from unittest.mock import MagicMock, patch
 import ase.build
 import pytest
 
+from aims_PAX.settings.project import MDSettings
+
 from aims_PAX.procedures.initial_dataset import (
     InitialDatasetPARSL,
     InitialDatasetPARSLTeacher,
@@ -120,24 +122,6 @@ def test_dft_submit_directory_naming(tmp_path):
     assert mock_recalc.call_args.kwargs["directory"].name == "initial_calc_1"
 
 
-def test_dft_submit_single_system_settings_idx(tmp_path):
-    stub = SimpleNamespace(
-        calc_idx=0,
-        calc_dir=Path(tmp_path),
-        parsl_func_input={
-            "ase_aims_command": "aims.x",
-            "properties": ["energy", "forces"],
-        },
-        aims_settings=[{"xc": "pbe"}],
-    )
-    with patch(
-        "aims_PAX.procedures.initial_dataset.recalc_dft_parsl"
-    ) as mock_recalc:
-        mock_recalc.return_value = FakeFuture(RESULT)
-        InitialDatasetPARSL._submit_reference_job(stub, make_cu_atoms(), 5)
-    assert mock_recalc.call_args.kwargs["aims_settings"] == {"xc": "pbe"}
-
-
 def test_dft_submit_multi_system_settings_idx(tmp_path):
     s0 = {"xc": "lda"}
     s1 = {"xc": "pbe"}
@@ -156,6 +140,164 @@ def test_dft_submit_multi_system_settings_idx(tmp_path):
         mock_recalc.return_value = FakeFuture(RESULT)
         InitialDatasetPARSL._submit_reference_job(stub, make_cu_atoms(), 1)
     assert mock_recalc.call_args.kwargs["aims_settings"] == s1
+
+
+# ===========================================================================
+# §4a' — Per-system DFT settings (systems resolved from the input files)
+# ===========================================================================
+
+_NVT = {"stat_ensemble": "NVT", "thermostat": "Langevin", "timestep": 1.0}
+
+
+def _write_o2_inputs(tmp_path):
+    geometry = tmp_path / "geometry.in"
+    geometry.write_text("atom 0.0 0.0 0.0 O\natom 0.0 0.0 1.21 O\n")
+    singlet = tmp_path / "control_singlet.in"
+    singlet.write_text("xc pbe\nspin none\n")
+    triplet = tmp_path / "control_triplet.in"
+    triplet.write_text("xc pbe\nspin collinear\nfixed_spin_moment 2\n")
+    return geometry, {0: singlet, 1: triplet}
+
+
+def _make_idg(tmp_path, model_choice="so3lr", use_spin_embed=True):
+    """InitialDatasetPARSL with only the attributes the systems need."""
+    proc = InitialDatasetPARSL.__new__(InitialDatasetPARSL)
+    proc.use_teacher_reference = False
+    proc.restart = False
+    proc.species_dir = tmp_path
+    proc.md_settings_raw = MDSettings.model_validate(
+        {**_NVT, "temperature": 300}
+    )
+    proc.misc = SimpleNamespace(
+        total_charge_key="total_charge", total_spin_key="total_spin"
+    )
+    proc.model_choice = model_choice
+    proc.model_settings = SimpleNamespace(
+        ARCHITECTURE=SimpleNamespace(
+            use_charge_embed=True, use_spin_embed=use_spin_embed
+        )
+    )
+    proc.calc_idx = 0
+    proc.calc_dir = tmp_path
+    proc.clean_dirs = False
+    proc.compute_stress = False
+    proc.parsl_func_input = {"ase_aims_command": "aims.x"}
+    return proc
+
+
+def test_idg_control_dict_with_single_geometry_runs_both_systems(tmp_path):
+    geometry, controls = _write_o2_inputs(tmp_path)
+    proc = _make_idg(tmp_path)
+    proc._setup_systems(geometry, controls)
+    proc._setup_trajectories()
+    proc._check_systems_distinguishable()
+
+    assert len(proc.trajectories) == 2
+    assert proc.trajectories[0] is not proc.trajectories[1]
+    # MD moves the trajectories, not the system specifications
+    assert proc.trajectories[0] is not proc.systems[0].atoms
+    assert proc.trajectories[0].info["total_spin"] == 0.0
+    assert proc.trajectories[1].info["total_spin"] == 1.0
+    assert proc.trajectories[1].info["total_charge"] == 0.0
+
+    # one sampled point per trajectory, labelled by DFT
+    proc._md_w_foundational = lambda: None
+    proc.sampled_points = {
+        idx: [atoms.copy()] for idx, atoms in proc.trajectories.items()
+    }
+    submitted = []
+
+    def fake_recalc(**kwargs):
+        submitted.append(kwargs)
+        return FakeFuture(RESULT)
+
+    with patch(
+        "aims_PAX.procedures.initial_dataset.recalc_dft_parsl",
+        side_effect=fake_recalc,
+    ):
+        points = InitialDatasetPARSL._sample_points(proc)
+
+    assert submitted[0]["aims_settings"]["spin"] == "none"
+    assert submitted[1]["aims_settings"]["fixed_spin_moment"] == "2"
+    assert submitted[1]["aims_settings"]["species_dir"] == tmp_path
+    assert "postprocess_anyway" not in submitted[1]["aims_settings"]
+    # the charge/spin travel with the labelled points into the dataset
+    assert sorted(p.info["total_spin"] for p in points) == [0.0, 1.0]
+
+
+def test_idg_md_settings_per_system(tmp_path):
+    geometry, controls = _write_o2_inputs(tmp_path)
+    proc = _make_idg(tmp_path)
+    proc.md_settings_raw = MDSettings.model_validate(
+        {0: {**_NVT, "temperature": 300}, 1: {**_NVT, "temperature": 500}}
+    )
+    proc._setup_systems(geometry, controls)
+    assert proc.md_settings[0]["temperature"] == 300
+    assert proc.md_settings[1]["temperature"] == 500
+
+
+def test_idg_single_control_gives_settings_for_every_system(tmp_path):
+    geometry, controls = _write_o2_inputs(tmp_path)
+    other = tmp_path / "geometry_2.in"
+    other.write_text("atom 0.0 0.0 0.0 O\natom 0.0 0.0 1.3 O\n")
+    proc = _make_idg(tmp_path)
+    proc._setup_systems({0: geometry, 1: other}, controls[0])
+    assert set(proc.aims_settings) == {0, 1}
+    assert proc.aims_settings[1]["spin"] == "none"
+
+
+def test_idg_mace_two_spin_states_refuses_to_start(tmp_path):
+    geometry, controls = _write_o2_inputs(tmp_path)
+    proc = _make_idg(tmp_path, model_choice="mace")
+    proc._setup_systems(geometry, controls)
+    proc._setup_trajectories()
+    with pytest.raises(ValueError, match="spin"):
+        proc._check_systems_distinguishable()
+
+
+def test_idg_so3lr_without_spin_embed_refuses_to_start(tmp_path):
+    geometry, controls = _write_o2_inputs(tmp_path)
+    proc = _make_idg(tmp_path, use_spin_embed=False)
+    proc._setup_systems(geometry, controls)
+    with pytest.raises(ValueError, match="spin embedding"):
+        proc._check_systems_distinguishable()
+
+
+def test_idg_restart_reannotates_checkpoint_trajectories(tmp_path):
+    geometry, controls = _write_o2_inputs(tmp_path)
+    proc = _make_idg(tmp_path)
+    proc.restart = True
+    checkpoint = {i: ase.build.molecule("O2") for i in (0, 1)}
+    checkpoint[1].positions[0, 0] += 0.1
+    proc.init_ds_restart_dict = {"trajectories": checkpoint}
+    proc._setup_systems(geometry, controls)
+    proc._setup_trajectories()
+    assert proc.trajectories[1] is checkpoint[1]
+    assert proc.trajectories[0].info["total_spin"] == 0.0
+    assert proc.trajectories[1].info["total_spin"] == 1.0
+
+
+def test_idg_restart_rejects_checkpoint_of_other_systems(tmp_path):
+    geometry, controls = _write_o2_inputs(tmp_path)
+    proc = _make_idg(tmp_path)
+    proc.restart = True
+    proc.init_ds_restart_dict = {"trajectories": {0: ase.build.molecule("O2")}}
+    proc._setup_systems(geometry, controls)
+    with pytest.raises(ValueError, match="restart"):
+        proc._setup_trajectories()
+
+
+def test_idg_teacher_reference_ignores_control(tmp_path):
+    geometry, _ = _write_o2_inputs(tmp_path)
+    proc = _make_idg(tmp_path, model_choice="mace")
+    proc.use_teacher_reference = True
+    # the control file is never read for a teacher reference
+    proc._setup_systems(geometry, tmp_path / "missing_control.in")
+    proc._setup_trajectories()
+    proc._check_systems_distinguishable()
+    assert proc.aims_settings == {}
+    assert list(proc.trajectories) == [0]
+    assert "total_spin" not in proc.trajectories[0].info
 
 
 # ===========================================================================

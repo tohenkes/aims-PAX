@@ -6,7 +6,7 @@ import logging
 import sys
 import yaml
 from pathlib import Path
-from typing import Union, Dict, Any, Annotated, ClassVar
+from typing import Union, Dict, Any, Annotated, ClassVar, Iterable
 
 from pydantic import BaseModel, RootModel, Field, DirectoryPath,  FilePath, model_validator, field_validator, \
     ValidationError
@@ -845,8 +845,10 @@ class MiscSettings(ProjectBaseModel):
     path_to_control: PathOrIndexedPaths = Field(
         default=Path("./control.in"),
         description=(
-            "Path to the FHI-aims control input file. Can be a single path "
-            "or a dictionary mapping system indices to specific control files."
+            "Path to the FHI-aims control input file. Can be a single path, "
+            "used for every system, or a dictionary mapping system indices "
+            "to control files. Each system's total charge and spin are read "
+            "from its control file (charge, fixed_spin_moment)."
         )
     )
     path_to_geometry: Union[PathOrIndexedPaths | DirectoryPath] = Field(
@@ -873,20 +875,19 @@ class MiscSettings(ProjectBaseModel):
     all_teacher: bool = False
     _relative_dirs: ClassVar[list[str]] = ["dataset_dir", "log_dir"]
 
-    @model_validator(mode="after")
-    def validate_indices_match(self) -> "MiscSettings":
-        """
-        Cross-checks that if indexed paths are used, the indices
-        overlap correctly between geometry and control files.
-        """
-        if isinstance(self.path_to_geometry, dict) and isinstance(self.path_to_control, dict):
-            geo_indices = set(self.path_to_geometry.keys())
-            ctrl_indices = set(self.path_to_control.keys())
 
-            if not geo_indices.issubset(ctrl_indices):
-                missing = geo_indices - ctrl_indices
-                raise ValueError(f"Geometry indices {missing} are missing corresponding control files.")
-        return self
+def check_system_indices(sources: Dict[str, Iterable[int]]) -> None:
+    """
+    Raises a ValueError unless every per-index source (name -> indices)
+    defines exactly the same set of system indices.
+    """
+    index_sets = {name: set(idxs) for name, idxs in sources.items()}
+    if len({frozenset(idxs) for idxs in index_sets.values()}) > 1:
+        described = ", ".join(
+            f"{name} {{{', '.join(str(i) for i in sorted(idxs))}}}"
+            for name, idxs in index_sets.items()
+        )
+        raise ValueError(f"Per-system indices disagree: {described}")
 
 
 def _calc_dir_conflict(
@@ -948,6 +949,23 @@ class AimsPAXSettings(ProjectBaseModel):
                 "Incomplete Configuration: You must provide settings for "
                 "'ACTIVE_LEARNING' or 'INITIAL_DATASET_GENERATION', or both."
             )
+        return self
+
+    @model_validator(mode="after")
+    def validate_system_indices(self) -> "AimsPAXSettings":
+        """
+        Every per-index source (dict-valued ``MISC.path_to_geometry``,
+        ``MISC.path_to_control`` and ``MD``) must define the same indices.
+        A geometry folder can only be checked once it is read.
+        """
+        sources = {}
+        if isinstance(self.MISC.path_to_geometry, dict):
+            sources["geometry"] = self.MISC.path_to_geometry.keys()
+        if isinstance(self.MISC.path_to_control, dict):
+            sources["control"] = self.MISC.path_to_control.keys()
+        if isinstance(self.MD.root, dict):
+            sources["MD"] = self.MD.root.keys()
+        check_system_indices(sources)
         return self
 
     @model_validator(mode="after")

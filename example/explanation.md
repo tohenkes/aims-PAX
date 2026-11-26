@@ -21,6 +21,18 @@ In our example, we will use PBE as it is cheap to evaluate.
 
 The species defaults for numerical settings and basis sets are defined in `aimsPAX.yaml` as we will see later on (this is contrary to what is usually done in FHI aims, where these defaults are part of the `control.in` file).
 
+#### Several systems (e.g. spin states)
+
+This example uses one geometry and one `control.in`, i.e. a single *system*. `path_to_geometry` and `path_to_control` under `MISC` (and the `MD` settings) can also be given per system index; all per-index sources have to use the same indices, and a single path is used for every system. The initial dataset generation runs one trajectory per system, and during active learning trajectory `i` runs the `(i mod n)`-th of the `n` systems, each with the DFT and MD settings of its system. For example, one structure in two spin states:
+```yaml
+MISC:
+  path_to_geometry: geometry.in
+  path_to_control:
+    0: control_singlet.in   # spin none
+    1: control_triplet.in   # spin collinear + fixed_spin_moment 2
+```
+The total charge (`charge`) and total spin *S* = `fixed_spin_moment`/2 (0 for `spin none`) of each system are read from its `control.in` and stored with its structures. Fix the spin in each `control.in` (`spin collinear` + `fixed_spin_moment` = N<sub>up</sub> − N<sub>down</sub>, or `spin none` for a closed shell); per-atom `initial_moment` entries in `geometry.in` are not forwarded to the DFT calculation. Only models that embed charge/spin (SO3LR/so3krates with `use_charge_embed`/`use_spin_embed`) can learn same-composition systems that differ in charge or spin; MACE cannot, and *aims-PAX* refuses to start in that case. Two same-composition systems that both use `spin collinear` without `fixed_spin_moment` are treated as the same system by the model.
+
 ### Initial Dataset Generation Settings
 
 Before starting with the active learning itself, we have to create an initial dataset and initial models. In *aims PAX*, the default approach is to sample geometries using a pretrained model such as [MACE-MP0]() and then relabel them with the target DFT method.
