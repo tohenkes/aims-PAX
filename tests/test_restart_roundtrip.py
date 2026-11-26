@@ -6,8 +6,11 @@ Part A (tests 1–4) are fast and have no @pytest.mark.slow decoration.
 Part B (test 5) builds a real MACE model and is marked @pytest.mark.slow.
 """
 
+import logging
+
 import numpy as np
 import pytest
+from ase import Atoms
 import torch
 from types import SimpleNamespace
 
@@ -31,7 +34,7 @@ def _make_saver(tmp_path, analysis=False):
         replay_strategy="full_dataset",
     )
     obj.state_manager = SimpleNamespace(
-        trajectories=None,
+        trajectories={0: Atoms("H"), 1: Atoms("H")},
         MD_checkpoints=None,
         trajectory_status={0: "running", 1: "paused"},
         trajectory_MD_steps={0: 100, 1: 200},
@@ -193,6 +196,53 @@ def test_al_state_roundtrip_analysis_fields(tmp_path):
     assert loader.state_manager.collect_thresholds == [0.15, 0.13, 0.12]
     assert loader.state_manager.t_intervals == [0, 10, 20]
     assert loader.state_manager.analysis_checks == [True, False]
+
+
+def _random_subset_restart(tmp_path, yaml_num_trajectories):
+    """Save a 2-trajectory checkpoint, then load it with random_subset
+    replay and the given yaml num_trajectories. Returns the loader and
+    the trajectory indices whose training subset was rebuilt."""
+    saver = _make_saver(tmp_path)
+    saver.state_manager.last_point_added = {0: Atoms("H"), 1: Atoms("H")}
+    saver.update_restart_dict(
+        None, None, save_restart=str(tmp_path / "al_state.npy")
+    )
+
+    loader = _make_loader(tmp_path)
+    loader.config.replay_strategy = "random_subset"
+    loader.config.num_trajectories = yaml_num_trajectories
+    subset_calls = []
+    loader.ensemble_manager = SimpleNamespace(
+        create_training_subset=lambda model_point, idx: subset_calls.append(
+            idx
+        )
+    )
+    loader._load_restart_checkpoint()
+    return loader, subset_calls
+
+
+@pytest.mark.parametrize("yaml_value", [1, 3])
+def test_restart_overrides_num_trajectories_with_warning(
+    tmp_path, caplog, yaml_value
+):
+    """The checkpoint's trajectory count wins over aimsPAX.yaml, is
+    applied before the random_subset rebuild, and is announced."""
+    with caplog.at_level(logging.WARNING):
+        loader, subset_calls = _random_subset_restart(tmp_path, yaml_value)
+
+    assert loader.config.num_trajectories == 2
+    assert subset_calls == [0, 1]
+    assert "num_trajectories" in caplog.text
+    assert str(yaml_value) in caplog.text and "2" in caplog.text
+
+
+def test_restart_keeps_matching_num_trajectories_silently(tmp_path, caplog):
+    with caplog.at_level(logging.WARNING):
+        loader, subset_calls = _random_subset_restart(tmp_path, 2)
+
+    assert loader.config.num_trajectories == 2
+    assert subset_calls == [0, 1]
+    assert not [r for r in caplog.records if r.levelname == "WARNING"]
 
 
 def test_restart_recomputes_trajectory_system(tmp_path):
