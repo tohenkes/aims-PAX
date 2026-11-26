@@ -119,3 +119,93 @@ def test_invalid_barostat_raises(cu_atoms):
     settings = {**NPT_BERENDSEN, "barostat": "invalid"}
     with pytest.raises(ValueError):
         call_setup_md(cu_atoms, settings)
+
+
+# ---------------------------------------------------------------------------
+# MLFF calculators read charge/spin under the configured MISC keys
+# ---------------------------------------------------------------------------
+
+
+def _calc_setup_stub(monkeypatch, *, foundational, model_choice, multihead):
+    import aims_PAX.procedures.preparation as prep
+    from aims_PAX.tools.utilities.utilities import create_keyspec
+
+    recorded = {}
+
+    def recorder(**kwargs):
+        recorded.update(kwargs)
+        return SimpleNamespace()
+
+    monkeypatch.setattr(prep, "MultiHeadSO3LRCalculator", recorder)
+    monkeypatch.setattr(prep, "TorchkratesCalculator", recorder)
+    monkeypatch.setattr(
+        prep,
+        "make_so3lr_calculator",
+        lambda *a, **k: (recorded.update(k) or SimpleNamespace()),
+    )
+    monkeypatch.setattr(prep, "list_files_in_directory", lambda d: [])
+
+    config = SimpleNamespace(
+        use_foundational=foundational,
+        foundational_model_settings={
+            "model_type": model_choice,
+            "model_path": "dummy",
+        },
+        model_choice=model_choice,
+        use_multihead_model=multihead,
+        model_dir="unused",
+        device="cpu",
+        dtype="float32",
+        compute_stress=False,
+        r_max_lr=None,
+        dispersion_energy_cutoff_lr_damping=None,
+        enable_cueq=False,
+        key_specification=create_keyspec(
+            total_charge_key="q", total_spin_key="s"
+        ),
+    )
+    stub = SimpleNamespace(config=config)
+    return prep.ALCalculatorMLFF, stub, recorded
+
+
+@pytest.mark.parametrize(
+    "foundational,model_choice,multihead",
+    [
+        (True, "so3lr", False),
+        (True, "so3krates", False),
+        (False, "so3lr", True),
+        (False, "so3lr", False),
+        (False, "so3krates", False),
+    ],
+)
+def test_so3lr_md_calculator_uses_misc_charge_spin_keys(
+    monkeypatch, foundational, model_choice, multihead
+):
+    cls, stub, recorded = _calc_setup_stub(
+        monkeypatch,
+        foundational=foundational,
+        model_choice=model_choice,
+        multihead=multihead,
+    )
+    cls._setup_mlff_calculator(stub)
+    info_keys = recorded["key_specification"].info_keys
+    assert info_keys["total_charge"] == "q"
+    assert info_keys["total_spin"] == "s"
+
+
+def test_so3lr_foundational_ensemble_calculator_uses_misc_keys(monkeypatch):
+    """Foundational MD + the ensemble (uncertainty) calculator both get it."""
+    import aims_PAX.procedures.preparation as prep
+
+    cls, stub, recorded = _calc_setup_stub(
+        monkeypatch, foundational=True, model_choice="so3lr", multihead=True
+    )
+    calls = []
+    monkeypatch.setattr(
+        prep,
+        "MultiHeadSO3LRCalculator",
+        lambda **kw: calls.append(kw) or SimpleNamespace(),
+    )
+    cls._setup_mlff_calculator(stub)
+    assert len(calls) == 1
+    assert calls[0]["key_specification"].info_keys["total_charge"] == "q"
