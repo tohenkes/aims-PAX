@@ -1,8 +1,17 @@
+from types import SimpleNamespace
+
 import numpy as np
 import pytest
+from ase import Atoms
+from pyfhiaims.control import AimsControl
 
 from aims_PAX.settings.project import MDSettings
 from aims_PAX.tools.utilities.systems import (
+    SystemSpec,
+    annotate_charge_spin,
+    charge_and_spin,
+    check_systems_distinguishable,
+    model_embeds,
     resolve_systems,
     system_for_trajectory,
 )
@@ -130,3 +139,147 @@ def test_system_for_trajectory_cycles():
         1,
     ]
     assert system_for_trajectory(1, [5, 2]) == 5
+
+
+_TEMPLATE = """\
+# TEMPLATE FHI-aims header for periodic MgH2 labels on the SO3LR-Tauri reference.
+# Append the defaults_2020/tight species blocks of Mg and H (as aims_label.py does).
+xc                         pbe0
+many_body_dispersion_nl
+relativistic               atomic_zora scalar
+charge                     0
+occupation_type            gaussian 0.01
+sc_accuracy_etot           1e-06
+sc_accuracy_eev            1E-4
+sc_accuracy_rho            1e-05
+sc_accuracy_forces         1E-4
+sc_iter_limit              1000
+compute_forces             .true.
+final_forces_cleaned       .true.
+ compute_analytical_stress .true. 
+k_grid                     2 2 3      
+# --- spin: odd-electron cells (47-atom neutral vacancy) ---
+spin                       collinear
+fixed_spin_moment          1           # N_up - N_down = 1 (doublet)
+default_initial_moment     0
+# --- even-electron cells (48-atom perfect): replace the spin block by ---
+# spin                     none
+"""
+
+
+def test_charge_spin_defaults():
+    assert charge_and_spin({}) == (0.0, 0.0)
+
+
+def test_charge_spin_cation_closed_shell():
+    assert charge_and_spin({"charge": "1", "spin": "none"}) == (1.0, 0.0)
+
+
+def test_charge_spin_triplet_from_fixed_moment():
+    assert charge_and_spin(
+        {"spin": "collinear", "fixed_spin_moment": "2"}
+    ) == (
+        0.0,
+        1.0,
+    )
+
+
+def test_charge_spin_doublet_from_user_template(tmp_path):
+    (tmp_path / "control.in").write_text(_TEMPLATE)
+    params = AimsControl.from_file(tmp_path / "control.in").parameters
+    assert charge_and_spin(params) == (0.0, 0.5)
+
+
+def test_charge_spin_unconstrained_collinear_is_unknown():
+    assert charge_and_spin({"spin": "collinear"}) == (0.0, None)
+
+
+def test_annotate_sets_charge_and_spin():
+    atoms = Atoms("H2")
+    annotate_charge_spin(atoms, 1.0, 0.5, "total_charge", "total_spin")
+    assert atoms.info["total_charge"] == 1.0
+    assert atoms.info["total_spin"] == 0.5
+
+
+def test_annotate_skips_unknown_spin():
+    atoms = Atoms("H2")
+    annotate_charge_spin(atoms, 1.0, None, "total_charge", "total_spin")
+    assert atoms.info["total_charge"] == 1.0 and "total_spin" not in atoms.info
+
+
+def test_model_embeds():
+    assert model_embeds("mace", None) == (False, False)
+    arch = SimpleNamespace(use_charge_embed=True, use_spin_embed=False)
+    assert model_embeds("so3lr", arch) == (True, False)
+    assert model_embeds("so3krates", arch) == (True, False)
+
+
+def test_model_embeds_unknown_model_raises():
+    with pytest.raises(ValueError, match="foo"):
+        model_embeds("foo", None)
+
+
+def _spec(index, atoms):
+    return SystemSpec(
+        index=index,
+        atoms=atoms,
+        control_path=f"control{index}.in",
+        md_settings={},
+    )
+
+
+@pytest.fixture
+def two_o2():
+    return {i: _spec(i, Atoms("O2")) for i in (0, 1)}
+
+
+@pytest.fixture
+def h2o_h3o():
+    return {0: _spec(0, Atoms("H2O")), 1: _spec(1, Atoms("H3O"))}
+
+
+def test_spin_states_ok_with_spin_embed(two_o2):
+    check_systems_distinguishable(
+        two_o2, {0: (0.0, 0.0), 1: (0.0, 1.0)}, True, True
+    )
+
+
+def test_spin_states_rejected_without_spin_embed(two_o2):
+    with pytest.raises(ValueError, match=r"spin.*systems 0 and 1") as exc:
+        check_systems_distinguishable(
+            two_o2, {0: (0.0, 0.0), 1: (0.0, 1.0)}, True, False
+        )
+    assert "control0.in" in str(exc.value)
+    assert "control1.in" in str(exc.value)
+
+
+def test_charge_states_rejected_without_charge_embed(two_o2):
+    with pytest.raises(ValueError, match=r"charge.*systems 0 and 1"):
+        check_systems_distinguishable(
+            two_o2, {0: (0.0, 0.0), 1: (1.0, 0.0)}, False, True
+        )
+
+
+def test_charge_states_ok_with_charge_embed(two_o2):
+    check_systems_distinguishable(
+        two_o2, {0: (0.0, 0.0), 1: (1.0, 0.0)}, True, False
+    )
+
+
+def test_identical_charge_spin_ok_without_embeds(two_o2):
+    check_systems_distinguishable(
+        two_o2, {0: (0.0, 0.0), 1: (0.0, 0.0)}, False, False
+    )
+
+
+def test_unknown_spin_in_shared_composition_rejected(two_o2):
+    with pytest.raises(ValueError, match="fixed_spin_moment"):
+        check_systems_distinguishable(
+            two_o2, {0: (0.0, None), 1: (0.0, 1.0)}, True, True
+        )
+
+
+def test_different_compositions_never_conflict(h2o_h3o):
+    check_systems_distinguishable(
+        h2o_h3o, {0: (0.0, 0.0), 1: (1.0, 0.0)}, False, False
+    )
