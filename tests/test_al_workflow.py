@@ -255,6 +255,10 @@ def _make_ensemble_stub(tmp_path, train_src, valid_src):
         seed=42,
         key_specification=None,
         all_heads=None,
+        charge_spin={},
+        misc=SimpleNamespace(
+            total_charge_key="total_charge", total_spin_key="total_spin"
+        ),
     )
     stub = SimpleNamespace(
         config=config,
@@ -662,3 +666,79 @@ def test_al_teacher_reference_ignores_control(tmp_path):
     state_manager.initialize_fresh_state()
     assert state_manager.trajectory_system == {0: 0, 1: 0}
     assert "total_spin" not in state_manager.trajectories[1].info
+
+
+# ===========================================================================
+# §9 — Datasets written before charge/spin were stored
+# ===========================================================================
+
+
+def test_provided_dataset_backfilled_from_single_system(tmp_path):
+    from ase.io import read
+
+    train_path = tmp_path / "train.extxyz"
+    valid_path = tmp_path / "valid.extxyz"
+    _make_single_h2_extxyz(train_path)
+    _make_single_h2_extxyz(valid_path)
+    stub = _make_ensemble_stub(tmp_path, train_path, valid_path)
+    stub.config.charge_spin = {0: (1.0, 0.5)}
+
+    with patch(_PATCH_TARGET, return_value={}):
+        ALEnsemble._setup_datasets_from_provided_files(stub)
+
+    for sets in stub.ensemble_ase_sets.values():
+        for frames in sets.values():
+            assert all(a.info["total_charge"] == 1.0 for a in frames)
+            assert all(a.info["total_spin"] == 0.5 for a in frames)
+    copied = read(
+        str(
+            tmp_path
+            / "dataset"
+            / "initial"
+            / "training"
+            / "tag_a_train.extxyz"
+        )
+    )
+    assert copied.info["total_spin"] == 0.5
+
+
+def test_restart_dataset_with_several_systems_warns(tmp_path, caplog):
+    final = tmp_path / "dataset" / "final"
+    (final / "training").mkdir(parents=True)
+    (final / "validation").mkdir(parents=True)
+    _make_single_h2_extxyz(final / "training" / "tag_a_train.xyz")
+    _make_single_h2_extxyz(final / "validation" / "tag_a_valid.xyz")
+    stub = _make_ensemble_stub(tmp_path, None, None)
+    stub.ensemble = {"tag_a": MagicMock()}
+    stub.config.restart = True
+    stub.config.extend_existing_final_ds = False
+    stub.config.charge_spin = {0: (0.0, 0.0), 1: (0.0, 1.0)}
+
+    with (
+        caplog.at_level(logging.WARNING),
+        patch(_PATCH_TARGET, return_value={}),
+    ):
+        ALEnsemble._setup_datasets(stub)
+
+    assert "2 dataset frame(s)" in caplog.text
+    train = stub.ensemble_ase_sets["tag_a"]["train"]
+    assert "total_charge" not in train[0].info
+
+
+def test_analysis_state_covers_raised_trajectory_count(tmp_path):
+    from aims_PAX.procedures.preparation import ALStateManager
+
+    config = _al_config(
+        tmp_path,
+        _write_geometry(tmp_path / "geometry.in"),
+        _write_controls(tmp_path),
+    )
+    config.num_trajectories = 1  # fewer than the 2 systems
+    config.analysis = True
+    state_manager = ALStateManager(config)
+    state_manager.initialize_fresh_state()
+
+    assert config.num_trajectories == 2
+    assert set(state_manager.analysis_checks) == {0, 1}
+    assert set(state_manager.collect_thresholds) == {0, 1}
+    assert set(state_manager.t_intervals) == {0, 1}

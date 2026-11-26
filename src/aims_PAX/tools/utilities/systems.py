@@ -10,6 +10,7 @@ control_path.
 """
 
 import logging
+import os
 from dataclasses import dataclass
 from itertools import combinations
 from pathlib import Path
@@ -28,6 +29,7 @@ class SystemSpec:
     atoms: ase.Atoms
     md_settings: dict
     control_path: Path | None = None
+    geometry_path: Path | None = None
 
 
 def resolve_systems(
@@ -43,11 +45,23 @@ def resolve_systems(
     """
     per_index: dict[str, set[int]] = {}
 
-    if isinstance(path_to_geometry, dict) or Path(path_to_geometry).is_dir():
+    if isinstance(path_to_geometry, dict):
         geometries = read_geometry(path_to_geometry)
+        geometry_paths = {i: Path(p) for i, p in path_to_geometry.items()}
+        per_index["geometry"] = set(geometries)
+    elif Path(path_to_geometry).is_dir():
+        # read_geometry numbers every directory entry, so entries it
+        # cannot read leave gaps in the indices
+        geometries = read_geometry(path_to_geometry)
+        folder = Path(path_to_geometry)
+        geometry_paths = {
+            i: folder / name
+            for i, name in enumerate(sorted(os.listdir(folder)))
+        }
         per_index["geometry"] = set(geometries)
     else:
         geometries = {None: read_geometry(path_to_geometry)[0]}
+        geometry_paths = {None: Path(path_to_geometry)}
 
     if path_to_control is None:
         controls = {None: None}
@@ -62,12 +76,20 @@ def resolve_systems(
 
     check_system_indices(per_index)
     indices = sorted(next(iter(per_index.values()), {0}))
+    if list(per_index) == ["MD"] and len(indices) > 1:
+        logging.warning(
+            f"The MD settings are given per index ({indices}) while the "
+            "geometry and control file are not: each MD entry defines a "
+            "system, and the initial dataset generation runs one trajectory "
+            "per system."
+        )
 
     return {
         i: SystemSpec(
             index=i,
             atoms=geometries.get(i, geometries.get(None)).copy(),
             control_path=controls.get(i, controls.get(None)),
+            geometry_path=geometry_paths.get(i, geometry_paths.get(None)),
             md_settings=md_settings.get_for_index(i).model_dump(),
         )
         for i in indices
@@ -75,12 +97,12 @@ def resolve_systems(
 
 
 def log_systems(systems: dict[int, SystemSpec]) -> None:
-    """Logs the composition and control file of each system."""
+    """Logs the composition, geometry and control file of each system."""
     for i, system in systems.items():
         control = system.control_path or "none (teacher reference)"
         logging.info(
-            f"System {i}: {system.atoms.get_chemical_formula()}, "
-            f"control file: {control}."
+            f"System {i}: {system.atoms.get_chemical_formula()} from "
+            f"{system.geometry_path}, control file: {control}."
         )
 
 
@@ -118,8 +140,21 @@ def system_for_trajectory(
     return ids[trajectory_idx % len(ids)]
 
 
+def _aims_float(control_parameters: dict, keyword: str, source) -> float:
+    """Reads a number from FHI-aims parameters (Fortran 'd' exponents ok)."""
+    value = str(control_parameters[keyword]).strip()
+    try:
+        return float(value.replace("d", "e").replace("D", "e"))
+    except ValueError:
+        where = f" in {source}" if source is not None else ""
+        raise ValueError(
+            f"Cannot read {keyword} '{value}'{where} as a number."
+        ) from None
+
+
 def charge_and_spin(
     control_parameters: dict,
+    source: str | Path | None = None,
 ) -> tuple[float, float | None]:
     """
     Derives the total charge and total spin S from FHI-aims parameters.
@@ -131,16 +166,23 @@ def charge_and_spin(
 
     Args:
         control_parameters: ``AimsControl.parameters`` (values are strings).
+        source: Where the parameters come from (for error messages).
 
     Returns:
         (total_charge, total_spin); total_spin is None if undetermined.
+
+    Raises:
+        ValueError: If ``charge`` or ``fixed_spin_moment`` is not a number.
     """
-    charge = float(control_parameters.get("charge", 0.0))
+    charge = 0.0
+    if "charge" in control_parameters:
+        charge = _aims_float(control_parameters, "charge", source)
     spin_mode = str(control_parameters.get("spin", "none")).strip().lower()
     if spin_mode == "none":
         return charge, 0.0
     if "fixed_spin_moment" in control_parameters:
-        return charge, float(control_parameters["fixed_spin_moment"]) / 2.0
+        moment = _aims_float(control_parameters, "fixed_spin_moment", source)
+        return charge, moment / 2.0
     return charge, None
 
 
@@ -155,6 +197,62 @@ def annotate_charge_spin(
     atoms.info[total_charge_key] = total_charge
     if total_spin is not None:
         atoms.info[total_spin_key] = total_spin
+
+
+def backfill_charge_spin(
+    ensemble_ase_sets: dict[str, dict[str, list[ase.Atoms]]],
+    charge_spin: dict[int, tuple[float, float | None]],
+    total_charge_key: str,
+    total_spin_key: str,
+) -> None:
+    """
+    Handles dataset frames without a total charge, i.e. data written before
+    charge/spin were stored (or provided by the user without them).
+
+    With exactly one system with a control file, such frames get that
+    system's charge (and spin, if known). With several, the system of a
+    frame is unknown, so it only warns. Without any (teacher reference) it
+    does nothing. Frames that have the keys are never changed.
+
+    Args:
+        ensemble_ase_sets: tag -> {"train": [...], "valid": [...]}.
+        charge_spin: (total charge, total spin) per system with a control
+            file.
+        total_charge_key: Info key of the total charge.
+        total_spin_key: Info key of the total spin.
+    """
+    if not charge_spin:
+        return
+    frames = {
+        id(atoms): atoms
+        for sets in ensemble_ase_sets.values()
+        for split in sets.values()
+        for atoms in split
+    }
+    lacking = [
+        atoms
+        for atoms in frames.values()
+        if total_charge_key not in atoms.info
+    ]
+    if not lacking:
+        return
+    if len(charge_spin) > 1:
+        logging.warning(
+            f"{len(lacking)} dataset frame(s) have no '{total_charge_key}'/"
+            f"'{total_spin_key}' and cannot be assigned to one of the "
+            f"{len(charge_spin)} systems; SO3LR/so3krates models treat them "
+            "as charge 0 and spin 0."
+        )
+        return
+    ((system_idx, (charge, spin)),) = charge_spin.items()
+    for atoms in lacking:
+        atoms.info[total_charge_key] = charge
+        if spin is not None and total_spin_key not in atoms.info:
+            atoms.info[total_spin_key] = spin
+    logging.info(
+        f"Stored the total charge/spin of system {system_idx} in "
+        f"{len(lacking)} dataset frame(s) that had none."
+    )
 
 
 def model_embeds(model_choice: str, architecture) -> tuple[bool, bool]:

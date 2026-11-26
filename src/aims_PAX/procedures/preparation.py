@@ -51,6 +51,7 @@ from aims_PAX.tools.utilities.input_utils import read_geometry
 from aims_PAX.tools.utilities.systems import (
     SystemSpec,
     annotate_charge_spin,
+    backfill_charge_spin,
     charge_and_spin,
     check_systems_for_model,
     load_aims_settings,
@@ -210,6 +211,12 @@ class PrepareInitialDatasetProcedure:
             self.ensemble_ase_sets = load_ensemble_sets_from_folder(
                 ensemble=self.ensemble,
                 path_to_folder=self.dataset_dir / "initial",
+            )
+            backfill_charge_spin(
+                self.ensemble_ase_sets,
+                self.charge_spin,
+                self.misc.total_charge_key,
+                self.misc.total_spin_key,
             )
             self.ensemble_model_sets = ase_to_model_ensemble_sets(
                 ensemble_ase_sets=self.ensemble_ase_sets,
@@ -418,7 +425,7 @@ class PrepareInitialDatasetProcedure:
             }
         )
         self.charge_spin = {
-            i: charge_and_spin(settings)
+            i: charge_and_spin(settings, self.systems[i].control_path)
             for i, settings in self.aims_settings.items()
         }
 
@@ -437,7 +444,7 @@ class PrepareInitialDatasetProcedure:
                     f"systems {sorted(self.systems)}."
                 )
         else:
-            trajectories = {i: s.atoms for i, s in self.systems.items()}
+            trajectories = {i: s.atoms.copy() for i, s in self.systems.items()}
         for idx, (charge, spin) in self.charge_spin.items():
             annotate_charge_spin(
                 trajectories[idx],
@@ -1091,6 +1098,9 @@ class ALStateManager:
         self.trajectories = self._create_trajectories(
             atoms, self.config.num_trajectories
         )
+        if self.config.analysis:
+            # _create_trajectories may have raised num_trajectories
+            self._initialize_analysis_state()
         self.assign_systems()
         num_traj = len(self.trajectories)
         self.MD_checkpoints = {
@@ -1395,6 +1405,12 @@ class ALEnsemble:
             ensemble=self.ensemble,
             path_to_folder=self.config.dataset_dir / dataset_subdir,
         )
+        backfill_charge_spin(
+            self.ensemble_ase_sets,
+            self.config.charge_spin,
+            self.config.misc.total_charge_key,
+            self.config.misc.total_spin_key,
+        )
 
         self.ensemble_model_sets = ase_to_model_ensemble_sets(
             ensemble_ase_sets=self.ensemble_ase_sets,
@@ -1458,20 +1474,26 @@ class ALEnsemble:
         train_out_dir.mkdir(parents=True, exist_ok=True)
         valid_out_dir.mkdir(parents=True, exist_ok=True)
 
-        self.ensemble_ase_sets = {}
-        for tag in tags:
-            train_atoms = ase.io.read(str(train_paths[tag]), index=":")
-            valid_atoms = ase.io.read(str(valid_paths[tag]), index=":")
-            ase.io.write(
-                str(train_out_dir / f"{tag}_train.extxyz"), train_atoms
-            )
-            ase.io.write(
-                str(valid_out_dir / f"{tag}_valid.extxyz"), valid_atoms
-            )
-            self.ensemble_ase_sets[tag] = {
-                "train": train_atoms,
-                "valid": valid_atoms,
+        self.ensemble_ase_sets = {
+            tag: {
+                "train": ase.io.read(str(train_paths[tag]), index=":"),
+                "valid": ase.io.read(str(valid_paths[tag]), index=":"),
             }
+            for tag in tags
+        }
+        backfill_charge_spin(
+            self.ensemble_ase_sets,
+            self.config.charge_spin,
+            self.config.misc.total_charge_key,
+            self.config.misc.total_spin_key,
+        )
+        for tag, sets in self.ensemble_ase_sets.items():
+            ase.io.write(
+                str(train_out_dir / f"{tag}_train.extxyz"), sets["train"]
+            )
+            ase.io.write(
+                str(valid_out_dir / f"{tag}_valid.extxyz"), sets["valid"]
+            )
 
         if self.config.all_heads is not None:
             first_tag = tags[0]
@@ -2147,6 +2169,9 @@ class ALRestart:
         self._initialize_restart_attributes()
 
         self._load_restart_checkpoint()
+        # the first run may have raised num_trajectories to the number of
+        # systems; the checkpoint's trajectories are authoritative
+        self.config.num_trajectories = len(self.state_manager.trajectories)
         self.state_manager.assign_systems()
 
         self._broadcast_restart_state()
@@ -2428,7 +2453,8 @@ class PrepareALProcedure:
                     system.control_path,
                     config.species_dir,
                     postprocess_anyway=True,
-                )
+                ),
+                system.control_path,
             )
             for i, system in config.systems.items()
             if system.control_path is not None

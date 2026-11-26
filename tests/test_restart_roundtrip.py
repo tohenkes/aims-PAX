@@ -257,6 +257,51 @@ def test_restart_recomputes_trajectory_system(tmp_path):
     assert spins == [0.0, 1.0, 0.0]
 
 
+def test_restart_keeps_raised_trajectory_count(tmp_path):
+    """num_trajectories raised to the number of systems in the first run
+    is raised again on restart (the settings still say 1)."""
+    from aims_PAX.procedures.preparation import ALStateManager
+    from aims_PAX.tools.utilities.systems import resolve_systems
+    from aims_PAX.settings.project import MDSettings
+
+    geometry = tmp_path / "geometry.in"
+    geometry.write_text("atom 0.0 0.0 0.0 O\natom 0.0 0.0 1.21 O\n")
+    controls = {}
+    for i in (0, 1):
+        controls[i] = tmp_path / f"control{i}.in"
+        controls[i].write_text("xc pbe\n")
+    config = SimpleNamespace(
+        systems=resolve_systems(
+            geometry,
+            controls,
+            MDSettings.model_validate(
+                {"stat_ensemble": "NVT", "thermostat": "Langevin"}
+            ),
+        ),
+        charge_spin={},
+        num_trajectories=1,
+        seeds_tags_dict={},
+        analysis=False,
+        mol_idxs=None,
+        create_restart=True,
+        al_restart_path=str(tmp_path / "al_restart.npy"),
+        replay_strategy="full_dataset",
+    )
+    fresh = ALStateManager(config)
+    fresh.initialize_fresh_state()
+    assert config.num_trajectories == 2
+    ALRestart(
+        config, fresh, SimpleNamespace(), SimpleNamespace()
+    ).update_restart_dict(None, None, save_restart=config.al_restart_path)
+
+    config.num_trajectories = 1  # as read from aimsPAX.yaml again
+    restarted = ALStateManager(config)
+    ALRestart(
+        config, restarted, SimpleNamespace(), SimpleNamespace()
+    ).handle_restart()
+    assert config.num_trajectories == 2
+
+
 # ---------------------------------------------------------------------------
 # Part B — model checkpoint round-trip (@pytest.mark.slow)
 # ---------------------------------------------------------------------------

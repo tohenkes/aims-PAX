@@ -1,3 +1,4 @@
+import logging
 from types import SimpleNamespace
 
 import numpy as np
@@ -9,10 +10,12 @@ from aims_PAX.settings.project import MDSettings
 from aims_PAX.tools.utilities.systems import (
     SystemSpec,
     annotate_charge_spin,
+    backfill_charge_spin,
     charge_and_spin,
     check_systems_distinguishable,
     check_systems_for_model,
     load_aims_settings,
+    log_systems,
     model_embeds,
     resolve_systems,
     system_for_trajectory,
@@ -133,6 +136,46 @@ def test_md_dict_vs_control_dict_mismatch(files):
         )
 
 
+def test_geometry_folder_gaps_map_to_files(tmp_path, files, caplog):
+    _, ctrls = files
+    folder = tmp_path / "geoms"
+    folder.mkdir()
+    _geometry(folder / "a.in")
+    (folder / "b_notes.txt").write_text("not a structure\n")
+    _geometry(folder / "c.in", z=0.1)
+    systems = resolve_systems(folder, ctrls[0], _md_single())
+    # unreadable entries keep their index, leaving a gap
+    assert list(systems) == [0, 2]
+    assert systems[2].geometry_path == folder / "c.in"
+    with caplog.at_level(logging.INFO):
+        log_systems(systems)
+    assert "c.in" in caplog.text
+
+
+def test_geometry_paths_of_dict_and_single_file(files):
+    geos, ctrls = files
+    systems = resolve_systems({3: geos[1]}, ctrls[0], _md_single())
+    assert systems[3].geometry_path == geos[1]
+    systems = resolve_systems(
+        geos[0], {0: ctrls[0], 1: ctrls[1]}, _md_single()
+    )
+    assert systems[1].geometry_path == geos[0]
+
+
+def test_md_dict_as_only_per_index_source_warns(files, caplog):
+    geos, ctrls = files
+    with caplog.at_level(logging.WARNING):
+        resolve_systems(geos[0], ctrls[0], _md_dict())
+    assert "one trajectory per" in caplog.text
+
+
+def test_md_dict_with_other_per_index_source_does_not_warn(files, caplog):
+    geos, ctrls = files
+    with caplog.at_level(logging.WARNING):
+        resolve_systems(geos[0], {0: ctrls[0], 1: ctrls[1]}, _md_dict())
+    assert "one trajectory per" not in caplog.text
+
+
 def test_no_control_gives_systems_without_control_path(files):
     geos, _ = files
     systems = resolve_systems({0: geos[0], 1: geos[1]}, None, _md_single())
@@ -210,6 +253,22 @@ def test_charge_spin_doublet_from_user_template(tmp_path):
     (tmp_path / "control.in").write_text(_TEMPLATE)
     params = AimsControl.from_file(tmp_path / "control.in").parameters
     assert charge_and_spin(params) == (0.0, 0.5)
+
+
+def test_charge_spin_fortran_exponents():
+    assert charge_and_spin(
+        {"charge": "1.d0", "spin": "collinear", "fixed_spin_moment": "1.0D0"}
+    ) == (1.0, 0.5)
+
+
+def test_charge_spin_unreadable_value_names_keyword_and_source():
+    with pytest.raises(ValueError, match=r"fixed_spin_moment.*control_x\.in"):
+        charge_and_spin(
+            {"spin": "collinear", "fixed_spin_moment": "two"},
+            source="control_x.in",
+        )
+    with pytest.raises(ValueError, match="charge"):
+        charge_and_spin({"charge": "+1e"})
 
 
 def test_charge_spin_unconstrained_collinear_is_unknown():
@@ -326,3 +385,72 @@ def test_check_systems_for_model_needs_two_systems_with_control(two_o2):
     # are never checked, so even an unknown model choice passes
     check_systems_for_model(two_o2, {0: (0.0, 0.0)}, "unknown", None)
     check_systems_for_model(two_o2, {}, "unknown", None)
+
+
+def _ensemble_sets(*frames):
+    """Two ensemble members sharing the same frames."""
+    return {
+        tag: {"train": list(frames[:-1]), "valid": [frames[-1]]}
+        for tag in ("a", "b")
+    }
+
+
+def _labelled(spin):
+    atoms = Atoms("O2")
+    atoms.info["total_charge"] = 0.0
+    atoms.info["total_spin"] = spin
+    return atoms
+
+
+def test_backfill_single_system(caplog):
+    old_1, old_2, new = Atoms("O2"), Atoms("O2"), _labelled(0.0)
+    with caplog.at_level(logging.INFO):
+        backfill_charge_spin(
+            _ensemble_sets(old_1, new, old_2),
+            {0: (1.0, 1.0)},
+            "total_charge",
+            "total_spin",
+        )
+    assert old_1.info == {"total_charge": 1.0, "total_spin": 1.0}
+    assert old_2.info == {"total_charge": 1.0, "total_spin": 1.0}
+    assert new.info == {"total_charge": 0.0, "total_spin": 0.0}
+    # frames shared by the ensemble members are counted once
+    assert "2 dataset frame(s)" in caplog.text
+
+
+def test_backfill_single_system_with_unknown_spin():
+    old = Atoms("O2")
+    backfill_charge_spin(
+        _ensemble_sets(old, Atoms("O2")),
+        {4: (0.0, None)},
+        "total_charge",
+        "total_spin",
+    )
+    assert old.info == {"total_charge": 0.0}
+
+
+def test_backfill_several_systems_only_warns(caplog):
+    old, new = Atoms("O2"), _labelled(1.0)
+    with caplog.at_level(logging.WARNING):
+        backfill_charge_spin(
+            _ensemble_sets(old, new),
+            {0: (0.0, 0.0), 1: (0.0, 1.0)},
+            "total_charge",
+            "total_spin",
+        )
+    assert old.info == {}
+    assert new.info == {"total_charge": 0.0, "total_spin": 1.0}
+    warnings = [r for r in caplog.records if r.levelno == logging.WARNING]
+    assert len(warnings) == 1
+    assert "1 dataset frame(s)" in warnings[0].getMessage()
+    assert "charge 0" in warnings[0].getMessage()
+
+
+def test_backfill_without_control_files_does_nothing(caplog):
+    old = Atoms("O2")
+    with caplog.at_level(logging.INFO):
+        backfill_charge_spin(
+            _ensemble_sets(old, Atoms("O2")), {}, "total_charge", "total_spin"
+        )
+    assert old.info == {}
+    assert caplog.text == ""

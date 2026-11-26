@@ -194,6 +194,8 @@ def test_idg_control_dict_with_single_geometry_runs_both_systems(tmp_path):
 
     assert len(proc.trajectories) == 2
     assert proc.trajectories[0] is not proc.trajectories[1]
+    # MD moves the trajectories, not the system specifications
+    assert proc.trajectories[0] is not proc.systems[0].atoms
     assert proc.trajectories[0].info["total_spin"] == 0.0
     assert proc.trajectories[1].info["total_spin"] == 1.0
     assert proc.trajectories[1].info["total_charge"] == 0.0
