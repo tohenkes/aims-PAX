@@ -39,7 +39,6 @@ from aims_PAX.tools.utilities.utilities import (
     save_checkpoint,
     create_keyspec,
     log_yaml_block,
-    normalize_md_settings,
     apply_model_settings,
     apply_finetuning_settings,
     log_effective_architecture,
@@ -50,6 +49,7 @@ from aims_PAX.tools.utilities.utilities import (
 )
 from aims_PAX.tools.utilities.input_utils import read_geometry
 from aims_PAX.tools.utilities.systems import (
+    SystemSpec,
     annotate_charge_spin,
     charge_and_spin,
     check_systems_for_model,
@@ -885,6 +885,11 @@ class ALConfiguration:
         self._setup_model_configuration()
         self._setup_aimsPAX_configuration()
 
+        # set by PrepareALProcedure: systems and, for those with a
+        # control file, their (total charge, total spin)
+        self.systems: dict[int, SystemSpec] = {}
+        self.charge_spin: dict[int, tuple[float, float | None]] = {}
+
     def _setup_model_configuration(self):
         """Setup model-specific configuration."""
 
@@ -1041,6 +1046,7 @@ class ALStateManager:
         self.trajectories = {}
         self.MD_checkpoints = {}
         self.trajectory_status = {}
+        self.trajectory_system = {}  # trajectory index -> system index
         self.trajectory_MD_steps = {}
         self.trajectory_total_epochs = {}
         self.trajectory_intermediate_epochs = {}
@@ -1073,17 +1079,19 @@ class ALStateManager:
         if self.config.analysis:
             self._initialize_analysis_state()
 
-    def initialize_fresh_state(self, path_to_geometry: str):
+    def initialize_fresh_state(self):
         """Initialize state for a fresh run."""
-        atoms = read_geometry(path_to_geometry, log=True)
+        systems = self.config.systems
+        atoms = {k: systems[i].atoms for k, i in enumerate(sorted(systems))}
         logging.info(
-            "Running Active Learning Procedure with "
-            f"{len(atoms)} geometries."
+            f"Running Active Learning Procedure with {len(atoms)} systems."
         )
-        # Initialize trajectory data
+        # Initialize trajectory data. Trajectory i starts from
+        # atoms[i % len(atoms)], i.e. from system_for_trajectory(i, ...).
         self.trajectories = self._create_trajectories(
             atoms, self.config.num_trajectories
         )
+        self.assign_systems()
         num_traj = len(self.trajectories)
         self.MD_checkpoints = {
             i: self.trajectories[i].copy() for i in range(num_traj)
@@ -1100,6 +1108,32 @@ class ALStateManager:
             self.ensemble_reset_opt = {tag: False for tag in tags}
             self.ensemble_no_improvement = {tag: 0 for tag in tags}
             self.ensemble_best_valid = {tag: np.inf for tag in tags}
+
+    def assign_systems(self):
+        """
+        Maps each trajectory to its system (``self.trajectory_system``) and
+        stores the system's total charge/spin in the trajectory's atoms and
+        MD checkpoint (if any). Idempotent, so it also serves restarts.
+        """
+        system_ids = list(self.config.systems)
+        self.trajectory_system = {
+            idx: system_for_trajectory(idx, system_ids)
+            for idx in self.trajectories
+        }
+        checkpoints = self.MD_checkpoints or {}
+        for idx, system_idx in self.trajectory_system.items():
+            if system_idx not in self.config.charge_spin:
+                continue
+            charge, spin = self.config.charge_spin[system_idx]
+            for atoms in (self.trajectories[idx], checkpoints.get(idx)):
+                if atoms is not None:
+                    annotate_charge_spin(
+                        atoms,
+                        charge,
+                        spin,
+                        self.config.misc.total_charge_key,
+                        self.config.misc.total_spin_key,
+                    )
 
     def _create_trajectories(
         self, atoms: dict[int, ase.Atoms], num_trajectories: int
@@ -1859,10 +1893,10 @@ class ALMD:
         self.state_manager = state_manager
         self.train_dataset_len = 0
 
-        self.md_settings, _ = normalize_md_settings(
-            md_settings=self.config.md_settings_raw,
-            num_trajectories=self.config.num_trajectories,
-        )
+        # per system; trajectories look theirs up via trajectory_system
+        self.md_settings = {
+            i: system.md_settings for i, system in config.systems.items()
+        }
         logging.info(f"Using following settings for MDs:")
         log_yaml_block("MD_SETTINGS", self.md_settings)
 
@@ -1881,7 +1915,9 @@ class ALMD:
         self.md_drivers = {
             trajectory_idx: self._setup_md_dynamics(
                 atoms=trajectories[trajectory_idx],
-                md_settings=self.md_settings[trajectory_idx],
+                md_settings=self.md_settings[
+                    self.state_manager.trajectory_system[trajectory_idx]
+                ],
                 idx=trajectory_idx,
             )
             for trajectory_idx in self.state_manager.trajectories.keys()
@@ -2111,6 +2147,7 @@ class ALRestart:
         self._initialize_restart_attributes()
 
         self._load_restart_checkpoint()
+        self.state_manager.assign_systems()
 
         self._broadcast_restart_state()
 
@@ -2310,6 +2347,7 @@ class PrepareALProcedure:
             f"Using following settings for {self.config.model_choice}:"
         )
         log_yaml_block(self.config.model_choice, model_settings.model_dump())
+        self._setup_systems()
         # Initialize all managers
         self.state_manager = ALStateManager(self.config)
         self.ensemble_manager = ALEnsemble(self.config)
@@ -2328,6 +2366,7 @@ class PrepareALProcedure:
         np.random.seed(self.config.seed)
         # Setup calculators and datasets
         self.ensemble_manager.setup_ensemble_and_datasets()
+        self._check_systems_distinguishable()
         self.mlff_manager.setup_ml_calculators()
 
         # Pass train_dataset_len to MD manager for modification
@@ -2339,9 +2378,7 @@ class PrepareALProcedure:
             self.restart_manager.handle_restart()
 
         else:
-            self.state_manager.initialize_fresh_state(
-                self.config.path_to_geometry
-            )
+            self.state_manager.initialize_fresh_state()
         # assign mlff to checkpoints
         for ckpt in self.state_manager.MD_checkpoints.values():
             ckpt.calc = self.mlff_manager.mlff_calc
@@ -2371,6 +2408,40 @@ class PrepareALProcedure:
 
         # TODO: Remove hardcode
         self.use_scheduler = False
+
+    def _setup_systems(self):
+        """
+        Resolves the systems (geometry, control.in and MD settings per
+        index) and the total charge/spin of those with a control file. With
+        a teacher model as reference the control files are not used.
+        """
+        config = self.config
+        config.systems = resolve_systems(
+            config.path_to_geometry,
+            None if config.use_teacher_reference else config.path_to_control,
+            config.md_settings_raw,
+        )
+        log_systems(config.systems)
+        config.charge_spin = {
+            i: charge_and_spin(
+                load_aims_settings(
+                    system.control_path,
+                    config.species_dir,
+                    postprocess_anyway=True,
+                )
+            )
+            for i, system in config.systems.items()
+            if system.control_path is not None
+        }
+
+    def _check_systems_distinguishable(self):
+        """Checks that the trained model can tell the systems apart."""
+        check_systems_for_model(
+            self.config.systems,
+            self.config.charge_spin,
+            self.config.model_choice,
+            self.config.model_settings.ARCHITECTURE,
+        )
 
     def _setup_logging(self):
         """Setup logging configuration."""

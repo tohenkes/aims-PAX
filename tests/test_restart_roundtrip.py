@@ -195,6 +195,68 @@ def test_al_state_roundtrip_analysis_fields(tmp_path):
     assert loader.state_manager.analysis_checks == [True, False]
 
 
+def test_restart_recomputes_trajectory_system(tmp_path):
+    """The trajectory -> system map is rebuilt on restart, and the
+    restored trajectories get their system's charge/spin again."""
+    from aims_PAX.procedures.preparation import ALStateManager
+    from aims_PAX.tools.utilities.systems import resolve_systems
+    from aims_PAX.settings.project import MDSettings
+
+    geometry = tmp_path / "geometry.in"
+    geometry.write_text("atom 0.0 0.0 0.0 O\natom 0.0 0.0 1.21 O\n")
+    singlet = tmp_path / "singlet.in"
+    singlet.write_text("xc pbe\n")
+    triplet = tmp_path / "triplet.in"
+    triplet.write_text("xc pbe\nspin collinear\nfixed_spin_moment 2\n")
+    systems = resolve_systems(
+        geometry,
+        {3: singlet, 7: triplet},
+        MDSettings.model_validate(
+            {"stat_ensemble": "NVT", "thermostat": "Langevin"}
+        ),
+    )
+    config = SimpleNamespace(
+        systems=systems,
+        charge_spin={3: (0.0, 0.0), 7: (0.0, 1.0)},
+        misc=SimpleNamespace(
+            total_charge_key="total_charge", total_spin_key="total_spin"
+        ),
+        num_trajectories=3,
+        seeds_tags_dict={},
+        analysis=False,
+        mol_idxs=None,
+        create_restart=True,
+        al_restart_path=str(tmp_path / "al_restart.npy"),
+        replay_strategy="full_dataset",
+    )
+
+    fresh = SimpleNamespace(state_manager=ALStateManager(config))
+    fresh.state_manager.initialize_fresh_state()
+    # a checkpoint written before charge/spin were annotated
+    for atoms in fresh.state_manager.trajectories.values():
+        atoms.info.clear()
+    saver = ALRestart(
+        config, fresh.state_manager, SimpleNamespace(), SimpleNamespace()
+    )
+    saver.update_restart_dict(None, None, save_restart=config.al_restart_path)
+
+    restarted = SimpleNamespace(state_manager=ALStateManager(config))
+    ALRestart(
+        config, restarted.state_manager, SimpleNamespace(), SimpleNamespace()
+    ).handle_restart()
+
+    assert (
+        restarted.state_manager.trajectory_system
+        == fresh.state_manager.trajectory_system
+        == {0: 3, 1: 7, 2: 3}
+    )
+    spins = [
+        restarted.state_manager.trajectories[i].info["total_spin"]
+        for i in range(3)
+    ]
+    assert spins == [0.0, 1.0, 0.0]
+
+
 # ---------------------------------------------------------------------------
 # Part B — model checkpoint round-trip (@pytest.mark.slow)
 # ---------------------------------------------------------------------------

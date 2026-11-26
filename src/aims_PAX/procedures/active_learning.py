@@ -351,7 +351,6 @@ class ALProcedurePARSL(ALProcedure):
             )
         else:
             self.reference_manager = ALDFTReferenceManagerPARSL(
-                path_to_control=path_to_control,
                 config=self.config,
                 ensemble_manager=self.ensemble_manager,
                 state_manager=self.state_manager,

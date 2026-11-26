@@ -11,7 +11,6 @@ import shutil
 
 from ase.md.md import MolecularDynamics
 from mace import tools
-from pyfhiaims import AimsControl
 from so3krates_torch.tools.multihead_utils import to_single_head_model
 
 from .preparation import (
@@ -56,6 +55,7 @@ from aims_PAX.tools.utilities.parsl_utils import (
 from aims_PAX.tools.uncertainty import (
     get_threshold,
 )
+from aims_PAX.tools.utilities.systems import load_aims_settings
 import random
 
 try:
@@ -1094,16 +1094,12 @@ class ALDFTManager:
             path_to_control (str): Path to the AIMS control file.
             species_dir (str): Path to the species directory of AIMS.
         """
+        # postprocess_anyway is necessary to check for convergence in ASI
         if isinstance(control_source, (str, Path)):
-            aims_control = AimsControl.from_file(control_source)
-            aims_settings = aims_control.parameters
-            # Create ASE dict from pyfhiaims
-            if aims_control.outputs:
-                aims_settings["output"] = aims_control.outputs
-            aims_settings["compute_forces"] = True
-            aims_settings["species_dir"] = self.config.species_dir
-            aims_settings["postprocess_anyway"] = (
-                True  # this is necessary to check for convergence in ASI
+            aims_settings = load_aims_settings(
+                control_source,
+                self.config.species_dir,
+                postprocess_anyway=True,
             )
             self.aims_settings = {
                 idx: aims_settings
@@ -1112,19 +1108,11 @@ class ALDFTManager:
         elif isinstance(control_source, dict):
             self.aims_settings = {}
             for key, value in control_source.items():
-                aims_control = AimsControl.from_file(value)
-                aims_settings = aims_control.parameters
-                # Create ASE dict from pyfhiaims
-                if aims_control.outputs:
-                    aims_settings["output"] = aims_control.outputs
-                aims_settings["compute_forces"] = True
-                aims_settings["species_dir"] = self.config.species_dir
-                aims_settings["postprocess_anyway"] = (
-                    True  # this is necessary to check for convergence in ASI
-                )
                 if log:
                     logging.info(f"Control file for geometry {key}: {value}.")
-                self.aims_settings[key] = aims_settings
+                self.aims_settings[key] = load_aims_settings(
+                    value, self.config.species_dir, postprocess_anyway=True
+                )
 
 
 class ALDFTManagerSerial(ALDFTManager):
@@ -1374,7 +1362,6 @@ class ALDFTReferenceManagerPARSL(ALReferenceManagerPARSL):
 
     def __init__(
         self,
-        path_to_control: str,
         config: ALConfiguration,
         ensemble_manager: ALEnsemble,
         state_manager: ALStateManager,
@@ -1385,7 +1372,9 @@ class ALDFTReferenceManagerPARSL(ALReferenceManagerPARSL):
             state_manager=state_manager,
         )
 
-        self._handle_aims_settings(path_to_control)
+        self._handle_aims_settings(
+            {i: s.control_path for i, s in self.config.systems.items()}
+        )
 
         self.launch_str = prepare_parsl(
             cluster_settings=self.config.cluster_settings
@@ -1416,41 +1405,21 @@ class ALDFTReferenceManagerPARSL(ALReferenceManagerPARSL):
                 self.workqueue_resource_spec
             )
 
-    def _handle_aims_settings(
-        self,
-        control_source: Union[str, dict],
-    ):
+    def _handle_aims_settings(self, control_paths: dict[int, Path]):
         """
-        Parses the AIMS control file to get the settings.
+        Parses the control files to get the FHI-aims settings, keyed by
+        system index (look them up via ``state_manager.trajectory_system``).
         """
-        if isinstance(control_source, (str, Path)):
-            aims_control = AimsControl.from_file(control_source)
-            aims_settings = aims_control.parameters
-            # Create ASE dict from pyfhiaims
-            if aims_control.outputs:
-                aims_settings["output"] = aims_control.outputs
-            aims_settings["compute_forces"] = True
-            aims_settings["species_dir"] = self.config.species_dir
-            aims_settings["postprocess_anyway"] = True
-            self.aims_settings = {
-                idx: aims_settings
-                for idx in range(self.config.num_trajectories)
-            }
-        elif isinstance(control_source, dict):
-            self.aims_settings = {}
-            for key, value in control_source.items():
-                aims_control = AimsControl.from_file(value)
-                aims_settings = aims_control.parameters
-                # Create ASE dict from pyfhiaims
-                if aims_control.outputs:
-                    aims_settings["output"] = aims_control.outputs
-                aims_settings["compute_forces"] = True
-                aims_settings["species_dir"] = self.config.species_dir
-                aims_settings["postprocess_anyway"] = True
-                self.aims_settings[key] = aims_settings
+        self.aims_settings = {
+            i: load_aims_settings(
+                path, self.config.species_dir, postprocess_anyway=True
+            )
+            for i, path in control_paths.items()
+        }
 
     def _submit_parsl_job(self, idx, data, job_no):
         """Submit a DFT calculation via PARSL."""
+        system_idx = self.state_manager.trajectory_system[idx]
         func_input = dict(self.parsl_func_input)
         func_input.update(
             {
@@ -1458,7 +1427,7 @@ class ALDFTReferenceManagerPARSL(ALReferenceManagerPARSL):
                 "species": data.get_chemical_symbols(),
                 "cell": data.get_cell(),
                 "pbc": data.pbc,
-                "aims_settings": self.aims_settings[idx],
+                "aims_settings": self.aims_settings[system_idx],
                 "directory": self.calc_dir / f"worker_{idx}_no_{job_no}",
             }
         )
@@ -2132,7 +2101,9 @@ class ALAnalysisManagerPARSL(ALAnalysisManager):
                         species=data.get_chemical_symbols(),
                         cell=data.get_cell(),
                         pbc=data.pbc,
-                        aims_settings=self.dft_manager.aims_settings[idx],
+                        aims_settings=self.dft_manager.aims_settings[
+                            self.state_manager.trajectory_system[idx]
+                        ],
                         directory=self.dft_manager.calc_dir
                         / f"worker_analysis{idx}_no_{current_idx}",
                         properties=self.config.properties,

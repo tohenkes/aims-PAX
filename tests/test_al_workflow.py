@@ -398,3 +398,267 @@ def test_seeds_tags_dict_fallback(tmp_path):
 
     assert stub.config.seeds_tags_dict is not None
     assert set(stub.config.seeds_tags_dict.keys()) == {"tag_a", "tag_b"}
+
+
+# ===========================================================================
+# §8 — Per-system DFT and MD settings
+# ===========================================================================
+
+_NVT = {"stat_ensemble": "NVT", "thermostat": "Langevin", "timestep": 1.0}
+
+
+class _DoneFuture:
+    def __init__(self, result):
+        self._result = result
+
+    def done(self):
+        return True
+
+    def result(self):
+        return self._result
+
+
+def _write_geometry(path, element="H", bond=0.74):
+    path.write_text(
+        f"atom 0.0 0.0 0.0 {element}\natom 0.0 0.0 {bond} {element}\n"
+    )
+    return path
+
+
+def _write_controls(tmp_path):
+    a = tmp_path / "control_a.in"
+    a.write_text("xc pbe\nmarker a\n")
+    b = tmp_path / "control_b.in"
+    b.write_text("xc pbe\nmarker b\nspin collinear\nfixed_spin_moment 2\n")
+    return {0: a, 1: b}
+
+
+def _al_config(tmp_path, path_to_geometry, path_to_control, md=None):
+    """AL configuration stub with its systems resolved."""
+    from aims_PAX.procedures.preparation import PrepareALProcedure
+    from aims_PAX.settings.project import MDSettings
+
+    config = SimpleNamespace(
+        path_to_geometry=path_to_geometry,
+        path_to_control=path_to_control,
+        md_settings_raw=md
+        or MDSettings.model_validate({**_NVT, "temperature": 300}),
+        use_teacher_reference=False,
+        species_dir=tmp_path,
+        num_trajectories=4,
+        analysis=False,
+        seeds_tags_dict={},
+        mol_idxs=None,
+        uncertainty_type="max_atomic_sd",
+        restart=False,
+        misc=SimpleNamespace(
+            total_charge_key="total_charge", total_spin_key="total_spin"
+        ),
+        model_choice="so3lr",
+        model_settings=SimpleNamespace(
+            ARCHITECTURE=SimpleNamespace(
+                use_charge_embed=True, use_spin_embed=True
+            )
+        ),
+    )
+    PrepareALProcedure._setup_systems(SimpleNamespace(config=config))
+    return config
+
+
+def _dft_manager(tmp_path, systems, trajectory_system):
+    from aims_PAX.procedures.al_managers import ALDFTReferenceManagerPARSL
+
+    mgr = ALDFTReferenceManagerPARSL.__new__(ALDFTReferenceManagerPARSL)
+    mgr.config = SimpleNamespace(species_dir=tmp_path)
+    mgr.calc_dir = tmp_path
+    mgr.launch_str = "aims.x"
+    mgr.clean_dirs = False
+    mgr.parsl_func_input = {"ase_aims_command": "aims.x"}
+    mgr._handle_aims_settings({i: s.control_path for i, s in systems.items()})
+    mgr.state_manager = SimpleNamespace(trajectory_system=trajectory_system)
+    return mgr
+
+
+def _one_geometry_two_controls(tmp_path):
+    from aims_PAX.settings.project import MDSettings
+    from aims_PAX.tools.utilities.systems import (
+        resolve_systems,
+        system_for_trajectory,
+    )
+
+    systems = resolve_systems(
+        _write_geometry(tmp_path / "geometry.in"),
+        _write_controls(tmp_path),
+        MDSettings.model_validate({**_NVT, "temperature": 300}),
+    )
+    trajectory_system = {
+        i: system_for_trajectory(i, list(systems)) for i in range(4)
+    }
+    return systems, trajectory_system
+
+
+def test_dft_settings_follow_system_not_trajectory(tmp_path):
+    systems, trajectory_system = _one_geometry_two_controls(tmp_path)
+    mgr = _dft_manager(tmp_path, systems, trajectory_system)
+    assert set(mgr.aims_settings) == {0, 1}
+    assert mgr.aims_settings[0]["postprocess_anyway"] is True
+
+    point = Atoms("H2", positions=[[0, 0, 0], [0, 0, 0.74]])
+    recorded = []
+    with patch(
+        "aims_PAX.procedures.al_managers.recalc_dft_parsl",
+        side_effect=lambda **kwargs: recorded.append(kwargs),
+    ):
+        for traj, expected in [(0, "a"), (1, "b"), (2, "a"), (3, "b")]:
+            mgr._submit_parsl_job(traj, point, job_no=0)
+            assert recorded[-1]["aims_settings"]["marker"] == expected
+            assert recorded[-1]["directory"].name == f"worker_{traj}_no_0"
+
+
+def test_analysis_dft_uses_system_settings(tmp_path, monkeypatch):
+    import queue
+    import threading
+
+    import numpy as np
+
+    from aims_PAX.procedures.al_managers import ALAnalysisManagerPARSL
+
+    systems, trajectory_system = _one_geometry_two_controls(tmp_path)
+    dft_manager = _dft_manager(tmp_path, systems, trajectory_system)
+
+    mgr = ALAnalysisManagerPARSL.__new__(ALAnalysisManagerPARSL)
+    mgr.config = SimpleNamespace(num_trajectories=4, properties=["energy"])
+    mgr.dft_manager = dft_manager
+    mgr.state_manager = dft_manager.state_manager
+    mgr.analysis_queue = queue.Queue()
+    mgr.analysis_counter = {i: 0 for i in range(4)}
+    mgr.analysis_kill_thread = False
+    mgr.results_lock = threading.Lock()
+
+    point = Atoms("H2", positions=[[0, 0, 0], [0, 0, 0.74]])
+    point.arrays["forces_comm"] = np.zeros((2, 3))
+    point.info["current_MD_step"] = 1
+    mgr.analysis_queue.put((3, point))
+
+    recorded = []
+
+    def fake_recalc(**kwargs):
+        recorded.append(kwargs)
+        mgr.analysis_kill_thread = True  # stop after this job
+        return _DoneFuture(None)
+
+    monkeypatch.setattr(
+        "aims_PAX.procedures.al_managers.time.sleep", lambda _: None
+    )
+    with patch(
+        "aims_PAX.procedures.al_managers.recalc_dft_parsl",
+        side_effect=fake_recalc,
+    ):
+        mgr._analysis_manager()
+
+    assert len(recorded) == 1
+    assert recorded[0]["aims_settings"]["marker"] == "b"
+
+
+def test_md_settings_follow_system(tmp_path):
+    from ase import units
+
+    from aims_PAX.procedures.preparation import ALMD, ALStateManager
+    from aims_PAX.settings.project import MDSettings
+
+    md = MDSettings.model_validate(
+        {0: {**_NVT, "temperature": 300}, 1: {**_NVT, "temperature": 500}}
+    )
+    config = _al_config(
+        tmp_path,
+        _write_geometry(tmp_path / "geometry.in"),
+        _write_controls(tmp_path)[0],
+        md=md,
+    )
+    state_manager = ALStateManager(config)
+    state_manager.initialize_fresh_state()
+    md_manager = ALMD(config, state_manager)
+    md_manager.setup_md_drivers(state_manager.trajectories, None)
+
+    temps = [md_manager.md_drivers[i].temp / units.kB for i in range(4)]
+    assert temps == pytest.approx([300, 500, 300, 500])
+
+
+def test_fresh_state_maps_trajectories_to_systems(tmp_path):
+    from aims_PAX.procedures.preparation import ALStateManager
+
+    controls = _write_controls(tmp_path)
+    config = _al_config(
+        tmp_path,
+        {
+            2: _write_geometry(tmp_path / "h2.in"),
+            5: _write_geometry(tmp_path / "o2.in", "O", 1.21),
+        },
+        {2: controls[0], 5: controls[1]},
+    )
+    state_manager = ALStateManager(config)
+    state_manager.initialize_fresh_state()
+
+    assert state_manager.trajectory_system == {0: 2, 1: 5, 2: 2, 3: 5}
+    formulas = [
+        state_manager.trajectories[i].get_chemical_formula() for i in range(4)
+    ]
+    assert formulas == ["H2", "O2", "H2", "O2"]
+    spins = [
+        state_manager.trajectories[i].info["total_spin"] for i in range(4)
+    ]
+    assert spins == [0.0, 1.0, 0.0, 1.0]
+    # each trajectory owns its atoms; the checkpoints carry the spin too
+    assert state_manager.trajectories[0] is not state_manager.trajectories[2]
+    assert state_manager.MD_checkpoints[3].info["total_spin"] == 1.0
+
+
+def test_al_mace_two_spin_states_refuses_to_start(tmp_path):
+    from aims_PAX.procedures.preparation import PrepareALProcedure
+
+    config = _al_config(
+        tmp_path,
+        _write_geometry(tmp_path / "geometry.in"),
+        _write_controls(tmp_path),
+    )
+    config.model_choice = "mace"
+    with pytest.raises(ValueError, match="spin"):
+        PrepareALProcedure._check_systems_distinguishable(
+            SimpleNamespace(config=config)
+        )
+
+
+def test_al_teacher_reference_ignores_control(tmp_path):
+    from aims_PAX.procedures.preparation import (
+        ALStateManager,
+        PrepareALProcedure,
+    )
+    from aims_PAX.settings.project import MDSettings
+
+    config = SimpleNamespace(
+        path_to_geometry=_write_geometry(tmp_path / "geometry.in"),
+        path_to_control=tmp_path / "missing_control.in",
+        md_settings_raw=MDSettings.model_validate(
+            {**_NVT, "temperature": 300}
+        ),
+        use_teacher_reference=True,
+        num_trajectories=2,
+        analysis=False,
+        seeds_tags_dict={},
+        misc=SimpleNamespace(
+            total_charge_key="total_charge", total_spin_key="total_spin"
+        ),
+        model_choice="mace",
+        model_settings=SimpleNamespace(ARCHITECTURE=None),
+    )
+    PrepareALProcedure._setup_systems(SimpleNamespace(config=config))
+    PrepareALProcedure._check_systems_distinguishable(
+        SimpleNamespace(config=config)
+    )
+    assert config.systems[0].control_path is None
+    assert config.charge_spin == {}
+
+    state_manager = ALStateManager(config)
+    state_manager.initialize_fresh_state()
+    assert state_manager.trajectory_system == {0: 0, 1: 0}
+    assert "total_spin" not in state_manager.trajectories[1].info
