@@ -107,8 +107,8 @@ def read_geometry(
     elif isinstance(geometry_source, dict):
         atoms_dict = {}
         for key, value in geometry_source.items():
-            assert (
-                type(value) in (str, Path)
+            assert isinstance(
+                value, (str, Path)
             ), "All entries in the geometry dictionary must be strings or paths."
             assert (
                 type(key) is int
