@@ -1,3 +1,4 @@
+import copy
 import numpy as np
 import time
 import shutil
@@ -722,7 +723,7 @@ class InitialDatasetPARSL(InitialDatasetProcedure):
                 dispersion_energy_cutoff_lr_damping=(
                     foundational_model_settings.dispersion_lr_damping
                 ),
-                key_specification=self.key_specification,
+                key_specification=copy.deepcopy(self.key_specification),
                 **foundational_model_settings.pme_overrides(),
             )
         else:

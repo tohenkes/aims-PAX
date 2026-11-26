@@ -130,19 +130,16 @@ def _calc_setup_stub(monkeypatch, *, foundational, model_choice, multihead):
     import aims_PAX.procedures.preparation as prep
     from aims_PAX.tools.utilities.utilities import create_keyspec
 
-    recorded = {}
+    # one entry per SO3LR/so3krates calculator construction
+    recorded = []
 
-    def recorder(**kwargs):
-        recorded.update(kwargs)
+    def recorder(*args, **kwargs):
+        recorded.append(kwargs)
         return SimpleNamespace()
 
     monkeypatch.setattr(prep, "MultiHeadSO3LRCalculator", recorder)
     monkeypatch.setattr(prep, "TorchkratesCalculator", recorder)
-    monkeypatch.setattr(
-        prep,
-        "make_so3lr_calculator",
-        lambda *a, **k: (recorded.update(k) or SimpleNamespace()),
-    )
+    monkeypatch.setattr(prep, "make_so3lr_calculator", recorder)
     monkeypatch.setattr(prep, "list_files_in_directory", lambda d: [])
 
     config = SimpleNamespace(
@@ -168,16 +165,17 @@ def _calc_setup_stub(monkeypatch, *, foundational, model_choice, multihead):
     return prep.ALCalculatorMLFF, stub, recorded
 
 
-@pytest.mark.parametrize(
-    "foundational,model_choice,multihead",
-    [
-        (True, "so3lr", False),
-        (True, "so3krates", False),
-        (False, "so3lr", True),
-        (False, "so3lr", False),
-        (False, "so3krates", False),
-    ],
-)
+CALC_CASES = [
+    (True, "so3lr", False),
+    (True, "so3lr", True),
+    (True, "so3krates", False),
+    (False, "so3lr", True),
+    (False, "so3lr", False),
+    (False, "so3krates", False),
+]
+
+
+@pytest.mark.parametrize("foundational,model_choice,multihead", CALC_CASES)
 def test_so3lr_md_calculator_uses_misc_charge_spin_keys(
     monkeypatch, foundational, model_choice, multihead
 ):
@@ -188,24 +186,33 @@ def test_so3lr_md_calculator_uses_misc_charge_spin_keys(
         multihead=multihead,
     )
     cls._setup_mlff_calculator(stub)
-    info_keys = recorded["key_specification"].info_keys
-    assert info_keys["total_charge"] == "q"
-    assert info_keys["total_spin"] == "s"
+    # foundational: MD calculator + ensemble (uncertainty) calculator
+    assert len(recorded) == (2 if foundational else 1)
+    for kwargs in recorded:
+        info_keys = kwargs["key_specification"].info_keys
+        assert info_keys["total_charge"] == "q"
+        assert info_keys["total_spin"] == "s"
 
 
-def test_so3lr_foundational_ensemble_calculator_uses_misc_keys(monkeypatch):
-    """Foundational MD + the ensemble (uncertainty) calculator both get it."""
-    import aims_PAX.procedures.preparation as prep
-
+@pytest.mark.parametrize("foundational,model_choice,multihead", CALC_CASES)
+def test_so3lr_md_calculators_get_private_key_specification(
+    monkeypatch, foundational, model_choice, multihead
+):
+    """TorchkratesCalculator mutates its key spec on every prediction
+    (``arrays_keys["charges"] -> "Qs"``); the shared AL config used for
+    building training data must not be affected."""
     cls, stub, recorded = _calc_setup_stub(
-        monkeypatch, foundational=True, model_choice="so3lr", multihead=True
+        monkeypatch,
+        foundational=foundational,
+        model_choice=model_choice,
+        multihead=multihead,
     )
-    calls = []
-    monkeypatch.setattr(
-        prep,
-        "MultiHeadSO3LRCalculator",
-        lambda **kw: calls.append(kw) or SimpleNamespace(),
-    )
+    shared = stub.config.key_specification
     cls._setup_mlff_calculator(stub)
-    assert len(calls) == 1
-    assert calls[0]["key_specification"].info_keys["total_charge"] == "q"
+    assert recorded
+    specs = [kwargs["key_specification"] for kwargs in recorded]
+    for spec in specs:
+        assert spec is not shared
+        spec.update(arrays_keys={"charges": "Qs"})
+    assert len({id(spec) for spec in specs}) == len(specs)
+    assert shared.arrays_keys["charges"] == "REF_charges"

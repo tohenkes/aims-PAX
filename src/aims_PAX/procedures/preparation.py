@@ -1,3 +1,4 @@
+import copy
 import os
 import random
 from pathlib import Path
@@ -1685,7 +1686,9 @@ class ALCalculatorMLFF:
                             "dispersion_lr_damping"
                         )
                     ),
-                    key_specification=self.config.key_specification,
+                    key_specification=copy.deepcopy(
+                        self.config.key_specification
+                    ),
                     **{
                         name: foundational_model_settings[name]
                         for name in PME_SETTING_NAMES
@@ -1704,7 +1707,9 @@ class ALCalculatorMLFF:
                             "dispersion_lr_damping"
                         )
                     ),
-                    key_specification=self.config.key_specification,
+                    key_specification=copy.deepcopy(
+                        self.config.key_specification
+                    ),
                 )
             logging.info(
                 f"Foundational model type: {model_type}, "
@@ -1737,7 +1742,9 @@ class ALCalculatorMLFF:
                         r_max_lr=self.config.r_max_lr,
                         dispersion_energy_cutoff_lr_damping=self.config.dispersion_energy_cutoff_lr_damping,
                         compute_stress=self.config.compute_stress,
-                        key_specification=self.config.key_specification,
+                        key_specification=copy.deepcopy(
+                            self.config.key_specification
+                        ),
                     )
                 else:
                     self.mlff_calc_ensemble = TorchkratesCalculator(
@@ -1747,7 +1754,9 @@ class ALCalculatorMLFF:
                         r_max_lr=self.config.r_max_lr,
                         dispersion_energy_cutoff_lr_damping=self.config.dispersion_energy_cutoff_lr_damping,
                         compute_stress=self.config.compute_stress,
-                        key_specification=self.config.key_specification,
+                        key_specification=copy.deepcopy(
+                            self.config.key_specification
+                        ),
                     )
 
         else:
@@ -1778,7 +1787,9 @@ class ALCalculatorMLFF:
                         r_max_lr=self.config.r_max_lr,
                         dispersion_energy_cutoff_lr_damping=self.config.dispersion_energy_cutoff_lr_damping,
                         compute_stress=self.config.compute_stress,
-                        key_specification=self.config.key_specification,
+                        key_specification=copy.deepcopy(
+                            self.config.key_specification
+                        ),
                     )
                 else:
                     self.mlff_calc = TorchkratesCalculator(
@@ -1788,7 +1799,9 @@ class ALCalculatorMLFF:
                         r_max_lr=self.config.r_max_lr,
                         dispersion_energy_cutoff_lr_damping=self.config.dispersion_energy_cutoff_lr_damping,
                         compute_stress=self.config.compute_stress,
-                        key_specification=self.config.key_specification,
+                        key_specification=copy.deepcopy(
+                            self.config.key_specification
+                        ),
                     )
 
 
