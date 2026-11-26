@@ -2169,9 +2169,6 @@ class ALRestart:
         self._initialize_restart_attributes()
 
         self._load_restart_checkpoint()
-        # the first run may have raised num_trajectories to the number of
-        # systems; the checkpoint's trajectories are authoritative
-        self.config.num_trajectories = len(self.state_manager.trajectories)
         self.state_manager.assign_systems()
 
         self._broadcast_restart_state()
@@ -2233,6 +2230,9 @@ class ALRestart:
             if hasattr(self.md_manager, key):
                 setattr(self.md_manager, key, value)
 
+        # must run before anything below loops over num_trajectories
+        self._sync_num_trajectories()
+
         # Special handling for uncertainty_checks
         if self.config.analysis and self.config.mol_idxs is not None:
             self.state_manager.uncertainty_checks = []
@@ -2248,6 +2248,22 @@ class ALRestart:
                         model_point=self.state_manager.last_point_added[idx],
                         idx=idx,
                     )
+
+    def _sync_num_trajectories(self):
+        """
+        Sets num_trajectories to the number of checkpointed trajectories.
+        The first run may have raised it to the number of systems, so the
+        checkpoint, not aimsPAX.yaml, is authoritative.
+        """
+        num_checkpointed = len(self.state_manager.trajectories)
+        if self.config.num_trajectories != num_checkpointed:
+            logging.warning(
+                f"ACTIVE_LEARNING.num_trajectories is "
+                f"{self.config.num_trajectories} but the restart checkpoint "
+                f"holds {num_checkpointed} trajectories; continuing with "
+                f"{num_checkpointed}."
+            )
+        self.config.num_trajectories = num_checkpointed
 
     def _broadcast_restart_state(self):
         pass
