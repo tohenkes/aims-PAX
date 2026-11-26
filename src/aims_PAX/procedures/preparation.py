@@ -48,8 +48,16 @@ from aims_PAX.tools.utilities.utilities import (
     ModifyMD,
     log_ensemble,
 )
-from pyfhiaims import AimsControl
 from aims_PAX.tools.utilities.input_utils import read_geometry
+from aims_PAX.tools.utilities.systems import (
+    annotate_charge_spin,
+    charge_and_spin,
+    check_systems_for_model,
+    load_aims_settings,
+    log_systems,
+    resolve_systems,
+    system_for_trajectory,
+)
 from aims_PAX.tools.utilities.mbd_nl_labels import (
     freeze_unlabelled_ratio_heads,
     frozen_ratio_heads,
@@ -127,10 +135,7 @@ class PrepareInitialDatasetProcedure:
         log_yaml_block(self.model_choice.upper(), model_settings.model_dump())
 
         self._handle_settings(aimsPAX_settings)
-        if not self.use_teacher_reference:
-            self._handle_aims_settings(path_to_control)
-        else:
-            self.aims_settings = {}
+        self._setup_systems(path_to_geometry, path_to_control)
         self._create_folders()
 
         if self.restart:
@@ -148,26 +153,16 @@ class PrepareInitialDatasetProcedure:
                     " not found."
                 )
                 raise
-            self.trajectories = self.init_ds_restart_dict["trajectories"]
-            self.atoms = list(self.trajectories.values())
             self.step = self.init_ds_restart_dict["step"]
         else:
-            self.trajectories = read_geometry(path_to_geometry, log=True)
-            self.atoms = list(self.trajectories.values())
             self.step = 0
-            # TODO: multiple trajectories per atoms
-            # TODO: make this compatible with the other methods in case the
-            # geometries are not different systems
-
+        self._setup_trajectories()
+        self.atoms = list(self.trajectories.values())
         self.num_trajectories = len(self.trajectories)
-        self.md_settings, _ = normalize_md_settings(
-            md_settings=self.md_settings_raw,
-            num_trajectories=self.num_trajectories,
-        )
 
         logging.info(
             "Running Initial Dataset Procedure with "
-            f"{len(self.trajectories)} geometries."
+            f"{len(self.trajectories)} systems."
         )
 
         if self.model_choice == "mace":
@@ -194,6 +189,7 @@ class PrepareInitialDatasetProcedure:
         # ensemble member the training_setups dictionary contains the training
         # setups (optimizer, scheduler etc.) for each ensemble member
         self._setup_ensemble()
+        self._check_systems_distinguishable()
         self.training_setups = get_ensemble_training_setups(
             ensemble=self.ensemble,
             model_settings=self.model_settings,
@@ -397,38 +393,84 @@ class PrepareInitialDatasetProcedure:
                 parents=True, exist_ok=True
             )
 
-    def _handle_aims_settings(
-        self, control_source: Union[str, dict[int, str]], log: bool = False
-    ):
+    def _setup_systems(
+        self,
+        path_to_geometry: Union[str, Path, dict[int, str]],
+        path_to_control: Union[str, Path, dict[int, str], None],
+    ) -> None:
         """
-        Parses the AIMS control file to get the settings for the AIMS
-        calculator.
+        Resolves the systems (geometry, control.in and MD settings per
+        index) and their DFT settings and total charge/spin. With a teacher
+        model as reference the control files are not used.
+        """
+        self.systems = resolve_systems(
+            path_to_geometry,
+            None if self.use_teacher_reference else path_to_control,
+            self.md_settings_raw,
+        )
+        log_systems(self.systems)
+        self.md_settings = {i: s.md_settings for i, s in self.systems.items()}
+        self._handle_aims_settings(
+            {
+                i: s.control_path
+                for i, s in self.systems.items()
+                if s.control_path is not None
+            }
+        )
+        self.charge_spin = {
+            i: charge_and_spin(settings)
+            for i, settings in self.aims_settings.items()
+        }
+
+    def _setup_trajectories(self) -> None:
+        """
+        Creates one trajectory per system (or restores them from the
+        restart checkpoint) and stores each system's total charge/spin in
+        its trajectory's atoms.
+        """
+        if self.restart:
+            trajectories = self.init_ds_restart_dict["trajectories"]
+            if set(trajectories) != set(self.systems):
+                raise ValueError(
+                    "The initial dataset restart checkpoint has trajectories "
+                    f"{sorted(trajectories)}, but the input files define "
+                    f"systems {sorted(self.systems)}."
+                )
+        else:
+            trajectories = {i: s.atoms for i, s in self.systems.items()}
+        for idx, (charge, spin) in self.charge_spin.items():
+            annotate_charge_spin(
+                trajectories[idx],
+                charge,
+                spin,
+                self.misc.total_charge_key,
+                self.misc.total_spin_key,
+            )
+        self.trajectories = trajectories
+
+    def _check_systems_distinguishable(self) -> None:
+        """Checks that the trained model can tell the systems apart."""
+        check_systems_for_model(
+            self.systems,
+            self.charge_spin,
+            self.model_choice,
+            self.model_settings.ARCHITECTURE,
+        )
+
+    def _handle_aims_settings(self, control_paths: dict[int, Path]):
+        """
+        Parses the control files to get the settings for the FHI-aims
+        calculator of each system.
 
         Args:
-            path_to_control (str): Path to the AIMS control file.
-            species_dir (str): Path to the species directory of AIMS.
+            control_paths (dict): Control file per system index.
         """
-
-        if isinstance(control_source, (str, Path)):
-            aims_control = AimsControl.from_file(control_source)
-            aims_settings = aims_control.parameters
-            if aims_control.outputs:
-                aims_settings["output"] = aims_control.outputs
-            aims_settings["compute_forces"] = True
-            aims_settings["species_dir"] = self.species_dir
-            self.aims_settings = {0: aims_settings}
-        elif isinstance(control_source, dict):
-            self.aims_settings = {}
-            for key, value in control_source.items():
-                aims_control = AimsControl.from_file(value)
-                aims_settings = aims_control.parameters
-                if aims_control.outputs:
-                    aims_settings["output"] = aims_control.outputs
-                aims_settings["compute_forces"] = True
-                aims_settings["species_dir"] = self.species_dir
-                if log:
-                    logging.info(f"Control file for geometry {key}: {value}.")
-                self.aims_settings[key] = aims_settings
+        self.aims_settings = {
+            i: load_aims_settings(
+                path, self.species_dir, postprocess_anyway=False
+            )
+            for i, path in control_paths.items()
+        }
 
     def setup_md(self, atoms: ase.Atoms, md_settings: dict):
         """

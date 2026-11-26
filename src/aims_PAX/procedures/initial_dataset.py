@@ -542,16 +542,13 @@ class InitialDatasetPARSL(InitialDatasetProcedure):
 
         Args:
             atoms (ase.Atoms): Atoms object for the calculation.
-            idx (int): System index (for multi-system settings).
+            idx (int): System index; selects the DFT settings.
 
         Returns:
             AppFuture: A PARSL future for the reference calculation.
         """
         self.calc_idx += 1
         directory = self.calc_dir / f"initial_calc_{self.calc_idx}"
-        # if there is only one entry in aims_settings the same
-        # settings are used for all systems
-        settings_idx = idx if len(self.aims_settings) > 1 else 0
 
         # Create a local copy to avoid shared-dict mutation across futures
         func_input = dict(self.parsl_func_input)
@@ -561,7 +558,7 @@ class InitialDatasetPARSL(InitialDatasetProcedure):
                 "species": atoms.get_chemical_symbols(),
                 "cell": atoms.get_cell(),
                 "pbc": atoms.pbc,
-                "aims_settings": self.aims_settings[settings_idx],
+                "aims_settings": self.aims_settings[idx],
                 "directory": directory,
             }
         )

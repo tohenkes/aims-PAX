@@ -11,6 +11,8 @@ from aims_PAX.tools.utilities.systems import (
     annotate_charge_spin,
     charge_and_spin,
     check_systems_distinguishable,
+    check_systems_for_model,
+    load_aims_settings,
     model_embeds,
     resolve_systems,
     system_for_trajectory,
@@ -129,6 +131,26 @@ def test_md_dict_vs_control_dict_mismatch(files):
             {0: ctrls[0], 1: ctrls[1], 2: ctrls[2]},
             _md_dict(),
         )
+
+
+def test_no_control_gives_systems_without_control_path(files):
+    geos, _ = files
+    systems = resolve_systems({0: geos[0], 1: geos[1]}, None, _md_single())
+    assert list(systems) == [0, 1]
+    assert all(s.control_path is None for s in systems.values())
+
+
+def test_load_aims_settings(tmp_path):
+    control = tmp_path / "control.in"
+    control.write_text("xc pbe\nmarker a\noutput hirshfeld\n")
+    settings = load_aims_settings(control, tmp_path, postprocess_anyway=False)
+    assert settings["marker"] == "a"
+    assert settings["compute_forces"] is True
+    assert settings["species_dir"] == tmp_path
+    assert settings["output"] == ["hirshfeld"]
+    assert "postprocess_anyway" not in settings
+    settings = load_aims_settings(control, tmp_path, postprocess_anyway=True)
+    assert settings["postprocess_anyway"] is True
 
 
 def test_system_for_trajectory_cycles():
@@ -283,3 +305,24 @@ def test_different_compositions_never_conflict(h2o_h3o):
     check_systems_distinguishable(
         h2o_h3o, {0: (0.0, 0.0), 1: (1.0, 0.0)}, False, False
     )
+
+
+def test_check_systems_for_model_rejects_mace_spin_states(two_o2):
+    with pytest.raises(ValueError, match="spin"):
+        check_systems_for_model(
+            two_o2, {0: (0.0, 0.0), 1: (0.0, 1.0)}, "mace", None
+        )
+
+
+def test_check_systems_for_model_uses_architecture(two_o2):
+    architecture = SimpleNamespace(use_charge_embed=True, use_spin_embed=True)
+    check_systems_for_model(
+        two_o2, {0: (0.0, 0.0), 1: (0.0, 1.0)}, "so3lr", architecture
+    )
+
+
+def test_check_systems_for_model_needs_two_systems_with_control(two_o2):
+    # one system, or systems without control files (teacher reference),
+    # are never checked, so even an unknown model choice passes
+    check_systems_for_model(two_o2, {0: (0.0, 0.0)}, "unknown", None)
+    check_systems_for_model(two_o2, {}, "unknown", None)

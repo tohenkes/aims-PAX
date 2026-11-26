@@ -5,14 +5,18 @@ A *system* is one (geometry, control.in, MD settings) combination. Every
 per-index source (a geometry dict or folder, a control dict, an MD dict) has
 to define the same set of system indices; a single-valued source is
 broadcast to all of them. If no source is per-index, there is only system 0.
+Without a control file (teacher-model reference) a system has no
+control_path.
 """
 
+import logging
 from dataclasses import dataclass
 from itertools import combinations
 from pathlib import Path
 from typing import Sequence
 
 import ase
+from pyfhiaims import AimsControl
 
 from aims_PAX.settings.project import MDSettings, check_system_indices
 from aims_PAX.tools.utilities.input_utils import read_geometry
@@ -22,13 +26,13 @@ from aims_PAX.tools.utilities.input_utils import read_geometry
 class SystemSpec:
     index: int
     atoms: ase.Atoms
-    control_path: Path
     md_settings: dict
+    control_path: Path | None = None
 
 
 def resolve_systems(
     path_to_geometry: Path | dict[int, Path],
-    path_to_control: Path | dict[int, Path],
+    path_to_control: Path | dict[int, Path] | None,
     md_settings: MDSettings,
 ) -> dict[int, SystemSpec]:
     """
@@ -45,7 +49,9 @@ def resolve_systems(
     else:
         geometries = {None: read_geometry(path_to_geometry)[0]}
 
-    if isinstance(path_to_control, dict):
+    if path_to_control is None:
+        controls = {None: None}
+    elif isinstance(path_to_control, dict):
         controls = {i: Path(p) for i, p in path_to_control.items()}
         per_index["control"] = set(controls)
     else:
@@ -66,6 +72,42 @@ def resolve_systems(
         )
         for i in indices
     }
+
+
+def log_systems(systems: dict[int, SystemSpec]) -> None:
+    """Logs the composition and control file of each system."""
+    for i, system in systems.items():
+        control = system.control_path or "none (teacher reference)"
+        logging.info(
+            f"System {i}: {system.atoms.get_chemical_formula()}, "
+            f"control file: {control}."
+        )
+
+
+def load_aims_settings(
+    control_path: Path, species_dir: Path, postprocess_anyway: bool
+) -> dict:
+    """
+    Parses a control.in into the settings for ASE's FHI-aims calculator.
+
+    Args:
+        control_path: The control.in to parse.
+        species_dir: FHI-aims species defaults directory.
+        postprocess_anyway: Whether to add FHI-aims' ``postprocess_anyway``
+            (needed to check SCF convergence during active learning).
+
+    Returns:
+        The calculator settings.
+    """
+    aims_control = AimsControl.from_file(control_path)
+    aims_settings = aims_control.parameters
+    if aims_control.outputs:
+        aims_settings["output"] = aims_control.outputs
+    aims_settings["compute_forces"] = True
+    aims_settings["species_dir"] = species_dir
+    if postprocess_anyway:
+        aims_settings["postprocess_anyway"] = True
+    return aims_settings
 
 
 def system_for_trajectory(
@@ -178,3 +220,28 @@ def check_systems_distinguishable(
                     f"{where}, but the model has no spin embedding; enable "
                     "it or use different compositions."
                 )
+
+
+def check_systems_for_model(
+    systems: dict[int, SystemSpec],
+    charge_spin: dict[int, tuple[float, float | None]],
+    model_choice: str,
+    architecture,
+) -> None:
+    """
+    Checks that the trained model can tell the systems apart.
+
+    Only systems with a control file have a charge/spin (``charge_spin``);
+    with fewer than two of them there is nothing to check.
+
+    Raises:
+        ValueError: See ``check_systems_distinguishable`` and
+            ``model_embeds``.
+    """
+    if len(charge_spin) < 2:
+        return
+    check_systems_distinguishable(
+        {i: systems[i] for i in charge_spin},
+        charge_spin,
+        *model_embeds(model_choice, architecture),
+    )
