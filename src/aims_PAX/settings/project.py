@@ -845,8 +845,10 @@ class MiscSettings(ProjectBaseModel):
     path_to_control: PathOrIndexedPaths = Field(
         default=Path("./control.in"),
         description=(
-            "Path to the FHI-aims control input file. Can be a single path "
-            "or a dictionary mapping system indices to specific control files."
+            "Path to the FHI-aims control input file. Can be a single path, "
+            "used for every system, or a dictionary mapping system indices "
+            "to control files. Each system's total charge and spin are read "
+            "from its control file (charge, fixed_spin_moment)."
         )
     )
     path_to_geometry: Union[PathOrIndexedPaths | DirectoryPath] = Field(
