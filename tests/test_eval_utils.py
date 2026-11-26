@@ -93,3 +93,31 @@ def test_maceeval_stress_channel():
     # delta is uniformly -0.1 -> mae 0.1
     assert aux["mae_stress"] == pytest.approx(0.1)
     assert "mae_e" not in aux
+
+
+def test_test_model_restores_requires_grad(monkeypatch):
+    """test_model must not unfreeze parameters that were frozen before."""
+    import aims_PAX.tools.utilities.eval_utils as eval_utils
+
+    model = torch.nn.Linear(2, 1)
+    model.bias.requires_grad = False
+
+    class _NoMetrics:
+        def to(self, device):
+            return self
+
+        def compute(self):
+            return {}
+
+        def reset(self):
+            pass
+
+    monkeypatch.setattr(eval_utils, "MACEEval", _NoMetrics)
+    eval_utils.test_model(
+        model,
+        data_loader=[],
+        output_args={"forces": False, "virials": False, "stress": False},
+        device="cpu",
+    )
+    assert model.weight.requires_grad is True
+    assert model.bias.requires_grad is False

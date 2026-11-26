@@ -430,6 +430,7 @@ def test_model(
     Returns:
         dict: Dictionary with the computed metrics.
     """
+    requires_grad_before = [p.requires_grad for p in model.parameters()]
     for param in model.parameters():
         param.requires_grad = False
 
@@ -482,8 +483,9 @@ def test_model(
     aux["time"] = time.time() - start_time
     metrics.reset()
 
-    for param in model.parameters():
-        param.requires_grad = True
+    # restore, so parameters frozen before (e.g. ratio heads) stay frozen
+    for param, requires_grad in zip(model.parameters(), requires_grad_before):
+        param.requires_grad = requires_grad
     if return_predictions:
         for key in predictions.keys():
             predictions[key] = (

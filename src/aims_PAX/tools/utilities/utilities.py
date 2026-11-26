@@ -31,6 +31,11 @@ from aims_PAX.tools.model_tools.so3lr_loading import (
     resolve_long_range_value,
     so3lr_architecture_dict,
 )
+from aims_PAX.tools.utilities.mbd_nl_labels import (
+    freeze_unlabelled_ratio_heads,
+    warn_hirshfeld_loss_on_mbd_nl_head,
+    warn_ratio_loss_weights,
+)
 import ase.data
 from ase.io import read
 from ase import units
@@ -226,6 +231,7 @@ def apply_model_settings(
             "update_avg_num_neighbors=True is not recommended."
             "This can lead to high errors in the beginning of training!"
         )
+    warn_ratio_loss_weights(model_settings.TRAINING)
     if target.use_multihead_model and target.num_multihead_heads is not None:
         target.all_heads = [
             f"head_{i}" for i in range(target.num_multihead_heads)
@@ -782,6 +788,9 @@ def setup_pretrained(
             model_settings=model_settings,
             num_elements=num_elements,
         )
+    # after fine-tuning, which may unfreeze every parameter
+    freeze_unlabelled_ratio_heads(model, model_settings.TRAINING)
+    warn_hirshfeld_loss_on_mbd_nl_head(model, model_settings.TRAINING)
     return model
 
 

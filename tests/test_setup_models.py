@@ -917,3 +917,118 @@ def test_al_logs_effective_architecture(
     ]
     assert "r_max," in notice.message
     assert "    r_max: 4.5" in caplog.text
+
+
+# -- MBD-NL ratio labels are unavailable: freeze the heads, warn on use -------
+
+_RATIO_HEADS = ("c6_ratios_output_block", "hirshfeld_output_block")
+
+
+def _head_grad_flags(model, head):
+    return {p.requires_grad for p in getattr(model, head).parameters()}
+
+
+@pytest.mark.parametrize(
+    "finetuning",
+    [{}, {"perform_finetuning": True, "finetuning_choice": "naive"}],
+    ids=["no_finetuning", "naive_finetuning"],
+)
+def test_pretrained_tauri_freezes_ratio_heads(pretrained_settings, finetuning):
+    s = pretrained_settings(
+        pretrained_model="tauri-s-2606", num_multihead_heads=2, **finetuning
+    )
+    model = setup_pretrained(s, None, {})
+    for head in _RATIO_HEADS:
+        assert _head_grad_flags(model, head) == {False}
+    assert _head_grad_flags(model, "atomic_energy_output_block") == {True}
+
+    # no gradient reaches the frozen heads during training
+    out = _training_forward(model, s)
+    out["energy"].sum().backward()
+    for head in _RATIO_HEADS:
+        assert all(p.grad is None for p in getattr(model, head).parameters())
+
+
+def test_pretrained_v1_keeps_hirshfeld_head_trainable(pretrained_settings):
+    """v1's a0 head predicts Hirshfeld volume ratios, which stock FHI-aims
+    provides; it has no C6 head."""
+    model = setup_pretrained(
+        pretrained_settings(pretrained_model="v1", num_multihead_heads=2),
+        None,
+        {},
+    )
+    assert not hasattr(model, "c6_ratios_output_block")
+    assert _head_grad_flags(model, "hirshfeld_output_block") == {True}
+
+
+def test_explicit_unfreeze_of_ratio_head_warns(pretrained_settings, caplog):
+    s = pretrained_settings(
+        pretrained_model="tauri-s-2606",
+        num_multihead_heads=2,
+        perform_finetuning=True,
+        finetuning_choice="lora",
+        freeze_c6_ratios=False,
+    )
+    with caplog.at_level(logging.WARNING):
+        model = setup_pretrained(s, None, {})
+    assert _head_grad_flags(model, "c6_ratios_output_block") == {False}
+    assert "freeze_c6_ratios" in caplog.text
+
+
+def test_al_keeps_ratio_heads_frozen_after_finetuning(
+    tmp_path, pretrained_settings, target
+):
+    """AL re-applies fine-tuning (which unfreezes everything) to models
+    loaded from model_dir; the ratio heads must stay frozen, also when
+    model.yaml has no TRAINING.pretrained_model."""
+    _save_model(
+        tmp_path,
+        setup_pretrained(
+            pretrained_settings(
+                pretrained_model="tauri-s-2606", num_multihead_heads=2
+            ),
+            None,
+            {},
+        ),
+    )
+    s = pretrained_settings(
+        num_multihead_heads=2,
+        perform_finetuning=True,
+        finetuning_choice="naive",
+    )
+    al_ensemble = _al_ensemble(tmp_path, s, target)
+    al_ensemble._setup_ensemble()
+    (model,) = al_ensemble.ensemble.values()
+    for head in _RATIO_HEADS:
+        assert _head_grad_flags(model, head) == {False}
+    assert _head_grad_flags(model, "atomic_energy_output_block") == {True}
+
+
+@pytest.mark.parametrize("key", ["c6_ratios_weight", "a0_ratios_weight"])
+def test_ratio_loss_weight_warns(pretrained_settings, target, caplog, key):
+    s = pretrained_settings(
+        pretrained_model="tauri-s-2606", num_multihead_heads=2, **{key: 0.1}
+    )
+    with caplog.at_level(logging.WARNING):
+        apply_model_settings(target, s)
+    assert key in caplog.text and "FHI-aims" in caplog.text
+
+
+def test_no_ratio_warning_by_default(pretrained_settings, target, caplog):
+    s = pretrained_settings(
+        pretrained_model="tauri-s-2606", num_multihead_heads=2
+    )
+    with caplog.at_level(logging.WARNING):
+        apply_model_settings(target, s)
+    assert "ratio" not in caplog.text
+
+
+def test_hirshfeld_loss_on_vv_head_warns(pretrained_settings, caplog):
+    s = pretrained_settings(
+        pretrained_model="tauri-s-2606",
+        num_multihead_heads=2,
+        loss="weighted_energy_forces_hirshfeld",
+    )
+    with caplog.at_level(logging.WARNING):
+        setup_pretrained(s, None, {})
+    assert "Hirshfeld volume ratios" in caplog.text

@@ -270,6 +270,22 @@ class TrainingSettings(ProjectBaseModel):
     hirshfeld_weight: float = Field(
         default=1.0, description="Weight for Hirshfeld charge loss component."
     )
+    # Placeholders: MBD-NL ratio labels need per-atom output that stock
+    # FHI-aims does not print, so these losses are not available yet (see
+    # aims_PAX.tools.utilities.mbd_nl_labels). A non-zero value only warns.
+    c6_ratios_weight: float = Field(
+        default=0.0,
+        ge=0.0,
+        description="Not available yet: weight for the MBD-NL C6-ratio "
+        "loss. A non-zero value is ignored with a warning.",
+    )
+    a0_ratios_weight: float = Field(
+        default=0.0,
+        ge=0.0,
+        description="Not available yet: weight for the MBD-NL a0 "
+        "(polarizability) ratio loss of SO3LR-tauri models. A non-zero "
+        "value is ignored with a warning.",
+    )
     config_type_weights: dict[str, float] = Field(
         default_factory=lambda: {"Default": 1.0},
         description="Weights for different configuration types (e.g., TS vs Ground State).",

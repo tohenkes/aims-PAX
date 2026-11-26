@@ -49,6 +49,11 @@ from aims_PAX.tools.utilities.utilities import (
 )
 from pyfhiaims import AimsControl
 from aims_PAX.tools.utilities.input_utils import read_geometry
+from aims_PAX.tools.utilities.mbd_nl_labels import (
+    freeze_unlabelled_ratio_heads,
+    frozen_ratio_heads,
+    warn_hirshfeld_loss_on_mbd_nl_head,
+)
 from aims_PAX.tools.model_tools.train_epoch import (
     train_epoch,
     validate_epoch_ensemble,
@@ -1260,12 +1265,23 @@ class ALEnsemble:
                 sync_architecture_with_model(model, model_settings)
             refresh_architecture_attrs(self.config, model_settings)
             log_effective_architecture(model_settings, architecture_before)
+        # ratio heads frozen by the initial-dataset run (or a pretrained
+        # model) must stay frozen after fine-tuning re-unfreezes them
+        frozen_before = {
+            tag: frozen_ratio_heads(model)
+            for tag, model in self.ensemble.items()
+        }
         if self.config.model_settings.TRAINING.perform_finetuning:
             for tag, model in self.ensemble.items():
                 self.ensemble[tag] = apply_finetuning_settings(
                     model=model,
                     model_settings=self.config.model_settings,
                 )
+        training = self.config.model_settings.TRAINING
+        for tag, model in self.ensemble.items():
+            if self.config.use_pretrained_model or frozen_before[tag]:
+                freeze_unlabelled_ratio_heads(model, training)
+                warn_hirshfeld_loss_on_mbd_nl_head(model, training)
 
         self.training_setups = get_ensemble_training_setups(
             ensemble=self.ensemble,
